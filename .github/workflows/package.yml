@@ -1,0 +1,76 @@
+name: Package
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  github-release:
+    name: GitHub Release (sdist + wheel)
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Resolve release metadata
+        id: release_meta
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          RELEASE_TAG="main-${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}-${SHORT_SHA}"
+          RELEASE_NAME="Main build ${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+
+          echo "tag=${RELEASE_TAG}" >> "${GITHUB_OUTPUT}"
+          echo "name=${RELEASE_NAME}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build distributions
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+          cd ..
+          python -m pip install --upgrade pip build
+          python -m compileall -q sniffhound
+          python -m build
+
+      - name: Resolve release assets
+        id: assets
+        run: |
+          WHEEL_FILE="$(ls dist/sniffhound-*.whl | head -n1)"
+          SDIST_FILE="$(ls dist/sniffhound-*.tar.gz | head -n1)"
+          if [[ -z "${WHEEL_FILE}" || -z "${SDIST_FILE}" ]]; then
+            echo "Release assets not found"
+            exit 1
+          fi
+          {
+            echo "files<<EOF"
+            echo "${WHEEL_FILE}"
+            echo "${SDIST_FILE}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.release_meta.outputs.tag }}
+          name: ${{ steps.release_meta.outputs.name }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          files: ${{ steps.assets.outputs.files }}

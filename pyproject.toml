@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=82.0.1", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sniffhound"
+version = "0.1.0"
+description = "SniffHound is a native Python network sniffer with SQLite persistence, live stats, and a wsbuilder-backed frontend."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "JorgelSC Dev" }]
+dependencies = ["wsbuilder>=0.9.1.dev0"]
+keywords = ["network", "sniffer", "packet-capture", "sqlite", "websocket", "monitoring"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Information Technology",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Security",
+]
+
+[project.urls]
+Homepage = "https://sniffhound.jorgelsc.dev"
+Documentation = "https://sniffhound.jorgelsc.dev"
+Repository = "https://github.com/jorgelsc-dev/sniffhound"
+Issues = "https://github.com/jorgelsc-dev/sniffhound/issues"
+Changelog = "https://github.com/jorgelsc-dev/sniffhound/blob/main/CHANGELOG.md"
+
+[project.scripts]
+sniffhound = "sniffhound.manage:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["sniffhound*"]
+
+[tool.setuptools.package-data]
+"sniffhound" = ["data/*.json"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

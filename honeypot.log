@@ -1,0 +1,258 @@
+2026-06-07 15:31:30,248 - No se pudo inicializar TLS
+Traceback (most recent call last):
+  File "/home/jlhack/Documents/Project/sniffhound/sniffhound/honeypot.py", line 772, in start
+    self._tls_context = self._create_tls_context()
+                        ~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/jlhack/Documents/Project/sniffhound/sniffhound/honeypot.py", line 834, in _create_tls_context
+    raise FileNotFoundError(
+    ...<2 lines>...
+    )
+FileNotFoundError: No se encontraron certificados TLS: honeypot_cert.pem y/o honeypot_key.pem. Generalos con OpenSSL o copia un par PEM valido.
+2026-06-07 15:31:30,250 - TCP honeypot activo en 0.0.0.0:23
+2026-06-07 15:31:30,250 - TCP honeypot activo en 0.0.0.0:21
+2026-06-07 15:31:30,250 - TCP honeypot activo en 0.0.0.0:22
+2026-06-07 15:31:30,251 - TCP honeypot activo en 0.0.0.0:25
+2026-06-07 15:31:30,251 - TCP honeypot activo en 0.0.0.0:80
+2026-06-07 15:31:30,251 - TCP honeypot activo en 0.0.0.0:53
+2026-06-07 15:31:30,251 - TCP honeypot activo en 0.0.0.0:139
+2026-06-07 15:31:30,251 - TCP honeypot activo en 0.0.0.0:389
+2026-06-07 15:31:30,252 - TCP honeypot activo en 0.0.0.0:110
+2026-06-07 15:31:30,252 - TCP honeypot activo en 0.0.0.0:554
+2026-06-07 15:31:30,252 - TCP honeypot activo en 0.0.0.0:445
+2026-06-07 15:31:30,252 - TCP honeypot activo en 0.0.0.0:587
+2026-06-07 15:31:30,252 - TCP honeypot activo en 0.0.0.0:143
+2026-06-07 15:31:30,253 - TCP honeypot activo en 0.0.0.0:1883
+2026-06-07 15:31:30,253 - TCP honeypot activo en 0.0.0.0:2049
+2026-06-07 15:31:30,253 - TCP honeypot activo en 0.0.0.0:2121
+2026-06-07 15:31:30,253 - TCP honeypot activo en 0.0.0.0:2525
+2026-06-07 15:31:30,253 - TCP honeypot activo en 0.0.0.0:3389
+2026-06-07 15:31:30,253 - TCP honeypot activo en 0.0.0.0:3306
+2026-06-07 15:31:30,253 - TCP honeypot activo en 0.0.0.0:5432
+2026-06-07 15:31:30,254 - TCP honeypot activo en 0.0.0.0:5672
+2026-06-07 15:31:30,254 - TCP honeypot activo en 0.0.0.0:5900
+2026-06-07 15:31:30,254 - TCP honeypot activo en 0.0.0.0:8000
+2026-06-07 15:31:30,254 - TCP honeypot activo en 0.0.0.0:8080
+2026-06-07 15:31:30,254 - TCP honeypot activo en 0.0.0.0:9200
+2026-06-07 15:31:30,254 - TCP honeypot activo en 0.0.0.0:8888
+2026-06-07 15:31:30,254 - TCP honeypot activo en 0.0.0.0:6379
+2026-06-07 15:31:30,255 - TCP honeypot activo en 0.0.0.0:11211
+2026-06-07 15:31:30,255 - TCP honeypot activo en 0.0.0.0:27017
+2026-06-07 15:31:30,255 - UDP honeypot activo en 0.0.0.0:67
+2026-06-07 15:31:30,255 - UDP honeypot activo en 0.0.0.0:53
+2026-06-07 15:31:30,256 - UDP honeypot activo en 0.0.0.0:68
+2026-06-07 15:31:30,256 - UDP honeypot activo en 0.0.0.0:69
+2026-06-07 15:31:30,256 - UDP honeypot activo en 0.0.0.0:123
+2026-06-07 15:31:30,256 - UDP honeypot activo en 0.0.0.0:137
+2026-06-07 15:31:30,257 - UDP honeypot activo en 0.0.0.0:138
+2026-06-07 15:31:30,257 - UDP honeypot activo en 0.0.0.0:161
+2026-06-07 15:31:30,257 - UDP honeypot activo en 0.0.0.0:500
+2026-06-07 15:31:30,257 - UDP honeypot activo en 0.0.0.0:514
+2026-06-07 15:31:30,257 - UDP honeypot activo en 0.0.0.0:520
+2026-06-07 15:31:30,258 - UDP honeypot activo en 0.0.0.0:4500
+2026-06-07 15:31:30,258 - UDP honeypot activo en 0.0.0.0:1812
+2026-06-07 15:31:30,259 - UDP honeypot activo en 0.0.0.0:1900
+2026-06-07 15:31:30,259 - UDP honeypot activo en 0.0.0.0:5060
+2026-06-07 15:31:30,259 - UDP honeypot activo en 0.0.0.0:5353
+2026-06-07 15:31:30,260 - Honeypot activo en 0.0.0.0 con 57 listeners
+2026-06-07 15:31:30,260 - UDP honeypot activo en 0.0.0.0:11211
+2026-06-07 15:31:30,260 - UDP honeypot activo en 0.0.0.0:1813
+2026-06-07 15:31:30,522 - UDP 127.0.0.1:55204 -> 53
+2026-06-07 15:31:30,523 - UDP 127.0.0.1:55204 -> 53
+2026-06-07 15:31:37,307 - UDP 127.0.0.1:47556 -> 53
+2026-06-07 16:08:29,036 - No se pudo inicializar TLS
+Traceback (most recent call last):
+  File "/home/jlhack/Documents/Project/sniffhound/sniffhound/honeypot.py", line 772, in start
+    self._tls_context = self._create_tls_context()
+                        ~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/jlhack/Documents/Project/sniffhound/sniffhound/honeypot.py", line 834, in _create_tls_context
+    raise FileNotFoundError(
+    ...<2 lines>...
+    )
+FileNotFoundError: No se encontraron certificados TLS: honeypot_cert.pem y/o honeypot_key.pem. Generalos con OpenSSL o copia un par PEM valido.
+2026-06-07 16:08:29,039 - TCP honeypot activo en 0.0.0.0:22
+2026-06-07 16:08:29,039 - TCP honeypot activo en 0.0.0.0:21
+2026-06-07 16:08:29,040 - TCP honeypot activo en 0.0.0.0:23
+2026-06-07 16:08:29,040 - TCP honeypot activo en 0.0.0.0:80
+2026-06-07 16:08:29,041 - TCP honeypot activo en 0.0.0.0:53
+2026-06-07 16:08:29,041 - TCP honeypot activo en 0.0.0.0:110
+2026-06-07 16:08:29,041 - TCP honeypot activo en 0.0.0.0:25
+2026-06-07 16:08:29,042 - TCP honeypot activo en 0.0.0.0:143
+2026-06-07 16:08:29,042 - TCP honeypot activo en 0.0.0.0:389
+2026-06-07 16:08:29,043 - TCP honeypot activo en 0.0.0.0:445
+2026-06-07 16:08:29,043 - TCP honeypot activo en 0.0.0.0:139
+2026-06-07 16:08:29,044 - TCP honeypot activo en 0.0.0.0:1883
+2026-06-07 16:08:29,045 - TCP honeypot activo en 0.0.0.0:554
+2026-06-07 16:08:29,045 - TCP honeypot activo en 0.0.0.0:587
+2026-06-07 16:08:29,045 - TCP honeypot activo en 0.0.0.0:2121
+2026-06-07 16:08:29,045 - TCP honeypot activo en 0.0.0.0:2525
+2026-06-07 16:08:29,046 - TCP honeypot activo en 0.0.0.0:2049
+2026-06-07 16:08:29,046 - TCP honeypot activo en 0.0.0.0:3306
+2026-06-07 16:08:29,047 - TCP honeypot activo en 0.0.0.0:3389
+2026-06-07 16:08:29,048 - TCP honeypot activo en 0.0.0.0:5672
+2026-06-07 16:08:29,048 - TCP honeypot activo en 0.0.0.0:5900
+2026-06-07 16:08:29,048 - TCP honeypot activo en 0.0.0.0:5432
+2026-06-07 16:08:29,049 - TCP honeypot activo en 0.0.0.0:6379
+2026-06-07 16:08:29,049 - TCP honeypot activo en 0.0.0.0:8000
+2026-06-07 16:08:29,050 - TCP honeypot activo en 0.0.0.0:8080
+2026-06-07 16:08:29,050 - TCP honeypot activo en 0.0.0.0:11211
+2026-06-07 16:08:29,051 - TCP honeypot activo en 0.0.0.0:8888
+2026-06-07 16:08:29,051 - TCP honeypot activo en 0.0.0.0:9200
+2026-06-07 16:08:29,051 - TCP honeypot activo en 0.0.0.0:27017
+2026-06-07 16:08:29,051 - UDP honeypot activo en 0.0.0.0:67
+2026-06-07 16:08:29,051 - UDP honeypot activo en 0.0.0.0:68
+2026-06-07 16:08:29,052 - UDP honeypot activo en 0.0.0.0:53
+2026-06-07 16:08:29,052 - UDP honeypot activo en 0.0.0.0:69
+2026-06-07 16:08:29,053 - UDP honeypot activo en 0.0.0.0:137
+2026-06-07 16:08:29,053 - UDP honeypot activo en 0.0.0.0:138
+2026-06-07 16:08:29,054 - UDP honeypot activo en 0.0.0.0:123
+2026-06-07 16:08:29,054 - UDP honeypot activo en 0.0.0.0:161
+2026-06-07 16:08:29,055 - UDP honeypot activo en 0.0.0.0:500
+2026-06-07 16:08:29,055 - UDP honeypot activo en 0.0.0.0:514
+2026-06-07 16:08:29,055 - UDP honeypot activo en 0.0.0.0:520
+2026-06-07 16:08:29,056 - UDP honeypot activo en 0.0.0.0:1812
+2026-06-07 16:08:29,056 - UDP honeypot activo en 0.0.0.0:1813
+2026-06-07 16:08:29,056 - UDP honeypot activo en 0.0.0.0:1900
+2026-06-07 16:08:29,057 - UDP honeypot activo en 0.0.0.0:4500
+2026-06-07 16:08:29,057 - UDP honeypot activo en 0.0.0.0:5060
+2026-06-07 16:08:29,058 - UDP honeypot activo en 0.0.0.0:5353
+2026-06-07 16:08:29,058 - UDP honeypot activo en 0.0.0.0:11211
+2026-06-07 16:08:29,058 - Honeypot activo en 0.0.0.0 con 57 listeners
+2026-06-07 16:08:30,208 - UDP 127.0.0.1:22885 -> 53
+2026-06-07 16:08:32,578 - UDP 127.0.0.1:36693 -> 53
+2026-06-07 16:08:32,580 - UDP 127.0.0.1:36693 -> 53
+2026-06-07 16:08:33,959 - UDP 127.0.0.1:44703 -> 53
+2026-06-07 16:08:33,960 - UDP 127.0.0.1:44703 -> 53
+2026-06-07 16:08:36,423 - UDP 192.168.88.1:67 -> 68
+2026-06-07 16:08:36,427 - UDP 192.168.88.1:67 -> 68
+2026-06-07 16:08:36,443 - UDP 0.0.0.0:68 -> 67
+2026-06-07 16:08:36,444 - UDP 127.0.0.1:67 -> 68
+2026-06-07 16:08:36,444 - UDP 0.0.0.0:68 -> 67
+2026-06-07 16:08:36,445 - UDP 127.0.0.1:67 -> 68
+2026-06-07 16:08:36,842 - UDP 127.0.0.1:58238 -> 53
+2026-06-07 16:08:36,843 - UDP 127.0.0.1:48160 -> 53
+2026-06-07 16:08:40,236 - UDP 127.0.0.1:58869 -> 53
+2026-06-07 16:08:40,238 - UDP 127.0.0.1:47796 -> 53
+2026-06-07 16:08:46,859 - UDP 127.0.0.1:47482 -> 53
+2026-06-07 16:08:46,860 - UDP 127.0.0.1:47482 -> 53
+2026-06-07 16:08:46,903 - UDP 127.0.0.1:60990 -> 53
+2026-06-07 16:08:46,904 - UDP 127.0.0.1:60990 -> 53
+2026-06-07 16:08:49,931 - UDP 127.0.0.1:36427 -> 53
+2026-06-07 16:08:49,932 - UDP 127.0.0.1:36427 -> 53
+2026-06-07 16:08:51,579 - UDP 127.0.0.1:35470 -> 53
+2026-06-07 16:08:51,580 - UDP 127.0.0.1:40382 -> 53
+2026-06-09 01:27:49,362 - No se pudo inicializar TLS
+Traceback (most recent call last):
+  File "/home/jlhack/Documents/Project/sniffhound/sniffhound/honeypot.py", line 772, in start
+    self._tls_context = self._create_tls_context()
+                        ~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/jlhack/Documents/Project/sniffhound/sniffhound/honeypot.py", line 834, in _create_tls_context
+    raise FileNotFoundError(
+    ...<2 lines>...
+    )
+FileNotFoundError: No se encontraron certificados TLS: honeypot_cert.pem y/o honeypot_key.pem. Generalos con OpenSSL o copia un par PEM valido.
+2026-06-09 01:27:49,365 - TCP honeypot activo en 0.0.0.0:23
+2026-06-09 01:27:49,365 - TCP honeypot activo en 0.0.0.0:22
+2026-06-09 01:27:49,365 - TCP honeypot activo en 0.0.0.0:21
+2026-06-09 01:27:49,365 - TCP honeypot activo en 0.0.0.0:53
+2026-06-09 01:27:49,366 - TCP honeypot activo en 0.0.0.0:25
+2026-06-09 01:27:49,366 - TCP honeypot activo en 0.0.0.0:80
+2026-06-09 01:27:49,366 - TCP honeypot activo en 0.0.0.0:143
+2026-06-09 01:27:49,367 - TCP honeypot activo en 0.0.0.0:139
+2026-06-09 01:27:49,367 - TCP honeypot activo en 0.0.0.0:110
+2026-06-09 01:27:49,367 - TCP honeypot activo en 0.0.0.0:389
+2026-06-09 01:27:49,367 - TCP honeypot activo en 0.0.0.0:554
+2026-06-09 01:27:49,368 - TCP honeypot activo en 0.0.0.0:445
+2026-06-09 01:27:49,368 - TCP honeypot activo en 0.0.0.0:1883
+2026-06-09 01:27:49,368 - TCP honeypot activo en 0.0.0.0:587
+2026-06-09 01:27:49,368 - TCP honeypot activo en 0.0.0.0:2049
+2026-06-09 01:27:49,369 - TCP honeypot activo en 0.0.0.0:2121
+2026-06-09 01:27:49,369 - TCP honeypot activo en 0.0.0.0:2525
+2026-06-09 01:27:49,369 - TCP honeypot activo en 0.0.0.0:3306
+2026-06-09 01:27:49,369 - TCP honeypot activo en 0.0.0.0:5900
+2026-06-09 01:27:49,369 - TCP honeypot activo en 0.0.0.0:5672
+2026-06-09 01:27:49,369 - TCP honeypot activo en 0.0.0.0:5432
+2026-06-09 01:27:49,370 - TCP honeypot activo en 0.0.0.0:3389
+2026-06-09 01:27:49,370 - TCP honeypot activo en 0.0.0.0:6379
+2026-06-09 01:27:49,370 - TCP honeypot activo en 0.0.0.0:8000
+2026-06-09 01:27:49,370 - TCP honeypot activo en 0.0.0.0:8888
+2026-06-09 01:27:49,370 - TCP honeypot activo en 0.0.0.0:8080
+2026-06-09 01:27:49,370 - TCP honeypot activo en 0.0.0.0:9200
+2026-06-09 01:27:49,371 - UDP honeypot activo en 0.0.0.0:67
+2026-06-09 01:27:49,371 - TCP honeypot activo en 0.0.0.0:27017
+2026-06-09 01:27:49,371 - UDP honeypot activo en 0.0.0.0:68
+2026-06-09 01:27:49,371 - UDP honeypot activo en 0.0.0.0:53
+2026-06-09 01:27:49,371 - TCP honeypot activo en 0.0.0.0:11211
+2026-06-09 01:27:49,372 - UDP honeypot activo en 0.0.0.0:69
+2026-06-09 01:27:49,372 - UDP honeypot activo en 0.0.0.0:123
+2026-06-09 01:27:49,372 - UDP honeypot activo en 0.0.0.0:137
+2026-06-09 01:27:49,373 - UDP honeypot activo en 0.0.0.0:138
+2026-06-09 01:27:49,373 - UDP honeypot activo en 0.0.0.0:500
+2026-06-09 01:27:49,373 - UDP honeypot activo en 0.0.0.0:161
+2026-06-09 01:27:49,373 - UDP honeypot activo en 0.0.0.0:514
+2026-06-09 01:27:49,374 - UDP honeypot activo en 0.0.0.0:1812
+2026-06-09 01:27:49,374 - UDP honeypot activo en 0.0.0.0:520
+2026-06-09 01:27:49,374 - UDP honeypot activo en 0.0.0.0:1813
+2026-06-09 01:27:49,374 - UDP honeypot activo en 0.0.0.0:1900
+2026-06-09 01:27:49,375 - UDP honeypot activo en 0.0.0.0:4500
+2026-06-09 01:27:49,375 - UDP honeypot activo en 0.0.0.0:5060
+2026-06-09 01:27:49,375 - UDP honeypot activo en 0.0.0.0:5353
+2026-06-09 01:27:49,375 - Honeypot activo en 0.0.0.0 con 57 listeners
+2026-06-09 01:27:49,375 - UDP honeypot activo en 0.0.0.0:11211
+2026-06-09 01:28:15,501 - No se pudo inicializar TLS
+Traceback (most recent call last):
+  File "/home/jlhack/Documents/Project/sniffhound/sniffhound/honeypot.py", line 772, in start
+    self._tls_context = self._create_tls_context()
+                        ~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/jlhack/Documents/Project/sniffhound/sniffhound/honeypot.py", line 834, in _create_tls_context
+    raise FileNotFoundError(
+    ...<2 lines>...
+    )
+FileNotFoundError: No se encontraron certificados TLS: honeypot_cert.pem y/o honeypot_key.pem. Generalos con OpenSSL o copia un par PEM valido.
+2026-06-09 01:28:15,503 - TCP honeypot activo en 0.0.0.0:22
+2026-06-09 01:28:15,503 - TCP honeypot activo en 0.0.0.0:23
+2026-06-09 01:28:15,504 - TCP honeypot activo en 0.0.0.0:21
+2026-06-09 01:28:15,504 - TCP honeypot activo en 0.0.0.0:25
+2026-06-09 01:28:15,504 - TCP honeypot activo en 0.0.0.0:53
+2026-06-09 01:28:15,505 - TCP honeypot activo en 0.0.0.0:80
+2026-06-09 01:28:15,505 - TCP honeypot activo en 0.0.0.0:139
+2026-06-09 01:28:15,505 - TCP honeypot activo en 0.0.0.0:110
+2026-06-09 01:28:15,505 - TCP honeypot activo en 0.0.0.0:143
+2026-06-09 01:28:15,506 - TCP honeypot activo en 0.0.0.0:445
+2026-06-09 01:28:15,506 - TCP honeypot activo en 0.0.0.0:1883
+2026-06-09 01:28:15,506 - TCP honeypot activo en 0.0.0.0:389
+2026-06-09 01:28:15,506 - TCP honeypot activo en 0.0.0.0:554
+2026-06-09 01:28:15,506 - TCP honeypot activo en 0.0.0.0:587
+2026-06-09 01:28:15,506 - TCP honeypot activo en 0.0.0.0:2049
+2026-06-09 01:28:15,507 - TCP honeypot activo en 0.0.0.0:2121
+2026-06-09 01:28:15,507 - TCP honeypot activo en 0.0.0.0:3306
+2026-06-09 01:28:15,507 - TCP honeypot activo en 0.0.0.0:3389
+2026-06-09 01:28:15,507 - TCP honeypot activo en 0.0.0.0:2525
+2026-06-09 01:28:15,507 - TCP honeypot activo en 0.0.0.0:5432
+2026-06-09 01:28:15,508 - TCP honeypot activo en 0.0.0.0:5900
+2026-06-09 01:28:15,508 - TCP honeypot activo en 0.0.0.0:6379
+2026-06-09 01:28:15,508 - TCP honeypot activo en 0.0.0.0:8000
+2026-06-09 01:28:15,508 - TCP honeypot activo en 0.0.0.0:5672
+2026-06-09 01:28:15,508 - TCP honeypot activo en 0.0.0.0:8888
+2026-06-09 01:28:15,509 - TCP honeypot activo en 0.0.0.0:8080
+2026-06-09 01:28:15,509 - TCP honeypot activo en 0.0.0.0:9200
+2026-06-09 01:28:15,509 - TCP honeypot activo en 0.0.0.0:11211
+2026-06-09 01:28:15,509 - TCP honeypot activo en 0.0.0.0:27017
+2026-06-09 01:28:15,509 - UDP honeypot activo en 0.0.0.0:53
+2026-06-09 01:28:15,509 - UDP honeypot activo en 0.0.0.0:67
+2026-06-09 01:28:15,509 - UDP honeypot activo en 0.0.0.0:68
+2026-06-09 01:28:15,510 - UDP honeypot activo en 0.0.0.0:69
+2026-06-09 01:28:15,510 - UDP honeypot activo en 0.0.0.0:123
+2026-06-09 01:28:15,510 - UDP honeypot activo en 0.0.0.0:137
+2026-06-09 01:28:15,510 - UDP honeypot activo en 0.0.0.0:138
+2026-06-09 01:28:15,510 - UDP honeypot activo en 0.0.0.0:161
+2026-06-09 01:28:15,510 - UDP honeypot activo en 0.0.0.0:500
+2026-06-09 01:28:15,511 - UDP honeypot activo en 0.0.0.0:514
+2026-06-09 01:28:15,511 - UDP honeypot activo en 0.0.0.0:520
+2026-06-09 01:28:15,511 - UDP honeypot activo en 0.0.0.0:1812
+2026-06-09 01:28:15,511 - UDP honeypot activo en 0.0.0.0:1813
+2026-06-09 01:28:15,511 - UDP honeypot activo en 0.0.0.0:1900
+2026-06-09 01:28:15,511 - UDP honeypot activo en 0.0.0.0:4500
+2026-06-09 01:28:15,512 - UDP honeypot activo en 0.0.0.0:5060
+2026-06-09 01:28:15,512 - UDP honeypot activo en 0.0.0.0:5353
+2026-06-09 01:28:15,512 - Honeypot activo en 0.0.0.0 con 57 listeners
+2026-06-09 01:28:15,512 - UDP honeypot activo en 0.0.0.0:11211

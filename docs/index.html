@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <meta name="theme-color" content="#07111a">
+    <meta
+      name="description"
+      content="SniffHound documentation for a native Python packet sniffer with SQLite persistence, live telemetry, and an optional honeypot runtime."
+    >
+    <title>SniffHound Docs</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #06101a;
+        --panel: rgba(12, 20, 31, 0.92);
+        --panel-border: rgba(86, 180, 231, 0.22);
+        --text: #e7f4ff;
+        --muted: #91aac1;
+        --accent: #59d7ff;
+        --accent-2: #ffb15c;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background:
+          radial-gradient(circle at top left, rgba(49, 146, 214, 0.2), transparent 32%),
+          radial-gradient(circle at top right, rgba(255, 165, 92, 0.15), transparent 28%),
+          linear-gradient(180deg, #07131f 0%, #03070d 100%);
+        color: var(--text);
+        font-family: Inter, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background:
+          linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+        background-size: 28px 28px;
+        mask-image: radial-gradient(circle at center, black 35%, transparent 88%);
+        opacity: 0.18;
+      }
+
+      main {
+        position: relative;
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 56px 20px 72px;
+      }
+
+      .hero {
+        padding: 34px;
+        border: 1px solid var(--panel-border);
+        border-radius: 28px;
+        background: var(--panel);
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.36);
+        backdrop-filter: blur(18px);
+      }
+
+      .eyebrow {
+        margin: 0 0 12px;
+        color: var(--accent);
+        text-transform: uppercase;
+        letter-spacing: 0.22em;
+        font-size: 0.72rem;
+        font-weight: 700;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(2.5rem, 7vw, 5rem);
+        line-height: 0.94;
+        letter-spacing: -0.05em;
+      }
+
+      .lede {
+        max-width: 68ch;
+        margin: 18px 0 0;
+        color: var(--muted);
+        font-size: 1.05rem;
+        line-height: 1.7;
+      }
+
+      .links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 28px;
+      }
+
+      .link {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 16px;
+        border-radius: 999px;
+        border: 1px solid rgba(118, 194, 231, 0.22);
+        background: rgba(7, 16, 26, 0.72);
+        color: var(--text);
+        text-decoration: none;
+        font-weight: 600;
+      }
+
+      .link--accent {
+        border-color: rgba(255, 177, 92, 0.28);
+        color: #fff1df;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(12, 1fr);
+        gap: 16px;
+        margin-top: 24px;
+      }
+
+      .card {
+        grid-column: span 6;
+        padding: 20px;
+        border-radius: 20px;
+        background: rgba(7, 15, 24, 0.82);
+        border: 1px solid rgba(118, 194, 231, 0.16);
+      }
+
+      .card h2 {
+        margin: 0 0 10px;
+        font-size: 1rem;
+      }
+
+      .card p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.65;
+      }
+
+      code {
+        padding: 0.15rem 0.35rem;
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.08);
+        font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+      }
+
+      @media (max-width: 760px) {
+        main {
+          padding: 24px 14px 48px;
+        }
+
+        .hero {
+          padding: 24px;
+          border-radius: 22px;
+        }
+
+        .card {
+          grid-column: span 12;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <p class="eyebrow">SniffHound</p>
+        <h1>Native packet capture docs</h1>
+        <p class="lede">
+          SniffHound is a Python packet sniffer built with only native networking and threading
+          primitives plus SQLite persistence. The runtime API and dashboard are provided through
+          <code>wsbuilder</code>, while this site serves the public documentation landing page for
+          <a href="https://sniffhound.jorgelsc.dev">sniffhound.jorgelsc.dev</a>.
+        </p>
+
+        <div class="links">
+          <a class="link" href="https://pypi.org/project/sniffhound/">PyPI</a>
+          <a class="link link--accent" href="https://test.pypi.org/project/sniffhound/">TestPyPI</a>
+          <a class="link" href="https://github.com/jorgelsc-dev/sniffhound">Source</a>
+          <a class="link" href="https://github.com/jorgelsc-dev/sniffhound/blob/main/README.md">README</a>
+        </div>
+
+        <div class="grid">
+          <article class="card">
+            <h2>Capture model</h2>
+            <p>
+              The runtime stays intentionally small: raw socket capture, manual packet parsing,
+              SQLite persistence, and UI-friendly summaries for sessions, packets, responses,
+              tags, and statistics.
+            </p>
+          </article>
+          <article class="card">
+            <h2>Usage</h2>
+            <p>
+              Install with <code>pip install sniffhound</code> and run <code>sniffhound</code> with
+              elevated permissions when raw capture is unavailable. The web UI can switch into
+              honeypot mode without extra command-line arguments.
+            </p>
+          </article>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
