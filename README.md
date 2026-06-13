@@ -1,431 +1,258 @@
 # SniffHound
 
-SniffHound is a **native Python network sniffer** built on top of `socket`, `threading`, `sqlite3`, and straightforward arithmetic and byte handling. It avoids third-party packet-parsing helpers and persists captures so the frontend can inspect flows, packets, payloads, rules, and statistics in one place.
+`SniffHound` es un capturador y analizador de trafico en Python nativo. Usa `socket`, `threading`, `sqlite3` y `wsbuilder` para servir una UI/API local que puede operar como `sniffer` o como `honeypot`.
 
-**Docs:** [https://sniffhound.jorgelsc.dev](https://sniffhound.jorgelsc.dev)  
-**Repository:** [https://github.com/jorgelsc-dev/sniffhound](https://github.com/jorgelsc-dev/sniffhound)
+Sitio oficial: [https://sniffhound.jorgelsc.dev](https://sniffhound.jorgelsc.dev)<br>
+Repositorio: [https://github.com/jorgelsc-dev/sniffhound](https://github.com/jorgelsc-dev/sniffhound)<br>
+PyPI: `sniffhound`<br>
+Comando: `sniffhound`
 
----
+## Mapa rapido
 
-## ✨ Highlights
+`Operador -> token de sesion -> dashboard / API -> RuntimeController -> Sniffer | Honeypot -> SQLite -> charts / mapa / WebSocket`
 
-- 🔍 **Passive packet capture** for IPv4, IPv6, ARP, TCP, UDP, and ICMP traffic
-- 💾 **SQLite persistence** for sessions, flows, packets, payloads, and tags
-- 🎨 **Live dashboard** and REST/WebSocket API powered by `wsbuilder`
-- 🔐 **JWT authentication** for secure API access
-- 📝 **NDJSON logging** for structured, queryable logs
-- 🧪 **Comprehensive test suite** with 40+ unit/integration tests
-- 🛡️ **Thread-safe** capture with RLock synchronization
-- ⚡ **Native-only parsing** (no `scapy`, `dpkt`, or `impacket` dependencies)
+## Lo que incluye
 
----
+- Captura raw para IPv4, IPv6, ARP, TCP, UDP, ICMP y STP.
+- Persistencia SQLite para sesiones, flows, packets, payloads, tags y runtime config.
+- Modo `honeypot` con listeners TCP/UDP sobre puertos comunes.
+- Dashboard Vue 3 + Vuetify servido por el mismo proceso.
+- Autenticacion por token de sesion y JWT HS256.
+- WebSocket en vivo para eventos `packet`, `stats_update`, `runtime_mode` y chat.
+- Catalogos editables para reglas, probes y presets desde API o archivos JSON.
 
-## 📦 Install
+## Requisitos
 
-### From PyPI
+- Python `3.12+`
+- Linux/Unix con `AF_PACKET` para captura raw en modo `sniffer`
+- privilegios de administrador o `CAP_NET_RAW` para captura live
+- Node `>=22.12.0` solo si vas a trabajar en `frontend/`
+
+## Instalacion
+
+### Desde PyPI
 
 ```bash
 python -m pip install --upgrade pip
 python -m pip install sniffhound
 ```
 
-### From GitHub
+### Desde el repo
 
 ```bash
-python -m pip install "sniffhound @ git+https://github.com/jorgelsc-dev/sniffhound.git"
-```
-
-### From Source
-
-```bash
-git clone https://github.com/jorgelsc-dev/sniffhound.git
-cd sniffhound
 python3 -m venv .venv
 . .venv/bin/activate
-pip install -U pip setuptools wheel
-python -m pip install .
+python -m pip install --upgrade pip
+python -m pip install -e .
 ```
 
-> On Kali and other PEP 668-managed systems, installs must be done inside a virtual environment. Using the system interpreter directly will fail with `externally-managed-environment`.
->
-> If `frontend/dist` is missing during a source install, the build backend will try to build it automatically with `npm ci && npm run build`. For frontend development you still want Node 22 LTS, because the current toolchain is validated there.
+## Inicio rapido
 
----
-
-## 🚀 Quick Start
-
-### Run the sniffer
+### 1. Arrancar el runtime
 
 ```bash
-# Default: HTTP on 127.0.0.1:45678
-sniffhound
-
-# Or with environment variables
-SNIFFHOUND_HOST=0.0.0.0 SNIFFHOUND_PORT=8080 sniffhound
-```
-
-**Requirements:**
-- Linux/Unix with `AF_PACKET` socket support
-- Root/administrator permissions or `CAP_NET_RAW`
-- Python 3.12+
-
-### Access the dashboard
-
-Open your browser to `http://localhost:45678`
-
-On Linux, the `sniffhound` command will relaunch itself with `sudo` when capture privileges are required. You can also run it explicitly as `sudo sniffhound`.
-
----
-
-## 🔐 Authentication
-
-SniffHound now includes **JWT-based authentication** for API security.
-
-### Generate an API Token
-
-```python
-from sniffhound.auth import generate_token
-
-token = generate_token(user="admin", scope="full")
-print(token)
-```
-
-Or use environment variable:
-
-```bash
-export SNIFFHOUND_SECRET_KEY="your-secret-key-here"
-```
-
-### Use tokens with API requests
-
-```bash
-# Authenticate with Bearer token
-curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  http://localhost:45678/api/dashboard/
-
-# WebSocket authentication
-# Send token in Authorization header
-```
-
-### Enable required authentication
-
-```bash
-# Enforce auth on all requests
-export SNIFFHOUND_REQUIRE_AUTH=1
 sniffhound
 ```
 
-### Token configuration
+Notas del launcher:
+
+- Si `45678` esta ocupado, prueba el resto del mismo bloque de 10 puertos y avisa cual usa.
+- Si faltan privilegios para captura raw y corresponde elevar, intenta relanzarse con `sudo`.
+- Si solo quieres abrir la UI sin autoarranque de captura, usa `SNIFFHOUND_CAPTURE_AUTO_START=0`.
+
+Ejemplos utiles:
 
 ```bash
-# Token expiry time (hours)
-export SNIFFHOUND_TOKEN_EXPIRY_HOURS=48
+SNIFFHOUND_CAPTURE_AUTO_START=0 sniffhound
+SNIFFHOUND_RUNTIME_MODE=honeypot sniffhound
+SNIFFHOUND_CAPTURE_INTERFACES="eth0,wlan0" sniffhound
 ```
 
----
+### 2. Copiar el token de sesion
 
-## 📝 Logging
+Al arrancar, `sniffhound` imprime un token de 8 caracteres en la terminal. La UI lo pide al abrirse y lo reutiliza para HTTP y WebSocket.
 
-All application events are logged in **NDJSON format** (newline-delimited JSON) for easy parsing and indexing.
+### 3. Abrir la interfaz
 
-### Log configuration
+- Dashboard: `http://127.0.0.1:45678`
+- Docs runtime: `http://127.0.0.1:45678/docs`
+- Catalogo de endpoints: `http://127.0.0.1:45678/api/endpoints/`
+
+### 4. Confirmar auth y runtime
 
 ```bash
-# Enable file logging
-export SNIFFHOUND_LOG_FILE=/var/log/sniffhound/events.ndjson
-sniffhound
+curl http://127.0.0.1:45678/api/auth/session
+curl -H "Authorization: Bearer TOKEN" http://127.0.0.1:45678/api/runtime/
+curl -H "Authorization: Bearer TOKEN" http://127.0.0.1:45678/api/dashboard/
 ```
 
-### Log output example
+## Modos de ejecucion
 
-```json
-{"timestamp": "2026-06-06T12:34:56.789Z", "level": "INFO", "logger": "sniffhound.capture", "message": "Starting capture on eth0", "module": "sniffer", "function": "_capture_worker", "line": 156}
-{"timestamp": "2026-06-06T12:34:57.123Z", "level": "ERROR", "logger": "sniffhound.capture", "message": "permission denied: Operation not permitted", "module": "sniffer", "function": "_capture_worker", "line": 163}
-```
+### `sniffer`
 
-### Log levels
+- abre un socket raw por interfaz seleccionada;
+- parsea Ethernet, VLAN, IPv4, IPv6, ARP, TCP, UDP, ICMP e ICMPv6;
+- registra paquetes, flows y tags en SQLite;
+- emite eventos `packet` y `stats_update` por WebSocket.
 
-```python
-from sniffhound.logger import get_logger, LoggerContext
+### `honeypot`
 
-logger = get_logger("my_module", log_file="/var/log/sniffhound.log")
+- levanta listeners TCP/UDP sobre puertos conocidos;
+- responde con banners y payloads predefinidos;
+- guarda el trafico como sesiones `honeypot:*` en la misma base;
+- escribe actividad operativa en `honeypot.log`.
 
-# Standard logging
-logger.debug("Debug message")
-logger.info("Info message")
-logger.warning("Warning message")
-logger.error("Error message", extra={"error_code": 500})
+### Cambio de modo
 
-# Context manager for temporary level changes
-with LoggerContext(logger, level=10):  # DEBUG
-    logger.debug("This will be logged")
-```
-
-### Available loggers
-
-```python
-from sniffhound.logger import (
-    get_logger,
-    get_request_logger,
-    get_capture_logger,
-    get_honeypot_logger,
-)
-
-# HTTP request logging
-req_logger = get_request_logger()
-
-# Packet capture events
-cap_logger = get_capture_logger()
-
-# Honeypot events
-hp_logger = get_honeypot_logger()
-```
-
----
-
-## 🧪 Testing
-
-SniffHound includes a comprehensive test suite with **40+ tests** covering:
-- Unit tests (utils, auth, logging)
-- Integration tests (database, API)
-- Concurrency tests (thread-safety)
-- Security tests (JWT, authentication)
-
-### Run tests
+El runtime se cambia por API:
 
 ```bash
-# Install dev dependencies
-pip install pytest pytest-cov
-
-# Run all tests
-pytest tests/
-
-# Run with coverage
-pytest tests/ --cov=sniffhound --cov-report=html
-
-# Run specific test
-pytest tests/test_comprehensive.py::TestJWTAuth -v
-
-# Run with verbose output
-pytest tests/ -vv
+curl -X POST http://127.0.0.1:45678/api/runtime/ \
+  -H "Authorization: Bearer TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"honeypot"}'
 ```
 
-### Test structure
-
-```
-tests/
-├── test_smoke.py              # Sanity checks (original)
-└── test_comprehensive.py      # Full test suite
-    ├── TestVersion            # Version validation
-    ├── TestNDJsonLogger       # NDJSON logging tests
-    ├── TestJWTAuth            # JWT authentication tests
-    ├── TestUtils              # Utility function tests
-    ├── TestSniffStore         # SQLite persistence tests
-    ├── TestConcurrency        # Thread-safety tests
-    ├── TestSettings           # Configuration tests
-    └── TestSecurityBasics     # Security verification tests
-```
-
-### Running individual test suites
+Arranque/parada del motor activo:
 
 ```bash
-# Only auth tests
-pytest tests/test_comprehensive.py::TestJWTAuth -v
+curl -X POST http://127.0.0.1:45678/api/runtime/ \
+  -H "Authorization: Bearer TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"start"}'
 
-# Only logging tests
-pytest tests/test_comprehensive.py::TestNDJsonLogger -v
-
-# Only concurrent tests
-pytest tests/test_comprehensive.py::TestConcurrency -v
-
-# With coverage for specific module
-pytest tests/ --cov=sniffhound.auth --cov-report=term-missing
+curl -X POST http://127.0.0.1:45678/api/runtime/ \
+  -H "Authorization: Bearer TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"stop"}'
 ```
 
----
+## Flujo mental
 
-## 📚 Environment Variables
+1. `manage.py` selecciona puerto, imprime token y arranca el runtime.
+2. `app.py` sirve la SPA, protege la API y conecta el `RuntimeController`.
+3. `Sniffer` o `HoneypotEngine` generan eventos y escriben en `SniffStore`.
+4. `api/dashboard`, `api/charts/analytics`, `api/map/scan` y `WS /ws/` consumen ese estado.
 
-### Server Configuration
+## Auth y acceso
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SNIFFHOUND_HOST` | `127.0.0.1` | Server bind address |
-| `SNIFFHOUND_PORT` | `45678` | Server port |
-| `SNIFFHOUND_DB_PATH` | `SniffHound.db` | SQLite database path |
-| `SNIFFHOUND_DEBUG` | `1` | Debug mode (0/1) |
-| `SNIFFHOUND_RUNTIME_MODE` | `sniffer` | Runtime mode: `sniffer` or `honeypot` |
+- `SNIFFHOUND_REQUIRE_AUTH=1` por defecto.
+- Se aceptan:
+  - `Authorization: Bearer <token>`
+  - `X-Access-Token: <token>`
+  - `?access_token=<token>` en WebSocket
+- `GET /api/auth/session` indica si la sesion esta autenticada.
+- `sniffhound.auth.generate_token()` crea JWT HS256 para integraciones.
+- `SNIFFHOUND_JWT_SECRET` define la clave de firma.
+- `SNIFFHOUND_JWT_TTL` define el TTL en segundos.
 
-### Capture Configuration
+## Superficie HTTP y WS
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SNIFFHOUND_CAPTURE_AUTO_START` | `1` | Auto-start capture on launch |
-| `SNIFFHOUND_REQUIRE_ADMIN` | `auto` | Relaunch with `sudo` before capture when the process is not already elevated |
-| `SNIFFHOUND_CAPTURE_INTERFACES` | `` | Comma-separated interfaces (auto-detect if empty) |
-| `SNIFFHOUND_PROMISCUOUS` | `1` | Enable promiscuous mode |
-| `SNIFFHOUND_SNAPLEN` | `65535` | Max packet length to capture |
-| `SNIFFHOUND_POLL_TIMEOUT` | `0.5` | Socket poll timeout (seconds) |
-| `SNIFFHOUND_CAPTURE_BUFFER_BYTES` | `524288` | Capture buffer size (512KB) |
+Rutas mas utiles:
 
-### Security & Authentication
+- `GET /`
+- `GET /docs`
+- `GET /docs.json`
+- `GET /api/auth/session`
+- `GET|POST /api/runtime/`
+- `GET /api/dashboard/`
+- `GET /api/charts/analytics`
+- `GET /api/map/scan`
+- `GET /api/soc/analysis/`
+- `GET /protocols/`
+- `GET /targets/`
+- `POST|PUT|DELETE /target/`
+- `POST /target/action/`
+- `GET|DELETE /ports/` y variantes por protocolo
+- `GET|DELETE /banners/`
+- `GET /tags/` y variantes por protocolo
+- `GET /api/catalog/*`
+- `POST /api/ws/broadcast`
+- `POST /api/ws/ping`
+- `POST /api/ws/close`
+- `GET /api/chat/messages`
+- `POST /api/chat/clear`
+- `WS /ws/`
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SNIFFHOUND_SECRET_KEY` | `hostname hash` | JWT signing key |
-| `SNIFFHOUND_TOKEN_EXPIRY_HOURS` | `24` | JWT token expiry time |
-| `SNIFFHOUND_REQUIRE_AUTH` | `0` | Enforce authentication (0/1) |
+## Configuracion util
 
-### Logging Configuration
+Variables practicas del runtime:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SNIFFHOUND_LOG_FILE` | `` | NDJSON log file path |
-| `SNIFFHOUND_LOG_LEVEL` | `INFO` | Log level (DEBUG/INFO/WARNING/ERROR) |
+- `SNIFFHOUND_HOST`
+- `SNIFFHOUND_PORT`
+- `SNIFFHOUND_DB_PATH`
+- `SNIFFHOUND_RUNTIME_MODE`
+- `SNIFFHOUND_CAPTURE_AUTO_START`
+- `SNIFFHOUND_CAPTURE_DEMO_MODE`
+- `SNIFFHOUND_CAPTURE_INTERFACES`
+- `SNIFFHOUND_PROMISCUOUS`
+- `SNIFFHOUND_CAPTURE_BUFFER_BYTES`
+- `SNIFFHOUND_POLL_TIMEOUT`
+- `SNIFFHOUND_REQUIRE_AUTH`
+- `SNIFFHOUND_REQUIRE_ADMIN`
+- `SNIFFHOUND_JWT_SECRET`
+- `SNIFFHOUND_JWT_TTL`
+- `SNIFFHOUND_FRONTEND_DIST`
 
----
+## Componentes del repo
 
-## 🔒 Security Best Practices
+- `sniffhound/manage.py`: launcher, elevacion opcional y consola interactiva.
+- `sniffhound/app.py`: SPA, API, WebSocket y runtime controller.
+- `sniffhound/sniffer.py`: captura raw y parseo de paquetes.
+- `sniffhound/honeypot.py`: listeners emulados y registro de trafico activo.
+- `sniffhound/store.py`: esquema SQLite y snapshots de dashboard.
+- `sniffhound/auth.py`: token de sesion y JWT HS256.
+- `sniffhound/logger.py`: helper NDJSON para integraciones y pruebas.
+- `frontend/`: SPA Vue 3 + Vuetify.
 
-### 1. Change the secret key
+## Logging y datos
+
+- La base por defecto es `SniffHound.db`.
+- El modo honeypot escribe rotacion local en `honeypot.log`.
+- `sniffhound.logger` existe como helper de libreria; no esta cableado automaticamente al arranque del runtime principal.
+
+## Desarrollo y validacion
+
+Backend:
 
 ```bash
-export SNIFFHOUND_SECRET_KEY="your-very-secret-key-here-min-32-chars"
+python -m sniffhound.manage
 ```
 
-### 2. Enable authentication
+Frontend:
 
 ```bash
-export SNIFFHOUND_REQUIRE_AUTH=1
-export SNIFFHOUND_TOKEN_EXPIRY_HOURS=12
+cd frontend
+npm ci
+npm run dev
 ```
 
-### 3. Use logs for auditing
+Checks:
 
 ```bash
-export SNIFFHOUND_LOG_FILE=/var/log/sniffhound/audit.ndjson
+python -m unittest discover -s tests -q
+pytest tests/ -q
 ```
 
-### 4. Bind to localhost or VPN
+Frontend:
 
 ```bash
-# NOT for production with live interfaces
-export SNIFFHOUND_HOST=127.0.0.1
+cd frontend
+npm run lint
+npm run build
 ```
 
-### 5. Monitor captured traffic
+## Documentacion
 
-- Payloads may contain sensitive data (credentials, tokens)
-- Configure firewall rules to restrict access
-- Use HTTPS reverse proxy for remote access
+- Sitio publico: [https://sniffhound.jorgelsc.dev](https://sniffhound.jorgelsc.dev)
+- Landing publica: [docs/index.html](docs/index.html)
+- Resumen rapido: [QUICKREF.md](QUICKREF.md)
+- Arquitectura: [ARCHITECTURE.md](ARCHITECTURE.md)
+- Ejemplos: [EXAMPLES.md](EXAMPLES.md)
 
----
+## Contribucion y soporte
 
-## 📊 API Reference
-
-### REST Endpoints
-
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| GET | `/api/dashboard/` | Current dashboard snapshot | Optional |
-| GET | `/api/endpoints/` | Endpoint catalog | Optional |
-| POST | `/api/capture/start` | Start capture | Optional |
-| POST | `/api/capture/stop` | Stop capture | Optional |
-| GET | `/api/packets/` | List packets | Optional |
-| GET | `/api/packets/:id` | Get packet details | Optional |
-| GET | `/protocols/` | Supported protocols | No |
-| GET | `/docs` | Runtime API documentation | No |
-
-### WebSocket
-
-**Endpoint:** `/ws/live`
-
-**Message Types:**
-- `packet` - New packet captured
-- `stats_update` - Statistics update
-- `capture_state` - Capture state change
-
-**Authentication:**
-```javascript
-// Send token in Authorization header
-ws = new WebSocket('ws://localhost:45678/ws/live', {
-  headers: { 'Authorization': 'Bearer YOUR_TOKEN' }
-});
-```
-
----
-
-## 🔄 Recent Changes (v0.1.0+)
-
-### ✅ Added
-- ✅ JWT authentication module (`sniffhound.auth`)
-- ✅ NDJSON logging system (`sniffhound.logger`)
-- ✅ Comprehensive test suite (40+ tests)
-- ✅ Full API documentation
-
-### ⚠️ Removed
-- ⚠️ Demo mode (no longer available)
-- ⚠️ `SNIFFHOUND_DEMO_MODE` environment variable
-
-### 🔧 Improved
-- 🔧 Thread-safe database operations
-- 🔧 Structured error handling
-- 🔧 Type hints throughout codebase
-
----
-
-## 🛠️ Development
-
-### Project structure
-
-```
-sniffhound/
-├── app.py              # Main server & routing
-├── auth.py             # JWT authentication
-├── logger.py           # NDJSON logging
-├── sniffer.py          # Packet capture engine
-├── honeypot.py         # Honeypot mode
-├── store.py            # SQLite persistence
-├── settings.py         # Configuration
-├── rulesets.py         # Packet classification
-├── utils.py            # Utilities
-└── _frontend_dist/     # Compiled Vue frontend
-
-tests/
-├── test_smoke.py       # Original sanity checks
-└── test_comprehensive.py  # New comprehensive suite
-
-frontend/
-├── src/
-│   ├── App.vue
-│   ├── main.js
-│   ├── components/
-│   ├── views/
-│   └── router/
-└── package.json
-```
-
-### Code standards
-
-- Python 3.12+ with PEP 604 type hints
-- Thread-safe operations with RLock
-- SQL injection prevention (always use `?` placeholders)
-- NDJSON for all structured logging
-
----
-
-## 📄 License
-
-MIT License - See [LICENSE](LICENSE) for details
-
----
-
-## 🤝 Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines
-
----
-
-## 📧 Support
-
-Issues and questions: [GitHub Issues](https://github.com/jorgelsc-dev/sniffhound/issues)
+- Mantiene intacta la restriccion de captura nativa sin dependencias de parseo de terceros.
+- Actualiza docs cuando cambie UI, API o esquema.
+- Reporta vulnerabilidades por canal privado.
+- Soporte y notas adicionales: `SUPPORT.md`
