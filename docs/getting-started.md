@@ -5,7 +5,7 @@
 - Python `3.12+`
 - Linux o Unix con `AF_PACKET` para captura raw en modo `sniffer`
 - privilegios de administrador o `CAP_NET_RAW` para captura en vivo
-- Node `20+` solo si vas a trabajar en `frontend/`
+- Node `22.12.0+` solo si vas a trabajar en `frontend/`
 
 ## Instalar
 

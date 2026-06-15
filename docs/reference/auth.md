@@ -12,7 +12,7 @@ Cabeceras aceptadas:
 
 - `Authorization: Bearer <token>`
 - `X-Access-Token: <token>`
-- `?access_token=<token>` para WebSocket
+- `?access_token=<token>`, `?token=<token>` o `?auth=<token>` para WebSocket y peticiones HTTP
 
 Si `SNIFFHOUND_REQUIRE_AUTH=0`, la app permite acceso anonimo cuando no se envia token.
 

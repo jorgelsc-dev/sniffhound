@@ -27,6 +27,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Configure Pages
+        uses: actions/configure-pages@v6
+        with:
+          enablement: true
+
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
@@ -42,6 +47,7 @@ jobs:
 
       - name: Copy Pages assets
         run: |
+          cp docs/.nojekyll site/.nojekyll
           cp docs/CNAME site/CNAME
           cp docs/404.html site/404.html
 
