@@ -8,6 +8,8 @@
 | `SNIFFHOUND_PORT` | `45678` | Puerto HTTP principal. |
 | `SNIFFHOUND_DB_PATH` | `SniffHound.db` | Ruta de SQLite. |
 | `SNIFFHOUND_RUNTIME_MODE` | `sniffer` | Motor inicial. |
+| `SNIFFHOUND_MODE` | `sniffer` | Alias legado de `SNIFFHOUND_RUNTIME_MODE`. |
+| `SNIFFHOUND_DEBUG` | `1` | Activa el modo debug de la app. |
 | `SNIFFHOUND_CAPTURE_AUTO_START` | `1` | Arranque automatico del motor. |
 | `SNIFFHOUND_CAPTURE_DEMO_MODE` | `0` | Relaja el relanzado con privilegios. |
 | `SNIFFHOUND_CAPTURE_INTERFACES` | vacio | Interfaces activas para `sniffer`. |
