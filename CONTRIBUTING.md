@@ -16,9 +16,15 @@ SniffHound keeps the capture pipeline intentionally small:
 3. Validate with the available build and compile checks.
 4. Open a pull request with a concise summary of the behavioral change.
 
+## Documentation
+
+- Edit public docs in `docs/` and the site config in `mkdocs.yml`.
+- Preview with `python -m pip install -r requirements-docs.txt` and `mkdocs serve`.
+- Validate with `mkdocs build --strict` before opening a PR.
+- Keep `docs/CNAME` and `docs/404.html` in sync when the docs site or legacy routes change.
+
 ## Expectations
 
 - Keep the native-only capture constraints intact.
 - Prefer backwards-compatible settings and environment variables when practical.
 - Add or update docs when the UI or API surface changes.
-
