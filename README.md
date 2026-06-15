@@ -244,8 +244,19 @@ npm run build
 
 ## Documentacion
 
-- Sitio publico: [https://sniffhound.jorgelsc.dev](https://sniffhound.jorgelsc.dev)
-- Landing publica: [docs/index.html](docs/index.html)
+- Sitio publico MkDocs: [https://sniffhound.jorgelsc.dev/](https://sniffhound.jorgelsc.dev/)
+- Fuente del sitio: `docs/` + `mkdocs.yml`
+- Dominio custom: `docs/CNAME`
+- Redirecciones legacy: `docs/404.html`
+
+Build y preview local:
+
+```bash
+python -m pip install -r requirements-docs.txt
+mkdocs serve
+mkdocs build --strict
+```
+
 - Resumen rapido: [QUICKREF.md](QUICKREF.md)
 - Arquitectura: [ARCHITECTURE.md](ARCHITECTURE.md)
 - Ejemplos: [EXAMPLES.md](EXAMPLES.md)
@@ -254,5 +265,6 @@ npm run build
 
 - Mantiene intacta la restriccion de captura nativa sin dependencias de parseo de terceros.
 - Actualiza docs cuando cambie UI, API o esquema.
+- La documentacion publica se construye con MkDocs Material desde `docs/`.
 - Reporta vulnerabilidades por canal privado.
 - Soporte y notas adicionales: `SUPPORT.md`
