@@ -32,12 +32,10 @@ sniffhound = "sniffhound.manage:main"
 
 [tool.setuptools]
 include-package-data = true
-
-[tool.setuptools.packages.find]
-include = ["sniffhound*"]
+packages = ["sniffhound", "sniffhound.data"]
 
 [tool.setuptools.package-data]
-"sniffhound" = ["data/*.json"]
+"sniffhound.data" = ["*.json"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
