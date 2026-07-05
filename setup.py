@@ -38,9 +38,9 @@ def _build_frontend_if_needed() -> None:
 
 class build_py(_build_py):
     def _frontend_output_pairs(self) -> list[tuple[str, str]]:
+        _build_frontend_if_needed()
         if getattr(self, "editable_mode", False):
             return []
-        _build_frontend_if_needed()
         if not FRONTEND_SOURCE_DIR.exists():
             return []
 

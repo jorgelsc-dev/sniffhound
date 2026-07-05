@@ -33,7 +33,7 @@ Comando: `sniffhound`
 ### Desde PyPI
 
 ```bash
-python -m pip install --upgrade pip
+python -m pip install --upgrade pip setuptools wheel
 python -m pip install sniffhound
 ```
 
@@ -42,7 +42,7 @@ python -m pip install sniffhound
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install --upgrade pip
+python -m pip install --upgrade pip setuptools wheel
 python -m pip install -e .
 ```
 
@@ -52,6 +52,12 @@ python -m pip install -e .
 
 ```bash
 sniffhound
+```
+
+Fallback if your shell has not refreshed the entry point yet:
+
+```bash
+python -m sniffhound
 ```
 
 Notas del launcher:
