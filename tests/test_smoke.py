@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import sniffhound
 from sniffhound.store import SniffStore
-from wsbuilder.http import Request
+from wsbuilder import Request
 
 
 def _reload_auth_stack(require_auth: str = "1"):
