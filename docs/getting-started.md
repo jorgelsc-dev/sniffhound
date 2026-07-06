@@ -25,6 +25,41 @@ python -m pip install --upgrade pip setuptools wheel
 python -m pip install -e .
 ```
 
+### Bundle offline para `pip`
+
+Si necesitas instalar SniffHound en una maquina sin internet, prepara antes un `wheelhouse` en una maquina compatible con acceso a red.
+
+Compatibilidad minima entre maquina de build y maquina destino:
+
+- mismo sistema operativo
+- misma arquitectura
+- misma version principal/secundaria de Python
+
+Si `frontend/dist` no existe, el build ejecuta `npm ci && npm run build`. Solo la maquina que arma el bundle necesita Node `>=22.12.0`.
+
+Build del bundle:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel build
+python -m build
+mkdir -p wheelhouse
+cp dist/*.whl wheelhouse/
+python -m pip download --dest wheelhouse "wsbuilder>=0.18.0"
+tar -czf sniffhound-offline-bundle.tar.gz wheelhouse
+```
+
+Instalacion offline:
+
+```bash
+tar -xzf sniffhound-offline-bundle.tar.gz
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install --no-index --find-links wheelhouse sniffhound
+sniffhound
+```
+
 ## Arranque rapido
 
 ```bash
