@@ -11,8 +11,11 @@ SniffHound usa un token de sesion corto para la UI y JWT HS256 para integracione
 Cabeceras aceptadas:
 
 - `Authorization: Bearer <token>`
+- `X-Security-Code: <token>`
 - `X-Access-Token: <token>`
-- `?access_token=<token>`, `?token=<token>` o `?auth=<token>` para WebSocket y peticiones HTTP
+- `?security_code=<token>`, `?access_token=<token>`, `?token=<token>` o `?auth=<token>` solo para el handshake WebSocket
+
+La UI conserva el codigo solo en memoria del tab actual. Si recargas la pagina o abres una pestaña nueva, tendras que volver a pegarlo.
 
 Si `SNIFFHOUND_REQUIRE_AUTH=0`, la app permite acceso anonimo cuando no se envia token.
 
@@ -36,3 +39,4 @@ curl -H "Authorization: Bearer TOKEN" http://127.0.0.1:45678/api/auth/session
 1. `extract_token_from_header()` limpia la cabecera `Authorization`.
 2. `verify_token()` compara el token de sesion o valida el JWT.
 3. `authenticate_request()` devuelve el estado de autentificacion para HTTP y WebSocket.
+4. La query string solo se usa para autenticar el handshake de `WS /ws/`, no para desbloquear peticiones HTTP normales.

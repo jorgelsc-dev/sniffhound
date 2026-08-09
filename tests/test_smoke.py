@@ -240,6 +240,49 @@ class SmokeTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertEqual(payload["status"], "ok")
 
+    def test_websocket_auth_accepts_valid_query_token(self):
+        auth_module, app_module = _reload_auth_stack("1")
+
+        previous_token = auth_module._SESSION_TOKEN
+        try:
+            auth_module._SESSION_TOKEN = "Ab12Cd34"
+            request = Request(
+                "GET",
+                "/ws/",
+                "security_code=Ab12Cd34",
+                {"upgrade": "websocket"},
+                b"",
+                ("127.0.0.1", 0),
+            )
+            is_authenticated, payload = app_module._authenticate_request(request, allow_query=True)
+        finally:
+            auth_module._SESSION_TOKEN = previous_token
+
+        self.assertTrue(is_authenticated)
+        self.assertIsNotNone(payload)
+
+    def test_api_routes_reject_query_string_security_code(self):
+        auth_module, app_module = _reload_auth_stack("1")
+
+        previous_token = auth_module._SESSION_TOKEN
+        try:
+            auth_module._SESSION_TOKEN = "Ab12Cd34"
+            request = Request(
+                "GET",
+                "/api/hello",
+                "security_code=Ab12Cd34",
+                {},
+                b"",
+                ("127.0.0.1", 0),
+            )
+            response = app_module.app.dispatch(request)
+            payload = json.loads(response.body.decode("utf-8"))
+        finally:
+            auth_module._SESSION_TOKEN = previous_token
+
+        self.assertEqual(response.status, 401)
+        self.assertEqual(payload["code"], "auth_required")
+
     def test_runtime_uses_configured_default_mode_on_startup(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "runtime.db"

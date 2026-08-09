@@ -62,9 +62,9 @@
         <v-card-title class="text-h5 pt-6">Código De Seguridad</v-card-title>
         <v-card-text class="pt-4">
           <p class="auth-dialog-copy">
-            Copia el código de 8 caracteres desde la terminal de `sniffhound`. Se guarda en
-            `localStorage` y se invalida cuando el backend responde `401` o el WebSocket devuelve
-            `4401`.
+            Copia el código de 8 caracteres desde la terminal de `sniffhound`. Solo vive en
+            memoria para este tab, se envía por `Authorization: Bearer` a la API y también se
+            adjunta al handshake del WebSocket.
           </p>
           <v-text-field
             ref="authInput"

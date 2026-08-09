@@ -4,7 +4,7 @@
 
 Sitio oficial: [https://sniffhound.jorgelsc.dev](https://sniffhound.jorgelsc.dev)<br>
 Repositorio: [https://github.com/jorgelsc-dev/sniffhound](https://github.com/jorgelsc-dev/sniffhound)<br>
-Artefacto oficial: paquete Debian `.deb` en GitHub Actions<br>
+Artefacto oficial: paquete Debian `.deb` en GitHub Releases<br>
 Comando: `sniffhound`
 
 ## Autoria, licencia y proteccion
@@ -47,7 +47,30 @@ Punto importante:
 
 ### Desde el paquete Debian (`.deb`)
 
-Descarga el artefacto del workflow `Package Debian` en GitHub Actions e instala el archivo generado:
+El workflow `Package Debian` publica el `.deb` en **GitHub Releases** como asset descargable. La pestaña **Packages** puede seguir vacia: el canal soportado para distribucion binaria es **Releases**.
+
+Ultima release Debian:
+
+- Navegador: [github.com/jorgelsc-dev/sniffhound/releases/latest](https://github.com/jorgelsc-dev/sniffhound/releases/latest)
+- GitHub CLI:
+
+```bash
+mkdir -p /tmp/sniffhound-release
+gh release download --repo jorgelsc-dev/sniffhound --pattern '*.deb' --dir /tmp/sniffhound-release
+sudo apt install /tmp/sniffhound-release/*.deb
+sniffhound
+```
+
+- `curl` sin `gh`:
+
+```bash
+DEB_URL="$(curl -fsSL https://api.github.com/repos/jorgelsc-dev/sniffhound/releases/latest | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(asset["browser_download_url"] for asset in data["assets"] if asset["name"].endswith(".deb")))')"
+curl -fL "$DEB_URL" -o /tmp/sniffhound-latest.deb
+sudo apt install /tmp/sniffhound-latest.deb
+sniffhound
+```
+
+Instalacion manual del artefacto descargado:
 
 ```bash
 sudo apt install ./sniffhound_<version>_<arch>.deb
@@ -98,7 +121,8 @@ Notas del paquete:
 
 - incluye la app Python y los assets ya compilados del frontend;
 - requiere `python3 >= 3.12` en la maquina destino;
-- genera un archivo `.sha256` junto al `.deb` dentro de `dist/`.
+- genera un archivo `.sha256` junto al `.deb` dentro de `dist/`;
+- la misma release publica el `.sha256` para verificar integridad antes de instalar.
 
 ## Inicio rapido
 
@@ -130,7 +154,7 @@ SNIFFHOUND_CAPTURE_INTERFACES="eth0,wlan0" sniffhound
 
 ### 2. Copiar el token de sesion
 
-Al arrancar, `sniffhound` imprime un token de 8 caracteres en la terminal. La UI lo pide al abrirse y lo reutiliza para HTTP y WebSocket.
+Al arrancar, `sniffhound` imprime un token de 8 caracteres en la terminal. La UI lo pide al abrirse, lo conserva solo en memoria del tab actual y lo reutiliza para HTTP y WebSocket mientras esa pagina siga abierta.
 
 ### 3. Abrir la interfaz
 
@@ -199,8 +223,9 @@ curl -X POST http://127.0.0.1:45678/api/runtime/ \
 - `SNIFFHOUND_REQUIRE_AUTH=1` por defecto.
 - Se aceptan:
   - `Authorization: Bearer <token>`
+  - `X-Security-Code: <token>`
   - `X-Access-Token: <token>`
-  - `?access_token=<token>` en WebSocket
+  - `?security_code=<token>`, `?access_token=<token>`, `?token=<token>` o `?auth=<token>` solo en el handshake de `WS /ws/`
 - `GET /api/auth/session` indica si la sesion esta autenticada.
 - `sniffhound.auth.generate_token()` crea JWT HS256 para integraciones.
 - `SNIFFHOUND_JWT_SECRET` define la clave de firma.

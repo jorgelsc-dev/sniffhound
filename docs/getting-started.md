@@ -11,7 +11,24 @@
 
 ### Desde el paquete Debian (`.deb`)
 
-Descarga el artefacto del workflow `Package Debian` en GitHub Actions e instala el archivo generado:
+El workflow `Package Debian` publica el `.deb` en **GitHub Releases**. Tambien puedes construirlo localmente.
+
+Instalacion desde la ultima release:
+
+```bash
+mkdir -p /tmp/sniffhound-release
+gh release download --repo jorgelsc-dev/sniffhound --pattern '*.deb' --dir /tmp/sniffhound-release
+sudo apt install /tmp/sniffhound-release/*.deb
+sniffhound
+```
+
+La pagina de la ultima release es:
+
+```text
+https://github.com/jorgelsc-dev/sniffhound/releases/latest
+```
+
+Instalacion manual del artefacto descargado:
 
 ```bash
 sudo apt install ./sniffhound_<version>_<arch>.deb
@@ -77,6 +94,7 @@ SNIFFHOUND_CAPTURE_INTERFACES="eth0,wlan0" sniffhound
 - Dashboard: `http://127.0.0.1:45678`
 - Docs runtime: `http://127.0.0.1:45678/docs`
 - Catalogo de endpoints: `http://127.0.0.1:45678/api/endpoints/`
+- La UI pide el codigo de seguridad al abrirse y lo conserva solo en memoria del tab actual.
 
 ## Documentacion local
 

@@ -35,6 +35,7 @@ const state = reactive({
 
 const tableRefreshSubscribers = new Set();
 
+let inMemoryAuthToken = "";
 let wsClient = null;
 let wsReconnectTimer = null;
 let wsRefreshTimer = null;
@@ -78,39 +79,26 @@ function setApiBase(value) {
 }
 
 function readStoredAuthToken() {
-  if (typeof window === "undefined" || !window.localStorage) {
-    return "";
-  }
-  const current = String(window.localStorage.getItem(STORAGE_KEY_AUTH) || "").trim();
-  if (current) {
-    return current;
-  }
-  const legacy = typeof window.sessionStorage !== "undefined"
-    ? String(window.sessionStorage.getItem(LEGACY_STORAGE_KEY_AUTH) || "").trim()
-    : "";
-  if (legacy) {
-    window.localStorage.setItem(STORAGE_KEY_AUTH, legacy);
-    if (typeof window.sessionStorage !== "undefined") {
-      window.sessionStorage.removeItem(LEGACY_STORAGE_KEY_AUTH);
-    }
-  }
-  return legacy;
+  clearStoredAuthTokenArtifacts();
+  return String(inMemoryAuthToken || "").trim();
 }
 
 function persistAuthToken(token) {
-  if (typeof window === "undefined" || !window.localStorage) {
+  inMemoryAuthToken = String(token || "").trim();
+  clearStoredAuthTokenArtifacts();
+}
+
+function clearStoredAuthTokenArtifacts() {
+  if (typeof window === "undefined") {
     return;
   }
-  if (token) {
-    window.localStorage.setItem(STORAGE_KEY_AUTH, token);
-    if (typeof window.sessionStorage !== "undefined") {
-      window.sessionStorage.removeItem(LEGACY_STORAGE_KEY_AUTH);
-    }
-    return;
-  }
-  window.localStorage.removeItem(STORAGE_KEY_AUTH);
-  if (typeof window.sessionStorage !== "undefined") {
+  if (window.sessionStorage) {
+    window.sessionStorage.removeItem(STORAGE_KEY_AUTH);
     window.sessionStorage.removeItem(LEGACY_STORAGE_KEY_AUTH);
+  }
+  if (window.localStorage) {
+    window.localStorage.removeItem(STORAGE_KEY_AUTH);
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY_AUTH);
   }
 }
 

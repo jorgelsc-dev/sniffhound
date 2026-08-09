@@ -443,7 +443,18 @@ def _request_header(request, *names: str) -> str | None:
     return None
 
 
-def _extract_request_token(request) -> str | None:
+def _extract_request_query_token(request) -> str | None:
+    if request is None:
+        return None
+    query = getattr(request, "query", {}) or {}
+    for key in ("security_code", "access_token", "token", "auth"):
+        value = query.get(key)
+        if value:
+            return str(value).strip() or None
+    return None
+
+
+def _extract_request_token(request, *, allow_query: bool = False) -> str | None:
     auth_header = _request_header(request, "Authorization", "authorization")
     token = extract_token_from_header(auth_header)
     if token:
@@ -459,16 +470,13 @@ def _extract_request_token(request) -> str | None:
     if direct_token:
         return str(direct_token).strip() or None
 
-    query = getattr(request, "query", {}) or {}
-    for key in ("security_code", "access_token", "token", "auth"):
-        value = query.get(key)
-        if value:
-            return str(value).strip() or None
+    if allow_query:
+        return _extract_request_query_token(request)
     return None
 
 
-def _authenticate_request(request) -> tuple[bool, dict[str, Any] | None]:
-    return authenticate_request(_extract_request_token(request))
+def _authenticate_request(request, *, allow_query: bool = False) -> tuple[bool, dict[str, Any] | None]:
+    return authenticate_request(_extract_request_token(request, allow_query=allow_query))
 
 
 def _unauthorized_response(message: str = "Security code required") -> Response:
@@ -1591,7 +1599,7 @@ def _apply_api_auth_guards():
 @app.ws("/ws/")
 def websocket_handler(ws, request=None):
     if REQUIRE_AUTH:
-        is_authenticated, _user_info = _authenticate_request(request)
+        is_authenticated, _user_info = _authenticate_request(request, allow_query=True)
         if not is_authenticated:
             try:
                 ws.send_text(
