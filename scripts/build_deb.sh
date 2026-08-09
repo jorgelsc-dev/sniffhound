@@ -14,6 +14,8 @@ INSTALL_ROOT="$PACKAGE_ROOT/usr/lib/$PACKAGE_NAME"
 VENDOR_DIR="$INSTALL_ROOT/vendor"
 BIN_DIR="$PACKAGE_ROOT/usr/bin"
 DOC_DIR="$PACKAGE_ROOT/usr/share/doc/$PACKAGE_NAME"
+LAUNCHER_SOURCE="$ROOT_DIR/scripts/deb_launcher.py"
+WRAPPER_SOURCE="$ROOT_DIR/scripts/deb_wrapper.sh"
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -25,6 +27,15 @@ require_command() {
 require_command "$PYTHON_BIN"
 require_command dpkg-deb
 require_command sha256sum
+
+if [[ ! -f "$LAUNCHER_SOURCE" ]]; then
+  echo "Missing launcher template: $LAUNCHER_SOURCE" >&2
+  exit 1
+fi
+if [[ ! -f "$WRAPPER_SOURCE" ]]; then
+  echo "Missing wrapper template: $WRAPPER_SOURCE" >&2
+  exit 1
+fi
 
 if [[ ! -d frontend/dist ]]; then
   echo "frontend/dist is missing. Run 'cd frontend && npm ci && npm run build' before building the Debian package." >&2
@@ -51,6 +62,7 @@ echo "[build] Installing Python application into staging root..."
 
 find "$VENDOR_DIR" -type d -name "__pycache__" -exec rm -rf {} +
 find "$VENDOR_DIR" -type f \( -name "*.pyc" -o -name "*.pyo" \) -delete
+rm -rf "$VENDOR_DIR/bin"
 
 if find "$VENDOR_DIR" -type f \( -name "*.so" -o -name "*.pyd" \) | grep -q .; then
   PACKAGE_ARCH="$(dpkg --print-architecture)"
@@ -72,28 +84,8 @@ Description: Native Python network sniffer with bundled web dashboard
  serves the bundled dashboard and API from a single process.
 EOF
 
-cat > "$INSTALL_ROOT/launcher.py" <<'EOF'
-from __future__ import annotations
-
-import runpy
-import site
-import sys
-from pathlib import Path
-
-INSTALL_ROOT = Path(__file__).resolve().parent
-site.addsitedir(str(INSTALL_ROOT / "vendor"))
-sys.argv[0] = "sniffhound"
-runpy.run_module("sniffhound.manage", run_name="__main__", alter_sys=True)
-EOF
-
-cat > "$BIN_DIR/sniffhound" <<'EOF'
-#!/bin/sh
-set -eu
-
-exec /usr/bin/python3 /usr/lib/sniffhound/launcher.py "$@"
-EOF
-
-chmod 0755 "$BIN_DIR/sniffhound"
+install -m 0644 "$LAUNCHER_SOURCE" "$INSTALL_ROOT/launcher.py"
+install -m 0755 "$WRAPPER_SOURCE" "$BIN_DIR/sniffhound"
 install -m 0644 README.md "$DOC_DIR/README.md"
 install -m 0644 LICENSE "$DOC_DIR/LICENSE"
 

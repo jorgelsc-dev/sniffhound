@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import socket
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -282,6 +284,32 @@ class SmokeTests(unittest.TestCase):
 
         self.assertEqual(response.status, 401)
         self.assertEqual(payload["code"], "auth_required")
+
+    def test_deb_launcher_resolves_vendor_package_outside_repo(self):
+        launcher_source = Path(__file__).resolve().parents[1] / "scripts" / "deb_launcher.py"
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            install_root = Path(tmp_dir)
+            vendor_package = install_root / "vendor" / "sniffhound"
+            vendor_package.mkdir(parents=True)
+
+            (install_root / "launcher.py").write_text(launcher_source.read_text(encoding="utf-8"), encoding="utf-8")
+            (vendor_package / "__init__.py").write_text('SENTINEL = "ok"\n', encoding="utf-8")
+            (vendor_package / "manage.py").write_text(
+                'from . import SENTINEL\nprint(SENTINEL)\n',
+                encoding="utf-8",
+            )
+
+            response = subprocess.run(
+                [sys.executable, str(install_root / "launcher.py")],
+                cwd="/tmp",
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(response.returncode, 0, response.stderr)
+        self.assertEqual(response.stdout.strip(), "ok")
 
     def test_runtime_uses_configured_default_mode_on_startup(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
