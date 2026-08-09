@@ -729,7 +729,7 @@ export default {
     layoutNodes() {
       const nodes = this.visibleNodes.slice(0, MAX_VISIBLE_HOSTS);
       if (!nodes.length) return [];
-      return this.layoutRelationshipGraph(nodes).slice(0, MAX_VISIBLE_HOSTS);
+      return this.layoutPinnedNodes(nodes).slice(0, MAX_VISIBLE_HOSTS);
     },
     visibleLinks() {
       const visibleIps = new Set(this.layoutNodes.map((node) => node.ip));
@@ -826,6 +826,122 @@ export default {
       const ip = normalizeIp(value);
       if (ip.length <= 18) return ip;
       return `${ip.slice(0, 9)}...${ip.slice(-6)}`;
+    },
+    layoutPinnedNodes(nodes) {
+      const ordered = [...nodes].sort((left, right) =>
+        Number(right.activeNow) - Number(left.activeNow) ||
+        right.score - left.score ||
+        (right.lastSeenAt || 0) - (left.lastSeenAt || 0) ||
+        left.ip.localeCompare(right.ip)
+      );
+      const totalNodes = ordered.length || 1;
+      return ordered.map((node) => {
+        const x = Number.isFinite(Number(node.fixedX)) ? Number(node.fixedX) : this.stageCenterX;
+        const y = Number.isFinite(Number(node.fixedY)) ? Number(node.fixedY) : this.stageCenterY;
+        const baseScale = node.activeNow
+          ? (totalNodes >= 18 ? 0.42 : totalNodes >= 12 ? 0.48 : totalNodes >= 8 ? 0.54 : 0.6)
+          : (totalNodes >= 18 ? 0.32 : totalNodes >= 12 ? 0.35 : totalNodes >= 8 ? 0.38 : 0.42);
+        return this.decorateGraphNode(node, x, y, baseScale, totalNodes);
+      });
+    },
+    fixedGraphSlots() {
+      const centerX = this.stageCenterX;
+      const centerY = this.stageCenterY;
+      const groups = {
+        core: [
+          [-120, -32], [-58, -84], [34, -92], [116, -44], [-108, 64],
+          [-18, 10], [70, 28], [134, 90], [-42, 118], [48, 134],
+        ],
+        source: [
+          [-208, -98], [-258, -24], [-230, 76], [-318, -112], [-342, -2],
+          [-300, 110], [-386, -86], [-394, 34], [-344, 176], [-242, 172],
+        ],
+        target: [
+          [208, -98], [258, -24], [230, 76], [318, -112], [342, -2],
+          [300, 110], [386, -86], [394, 34], [344, 176], [242, 172],
+        ],
+        local: [
+          [-164, 178], [-88, 194], [0, 184], [92, 198], [168, 180], [0, 236],
+        ],
+        history: [
+          [-132, -154], [0, -162], [132, -154], [-398, 72], [398, 68],
+          [-364, 202], [364, 198], [-236, -126], [236, -126],
+        ],
+      };
+      return Object.entries(groups).flatMap(([group, offsets]) =>
+        offsets.map(([dx, dy], index) => ({
+          key: `${group}-${index}`,
+          group,
+          x: centerX + dx,
+          y: centerY + dy,
+        }))
+      );
+    },
+    preferredSlotGroups(node) {
+      const groups = [];
+      if (!node.activeNow) groups.push("history");
+      if (node.role === "source") groups.push("source");
+      else if (node.role === "target") groups.push("target");
+      else groups.push("core");
+      if (node.scope === "local" || node.scope === "private") groups.push("local");
+      groups.push("core", "history", "source", "target", "local");
+      return Array.from(new Set(groups));
+    },
+    slotPreferenceScore(node, slot) {
+      const groupOrder = this.preferredSlotGroups(node);
+      const groupRank = Math.max(0, groupOrder.indexOf(slot.group));
+      const centerDistance = Math.hypot(slot.x - this.stageCenterX, slot.y - this.stageCenterY);
+      const agePenalty = node.activeNow ? 0 : Math.min(140, (Number(node.historyAgeMs) || 0) / 90000);
+      const jitter = (stableHash(`${node.ip}:${slot.key}`) % 1000) / 1000;
+      return (groupRank * 1000) + centerDistance + agePenalty + (jitter * 14);
+    },
+    reconcileFixedNodePositions(hosts) {
+      const slots = this.fixedGraphSlots();
+      const slotByKey = new Map(slots.map((slot) => [slot.key, slot]));
+      const previousHosts = new Map(this.historicalHosts.map((host) => [host.ip, host]));
+      const assignments = new Map();
+      const claimedSlots = new Set();
+
+      hosts.forEach((host) => {
+        const previous = previousHosts.get(host.ip);
+        const previousKey = previous && previous.layoutSlotKey;
+        const previousSlot = previousKey ? slotByKey.get(previousKey) : null;
+        if (!previousSlot || claimedSlots.has(previousSlot.key)) return;
+        claimedSlots.add(previousSlot.key);
+        assignments.set(host.ip, {
+          slotKey: previousSlot.key,
+          x: previousSlot.x,
+          y: previousSlot.y,
+        });
+      });
+
+      hosts
+        .filter((host) => !assignments.has(host.ip))
+        .forEach((host) => {
+          const availableSlots = slots.filter((slot) => !claimedSlots.has(slot.key));
+          if (!availableSlots.length) {
+            assignments.set(host.ip, {
+              slotKey: `fallback-${host.ip}`,
+              x: this.stageCenterX,
+              y: this.stageCenterY,
+            });
+            return;
+          }
+          const bestSlot = availableSlots
+            .map((slot) => ({
+              slot,
+              score: this.slotPreferenceScore(host, slot),
+            }))
+            .sort((left, right) => left.score - right.score || left.slot.key.localeCompare(right.slot.key))[0].slot;
+          claimedSlots.add(bestSlot.key);
+          assignments.set(host.ip, {
+            slotKey: bestSlot.key,
+            x: bestSlot.x,
+            y: bestSlot.y,
+          });
+        });
+
+      return assignments;
     },
     layoutRelationshipGraph(nodes) {
       const ordered = [...nodes].sort((left, right) =>
@@ -1310,6 +1426,18 @@ export default {
       hosts = hosts.filter((host) => {
         if (host.activeNow) return true;
         return links.some((link) => link.source === host.ip || link.target === host.ip) || host.historyAgeMs <= HISTORY_RETENTION_MS;
+      });
+
+      const fixedPositions = this.reconcileFixedNodePositions(hosts);
+      hosts = hosts.map((host) => {
+        const assigned = fixedPositions.get(host.ip);
+        if (!assigned) return host;
+        return {
+          ...host,
+          fixedX: assigned.x,
+          fixedY: assigned.y,
+          layoutSlotKey: assigned.slotKey,
+        };
       });
 
       this.historicalHosts = hosts;
