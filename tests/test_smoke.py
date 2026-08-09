@@ -14,6 +14,7 @@ from contextlib import redirect_stdout
 from unittest.mock import patch
 
 import sniffhound
+from sniffhound import versioning
 from sniffhound.store import SniffStore
 from wsbuilder import Request
 
@@ -56,7 +57,52 @@ def _reload_runtime_stack(require_auth: str = "1"):
 
 class SmokeTests(unittest.TestCase):
     def test_version(self):
-        self.assertEqual(sniffhound.__version__, "0.1.0")
+        project_root = Path(__file__).resolve().parents[1]
+        self.assertEqual(sniffhound.__version__, versioning.read_project_version(project_root))
+        self.assertRegex(sniffhound.__version__, r"^\d+\.\d+\.\d+$")
+
+    def test_versioning_is_stable_for_same_release_window(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            package_dir = root / "sniffhound"
+            package_dir.mkdir()
+
+            (root / "pyproject.toml").write_text(
+                '[project]\nname = "sniffhound"\nversion = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            (package_dir / "__init__.py").write_text(
+                '"""SniffHound package."""\n\n__version__ = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            (root / "README.md").write_text("seed\n", encoding="utf-8")
+
+            subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "user.email", "tests@example.com"], cwd=root, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "user.name", "SniffHound Tests"], cwd=root, check=True, capture_output=True, text=True)
+            subprocess.run(
+                ["git", "add", "pyproject.toml", "sniffhound/__init__.py", "README.md"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(["git", "commit", "-m", "chore: seed release"], cwd=root, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "tag", "main-deb-1.1-seed000"], cwd=root, check=True, capture_output=True, text=True)
+
+            (root / "README.md").write_text("seed\npatch\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=root, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "commit", "-m", "fix: keep release numbering stable"], cwd=root, check=True, capture_output=True, text=True)
+
+            first = versioning.resolve_version(root)
+            applied = versioning.apply_resolved_version(root)
+            second = versioning.resolve_version(root)
+
+            self.assertEqual(first.base_version, "0.1.0")
+            self.assertEqual(first.next_version, "0.1.1")
+            self.assertEqual(applied.current_version, "0.1.1")
+            self.assertEqual(versioning.read_project_version(root), "0.1.1")
+            self.assertEqual(second.next_version, "0.1.1")
 
     def test_store_initializes_and_summaries_work(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -542,7 +588,7 @@ class SmokeTests(unittest.TestCase):
             manage_module._print_startup_banner("127.0.0.1", 45678)
 
         banner = output.getvalue()
-        self.assertIn("🐕 SNIFFHOUND v0.1.0", banner)
+        self.assertIn(f"🐕 SNIFFHOUND v{sniffhound.__version__}", banner)
         self.assertIn("Link: http://127.0.0.1:45678/", banner)
         self.assertNotIn("Dashboard:", banner)
         self.assertNotIn("URL:", banner)

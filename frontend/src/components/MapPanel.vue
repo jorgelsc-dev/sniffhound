@@ -23,7 +23,7 @@
         {{
           isGlobeMode
             ? "Orthographic globe with auto-rotation, front-hemisphere clustering, and animated route traces."
-            : "Only public IPs render inside the map. Origin and private ranges stay outside the map frame."
+            : "Only public IPs render on the map. Packet traces enter from outside the frame to keep focus on routable hosts."
         }}
       </div>
       <div v-if="statusInfoText || geoipInfoText" class="map-intro__meta">
@@ -381,58 +381,10 @@
           />
         </g>
 
-        <g class="map-offmap">
-          <line
-            v-if="privateBucketCount > 0"
-            :x1="originCoord[0]"
-            :y1="originCoord[1]"
-            :x2="privateCoord[0]"
-            :y2="privateCoord[1]"
-            stroke="rgba(243, 177, 75, 0.5)"
-            stroke-width="1.1"
-            stroke-dasharray="5 5"
-          />
-
-          <circle
-            v-for="node in offMapNodes"
-            :key="`halo-${node.id}`"
-            :cx="node.x"
-            :cy="node.y"
-            r="12"
-            :fill="node.glow"
-            opacity="0.28"
-            :filter="`url(#${pointGlowFilterId})`"
-          />
-          <circle
-            v-for="node in offMapNodes"
-            :key="node.id"
-            :cx="node.x"
-            :cy="node.y"
-            r="5.5"
-            :fill="node.color"
-            stroke="rgba(235, 247, 255, 0.78)"
-            stroke-width="0.8"
-          />
-
-          <text
-            v-for="node in offMapNodes"
-            :key="`label-${node.id}`"
-            :x="node.anchor === 'start' ? node.x + 10 : node.x - 10"
-            :y="node.y - 8"
-            :text-anchor="node.anchor"
-            fill="rgba(225, 238, 255, 0.9)"
-            font-size="11px"
-            font-weight="600"
-          >
-            {{ node.label }}
-          </text>
-        </g>
       </svg>
 
       <div class="map-legend">
         <span class="legend-item public">Public IP</span>
-        <span class="legend-item origin">Origin</span>
-        <span class="legend-item private">Private bucket</span>
       </div>
     </div>
 
@@ -451,8 +403,8 @@
       </v-col>
       <v-col cols="12" md="3">
         <v-card variant="tonal" class="pa-3">
-          <div class="text-caption text-medium-emphasis">Private hosts</div>
-          <div class="text-h6 font-weight-bold text-warning">{{ summary.private_hosts }}</div>
+          <div class="text-caption text-medium-emphasis">Unmapped public</div>
+          <div class="text-h6 font-weight-bold text-warning">{{ summary.unmapped_public_hosts }}</div>
         </v-card>
       </v-col>
       <v-col cols="12" md="3">
@@ -561,13 +513,7 @@ export default {
       stopTableRefreshSubscription: null,
       worldGeoJsonDetailed: null,
       worldGeoJsonGlobe: null,
-      origin: {
-        ip: "127.0.0.1",
-        label: "Origin",
-      },
       publicPoints: [],
-      privateHosts: [],
-      privateBucketCount: 0,
       geoipStatus: {
         source: "empty",
         rows: 0,
@@ -577,7 +523,6 @@ export default {
       summary: {
         total_hosts: 0,
         public_hosts: 0,
-        private_hosts: 0,
         unmapped_public_hosts: 0,
         total_ports: 0,
         total_open_ports: 0,
@@ -671,16 +616,10 @@ export default {
       return Math.min(this.mapWidth, this.mapHeight) * 0.34;
     },
     originCoord() {
-      if (this.isGlobeMode) {
-        return [Math.round(this.mapWidth * 0.11), Math.round(this.mapHeight * 0.2)];
-      }
-      return [10, Math.round(this.mapHeight * 0.5)];
-    },
-    privateCoord() {
-      if (this.isGlobeMode) {
-        return [Math.round(this.mapWidth * 0.89), Math.round(this.mapHeight * 0.82)];
-      }
-      return [this.mapWidth - 10, Math.round(this.mapHeight * 0.78)];
+      return [
+        Math.round(this.mapPadding - 40),
+        Math.round(this.isGlobeMode ? this.mapHeight * 0.24 : this.mapHeight * 0.54),
+      ];
     },
     projectedPublicPoints() {
       const points = this.publicPoints
@@ -767,46 +706,15 @@ export default {
         };
       });
     },
-    offMapNodes() {
-      return [
-        {
-          id: "origin",
-          x: this.originCoord[0],
-          y: this.originCoord[1],
-          label: `${this.origin.label || "Origin"} (${this.origin.ip || "n/a"})`,
-          color: "rgba(52, 230, 255, 0.95)",
-          glow: "rgba(52, 230, 255, 0.54)",
-          anchor: "start",
-        },
-        {
-          id: "private-bucket",
-          x: this.privateCoord[0],
-          y: this.privateCoord[1],
-          label: `Private IP bucket (${this.privateBucketCount})`,
-          color: "rgba(243, 177, 75, 0.95)",
-          glow: "rgba(243, 177, 75, 0.48)",
-          anchor: "end",
-        },
-      ];
-    },
     latestHosts() {
-      const publicRows = this.publicPoints.map((item) => ({
+      return this.publicPoints.map((item) => ({
         id: `pub-${item.ip}`,
         ip: item.ip,
         scope: "public",
         region: `${item.rir || "RIR"} ${item.country || ""}`.trim(),
         open_port_count: Number(item.open_port_count) || 0,
         protocols: Array.isArray(item.protocols) ? item.protocols.join(", ") : "",
-      }));
-      const privateRows = this.privateHosts.map((item) => ({
-        id: `priv-${item.ip}`,
-        ip: item.ip,
-        scope: "private",
-        region: "private/reserved",
-        open_port_count: Number(item.open_port_count) || 0,
-        protocols: Array.isArray(item.protocols) ? item.protocols.join(", ") : "",
-      }));
-      return [...publicRows, ...privateRows]
+      }))
         .sort((a, b) => b.open_port_count - a.open_port_count || a.ip.localeCompare(b.ip))
         .slice(0, 10);
     },
@@ -1186,17 +1094,13 @@ export default {
     applySnapshot(snapshot) {
       const data = snapshot && snapshot.data ? snapshot.data : snapshot;
       const summary = (data && data.summary) || {};
-      this.origin = (data && data.origin) || { ip: "127.0.0.1", label: "Origin" };
       this.publicPoints = Array.isArray(data && data.public_points) ? data.public_points : [];
-      this.privateHosts = Array.isArray(data && data.private_hosts) ? data.private_hosts : [];
       this.geoipStatus = (data && data.geoip) || {
         source: "empty",
         rows: 0,
         generated_at: "",
         partial: false,
       };
-      const privateBucket = (data && data.private_bucket) || {};
-      this.privateBucketCount = Number(privateBucket.count) || this.privateHosts.length;
       const focus = this.deriveGlobeFocus(this.publicPoints);
       this.globeFocusLongitude = focus.longitude;
       this.globeTilt = focus.tilt;
@@ -1207,7 +1111,6 @@ export default {
       this.summary = {
         total_hosts: Number(summary.total_hosts) || 0,
         public_hosts: Number(summary.public_hosts) || 0,
-        private_hosts: Number(summary.private_hosts) || 0,
         unmapped_public_hosts: Number(summary.unmapped_public_hosts) || 0,
         total_ports: Number(summary.total_ports) || 0,
         total_open_ports: Number(summary.total_open_ports) || 0,
@@ -1508,16 +1411,6 @@ export default {
 .legend-item.public {
   border-color: rgba(53, 230, 177, 0.82);
   color: rgba(132, 248, 213, 0.95);
-}
-
-.legend-item.origin {
-  border-color: rgba(52, 230, 255, 0.9);
-  color: rgba(154, 241, 255, 0.95);
-}
-
-.legend-item.private {
-  border-color: rgba(243, 177, 75, 0.9);
-  color: rgba(255, 211, 140, 0.95);
 }
 
 @keyframes map-scan {

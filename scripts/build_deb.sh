@@ -42,14 +42,9 @@ if [[ ! -d frontend/dist ]]; then
   exit 1
 fi
 
-PACKAGE_VERSION="$("$PYTHON_BIN" - <<'PY'
-from pathlib import Path
+PACKAGE_VERSION="$("$PYTHON_BIN" -m sniffhound.versioning --apply --print-version)"
 
-namespace = {}
-exec(Path("sniffhound/__init__.py").read_text(encoding="utf-8"), namespace)
-print(namespace["__version__"])
-PY
-)"
+echo "[build] Release version: $PACKAGE_VERSION"
 
 echo "[build] Preparing Debian package layout..."
 rm -rf "$BUILD_DIR"

@@ -28,6 +28,20 @@
     </v-alert>
 
     <div class="mt-6">
+      <HostRadarPanel
+        title="Host Transit Radar"
+        subtitle="Animated host-to-host lanes with each node rendered as a workstation."
+        :snapshot="mapSnapshot"
+        :top-hosts="topHosts"
+        :loading="loading"
+        :error="error"
+        :last-updated="lastUpdated"
+        :show-refresh="true"
+        @refresh="load"
+      />
+    </div>
+
+    <div class="mt-4">
       <MapPanel
         panel-title="Topology Radar"
         panel-subtitle="See host placement and point density at a glance."
@@ -166,6 +180,15 @@ import ViewHeader from "../components/ui/ViewHeader.vue";
 import DataPanel from "../components/ui/DataPanel.vue";
 import EntityTablePanel from "../components/ui/EntityTablePanel.vue";
 import MapPanel from "../components/MapPanel.vue";
+import HostRadarPanel from "../components/HostRadarPanel.vue";
+
+const RADAR_REFRESH_EVENT_TYPES = new Set([
+  "scan_map_snapshot",
+  "scan_map_update",
+  "packet",
+  "stats_update",
+]);
+const RADAR_REFRESH_DELAY_MS = 10000;
 
 export default {
   name: "RadarView",
@@ -174,6 +197,7 @@ export default {
     DataPanel,
     EntityTablePanel,
     MapPanel,
+    HostRadarPanel,
   },
   data() {
     return {
@@ -183,6 +207,8 @@ export default {
       lastUpdated: "",
       analytics: {},
       mapSnapshot: {},
+      wsRefreshTimer: null,
+      stopTableRefreshSubscription: null,
       riskPortColumns: [
         { key: "port", label: "Port" },
         { key: "value", label: "Hits" },
@@ -194,6 +220,9 @@ export default {
     };
   },
   computed: {
+    apiBase() {
+      return this.store.state.apiBase;
+    },
     metricCards() {
       const summary = this.analytics.summary || {};
       const mapSummary = this.mapSnapshot.summary || {};
@@ -255,8 +284,30 @@ export default {
   },
   mounted() {
     this.load();
+    this.stopTableRefreshSubscription = this.store.subscribeTableRefresh(this.handleWsRefresh);
+  },
+  beforeUnmount() {
+    if (this.wsRefreshTimer) {
+      clearTimeout(this.wsRefreshTimer);
+      this.wsRefreshTimer = null;
+    }
+    if (typeof this.stopTableRefreshSubscription === "function") {
+      this.stopTableRefreshSubscription();
+      this.stopTableRefreshSubscription = null;
+    }
   },
   methods: {
+    handleWsRefresh(event) {
+      const eventType = String((event && event.type) || "").trim().toLowerCase();
+      if (!RADAR_REFRESH_EVENT_TYPES.has(eventType)) return;
+      if (this.wsRefreshTimer || this.loading) return;
+      this.wsRefreshTimer = setTimeout(() => {
+        this.wsRefreshTimer = null;
+        this.load().catch(() => {
+          // keep the current radar visible on transient realtime failures
+        });
+      }, RADAR_REFRESH_DELAY_MS);
+    },
     load() {
       this.loading = true;
       this.error = "";

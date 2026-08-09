@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v7
@@ -60,13 +62,12 @@ jobs:
           )"
           DEB_FILE="$(basename "$(find dist -maxdepth 1 -type f -name '*.deb' | head -n 1)")"
           ARCH="$(dpkg-deb -f "dist/${DEB_FILE}" Architecture)"
-          SHORT_SHA="${GITHUB_SHA::7}"
           echo "name=sniffhound-deb-${VERSION}-${ARCH}" >> "${GITHUB_OUTPUT}"
           echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
           echo "arch=${ARCH}" >> "${GITHUB_OUTPUT}"
           echo "deb_file=${DEB_FILE}" >> "${GITHUB_OUTPUT}"
-          echo "release_tag=main-deb-${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}-${SHORT_SHA}" >> "${GITHUB_OUTPUT}"
-          echo "release_name=Main Debian build ${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}" >> "${GITHUB_OUTPUT}"
+          echo "release_tag=v${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "release_name=SniffHound ${VERSION}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload Debian artifact
         uses: actions/upload-artifact@v4
@@ -91,10 +92,19 @@ jobs:
             sudo apt install ./${{ steps.artifact_meta.outputs.deb_file }}
           EOF
 
-          gh release create "${{ steps.artifact_meta.outputs.release_tag }}" \
-            dist/*.deb \
-            dist/*.deb.sha256 \
-            --repo "${{ github.repository }}" \
-            --title "${{ steps.artifact_meta.outputs.release_name }}" \
-            --notes-file /tmp/sniffhound-release-notes.txt \
-            --latest
+          if gh release view "${{ steps.artifact_meta.outputs.release_tag }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "${{ steps.artifact_meta.outputs.release_tag }}" \
+              dist/*.deb \
+              dist/*.deb.sha256 \
+              --repo "${{ github.repository }}" \
+              --clobber
+          else
+            gh release create "${{ steps.artifact_meta.outputs.release_tag }}" \
+              dist/*.deb \
+              dist/*.deb.sha256 \
+              --repo "${{ github.repository }}" \
+              --target "${{ github.sha }}" \
+              --title "${{ steps.artifact_meta.outputs.release_name }}" \
+              --notes-file /tmp/sniffhound-release-notes.txt \
+              --latest
+          fi
