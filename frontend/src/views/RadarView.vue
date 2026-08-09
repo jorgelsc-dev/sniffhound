@@ -335,7 +335,6 @@ export default {
     load() {
       this.loading = true;
       this.error = "";
-      this.store.requestRealtimeMapSnapshot(500);
       return Promise.allSettled([
         this.store.fetchJsonPromise("/api/charts/analytics"),
         this.store.fetchJsonPromise("/api/map/scan?limit=500"),

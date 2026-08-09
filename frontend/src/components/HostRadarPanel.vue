@@ -802,14 +802,12 @@ export default {
   },
   watch: {
     snapshot: {
-      deep: true,
       immediate: true,
       handler() {
         this.syncHistoryFromCurrentData();
       },
     },
     topHosts: {
-      deep: true,
       handler() {
         this.syncHistoryFromCurrentData();
       },

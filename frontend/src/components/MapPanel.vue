@@ -744,7 +744,6 @@ export default {
       this.reloadData();
     },
     snapshot: {
-      deep: true,
       handler(value) {
         if (!value || typeof value !== "object" || !Object.keys(value).length) return;
         this.error = "";

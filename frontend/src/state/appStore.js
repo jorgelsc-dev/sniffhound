@@ -455,7 +455,10 @@ function scheduleTableRefresh(payload) {
     const pending = wsPendingRefreshPayload;
     wsPendingRefreshPayload = null;
     const type = String((pending && pending.type) || "").trim().toLowerCase();
-    if (type === "packet" || type === "stats_update" || type === "scan_map_update") {
+    if (
+      mapSnapshotSubscribers.size &&
+      (type === "packet" || type === "stats_update" || type === "scan_map_update")
+    ) {
       requestRealtimeMapSnapshot(300);
     }
     notifyTableRefresh(pending);
