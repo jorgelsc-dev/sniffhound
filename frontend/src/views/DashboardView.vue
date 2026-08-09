@@ -328,7 +328,7 @@ import {
   isHoneypotInterface,
 } from "../utils/traffic";
 
-const REFRESH_EVENT_TYPES = new Set(["packet", "stats_update", "runtime_mode", "scan_map_update"]);
+const REFRESH_EVENT_TYPES = new Set(["packet", "stats_update", "runtime_mode"]);
 
 export default {
   name: "DashboardView",

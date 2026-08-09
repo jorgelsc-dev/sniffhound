@@ -557,7 +557,7 @@ import DataPanel from "../components/ui/DataPanel.vue";
 import EntityTablePanel from "../components/ui/EntityTablePanel.vue";
 import { formatTimestamp } from "../utils/traffic";
 
-const REFRESH_EVENT_TYPES = new Set(["packet", "stats_update", "runtime_mode", "scan_map_update"]);
+const REFRESH_EVENT_TYPES = new Set(["packet", "stats_update", "runtime_mode"]);
 const SEVERITY_ORDER = new Map([
   ["high", 0],
   ["medium", 1],

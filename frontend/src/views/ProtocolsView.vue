@@ -341,7 +341,7 @@ const FALLBACK_SUPPORTED_PROTOCOLS = [
 ];
 
 const PROTOCOL_ORDER = new Map(FALLBACK_SUPPORTED_PROTOCOLS.map((proto, index) => [proto, index]));
-const REFRESH_EVENT_TYPES = new Set(["packet", "stats_update", "runtime_mode", "scan_map_update"]);
+const REFRESH_EVENT_TYPES = new Set(["packet", "stats_update", "runtime_mode"]);
 
 const PROTOCOL_PROFILES = {
   tcp: {

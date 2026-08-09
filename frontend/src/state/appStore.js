@@ -11,8 +11,6 @@ const WS_AUTH_CLOSE_CODE = 4401;
 const APP_SHUTDOWN_DELAY_SECONDS = 0.2;
 const WS_REFRESH_EVENT_TYPES = new Set([
   "welcome",
-  "scan_map_snapshot",
-  "scan_map_update",
   "packet",
   "stats_update",
   "runtime_mode",
@@ -24,6 +22,8 @@ const state = reactive({
   wsStatus: "offline",
   runtimeMode: "sniffer",
   runtime: {},
+  realtimeMapSnapshot: null,
+  realtimeMapGeneratedAt: "",
   authReady: false,
   authRequired: false,
   authStatus: "unknown",
@@ -34,6 +34,7 @@ const state = reactive({
 });
 
 const tableRefreshSubscribers = new Set();
+const mapSnapshotSubscribers = new Set();
 
 let inMemoryAuthToken = "";
 let wsClient = null;
@@ -72,6 +73,8 @@ function initApiBase() {
 function setApiBase(value) {
   const cleaned = String(value || "").trim().replace(/\/+$/, "");
   state.apiBase = cleaned;
+  state.realtimeMapSnapshot = null;
+  state.realtimeMapGeneratedAt = "";
   if (typeof window !== "undefined" && window.localStorage) {
     window.localStorage.setItem(STORAGE_KEY_API, cleaned);
   }
@@ -409,6 +412,41 @@ function notifyTableRefresh(payload) {
   });
 }
 
+function notifyMapSnapshotSubscribers(snapshot, meta = {}) {
+  if (!mapSnapshotSubscribers.size) return;
+  const payload = { snapshot, meta };
+  mapSnapshotSubscribers.forEach((subscriber) => {
+    try {
+      subscriber(payload);
+    } catch {
+      // ignore subscriber-level failures
+    }
+  });
+}
+
+function applyRealtimeMapSnapshot(snapshot, meta = {}) {
+  const normalized = snapshot && typeof snapshot === "object" ? snapshot : null;
+  state.realtimeMapSnapshot = normalized;
+  state.realtimeMapGeneratedAt = String(meta.generatedAt || meta.generated_at || "").trim();
+  if (!normalized) return;
+  notifyMapSnapshotSubscribers(normalized, meta);
+}
+
+function requestRealtimeMapSnapshot(limit = 300) {
+  if (typeof window === "undefined" || typeof window.WebSocket === "undefined") {
+    return false;
+  }
+  if (!wsClient || wsClient.readyState !== window.WebSocket.OPEN) {
+    return false;
+  }
+  try {
+    wsClient.send(JSON.stringify({ action: "scan_map_snapshot", limit: Number(limit) || 300 }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function scheduleTableRefresh(payload) {
   wsPendingRefreshPayload = payload;
   if (wsRefreshTimer) return;
@@ -416,6 +454,10 @@ function scheduleTableRefresh(payload) {
     wsRefreshTimer = null;
     const pending = wsPendingRefreshPayload;
     wsPendingRefreshPayload = null;
+    const type = String((pending && pending.type) || "").trim().toLowerCase();
+    if (type === "packet" || type === "stats_update" || type === "scan_map_update") {
+      requestRealtimeMapSnapshot(300);
+    }
     notifyTableRefresh(pending);
   }, WS_REFRESH_THROTTLE_MS);
 }
@@ -515,9 +557,7 @@ function connectRealtime() {
     if (wsClient !== socket) return;
     clearReconnectTimer();
     state.wsStatus = "online";
-    try {
-      socket.send(JSON.stringify({ action: "scan_map_snapshot", limit: 300 }));
-    } catch {
+    if (!requestRealtimeMapSnapshot(300)) {
       state.wsStatus = "error";
     }
   });
@@ -538,6 +578,13 @@ function connectRealtime() {
     }
     if (type === "runtime_mode") {
       applyRuntimeSnapshot(payload);
+    }
+    if (type === "scan_map_snapshot" || type === "scan_map_update") {
+      applyRealtimeMapSnapshot(payload.data, {
+        type,
+        generatedAt: payload.generated_at,
+        receivedAt: Date.now(),
+      });
     }
     if (!WS_REFRESH_EVENT_TYPES.has(type)) return;
     scheduleTableRefresh({
@@ -596,6 +643,33 @@ function subscribeTableRefresh(handler) {
   };
 }
 
+function subscribeMapSnapshot(handler) {
+  if (typeof handler !== "function") {
+    return () => {};
+  }
+  mapSnapshotSubscribers.add(handler);
+  if (state.realtimeMapSnapshot) {
+    try {
+      handler({
+        snapshot: state.realtimeMapSnapshot,
+        meta: {
+          type: "cached",
+          generatedAt: state.realtimeMapGeneratedAt,
+        },
+      });
+    } catch {
+      // ignore subscriber-level failures
+    }
+  }
+  return () => {
+    mapSnapshotSubscribers.delete(handler);
+  };
+}
+
+function getRealtimeMapSnapshot() {
+  return state.realtimeMapSnapshot;
+}
+
 export default {
   state,
   suggestApiBaseFromLocation,
@@ -616,6 +690,9 @@ export default {
   reconnectRealtime,
   destroyRealtime,
   subscribeTableRefresh,
+  subscribeMapSnapshot,
+  getRealtimeMapSnapshot,
+  requestRealtimeMapSnapshot,
   openAuthPrompt,
   authenticateSessionToken,
 };

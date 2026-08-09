@@ -7,7 +7,7 @@
     :error="error"
     :last-updated="lastUpdated"
     :show-refresh="showRefresh"
-    :live-refresh="showRefresh"
+    :live-refresh="showRefresh && !externalRealtime"
     :show-header="showPanelHeader"
     :keep-content-on-loading="true"
     @refresh="manualRefresh"
@@ -66,7 +66,7 @@
             v-model:live-enabled="liveRefreshEnabled"
             :loading="loading"
             :show-manual="true"
-            :show-live="true"
+            :show-live="!externalRealtime"
             refresh-label="Refresh"
             @refresh="manualRefresh"
           />
@@ -497,6 +497,14 @@ export default {
       type: String,
       default: "flat",
     },
+    snapshot: {
+      type: Object,
+      default: null,
+    },
+    externalRealtime: {
+      type: Boolean,
+      default: false,
+    },
   },
   data() {
     return {
@@ -509,8 +517,8 @@ export default {
       mapWidth: 920,
       mapHeight: 470,
       mapPadding: 18,
-      wsRefreshTimer: null,
       stopTableRefreshSubscription: null,
+      stopMapSnapshotSubscription: null,
       worldGeoJsonDetailed: null,
       worldGeoJsonGlobe: null,
       publicPoints: [],
@@ -721,13 +729,17 @@ export default {
   },
   watch: {
     apiBase() {
+      if (this.externalRealtime) return;
       this.reloadData();
     },
-    liveRefreshEnabled(value) {
-      if (!value && this.wsRefreshTimer) {
-        clearTimeout(this.wsRefreshTimer);
-        this.wsRefreshTimer = null;
-      }
+    snapshot: {
+      deep: true,
+      handler(value) {
+        if (!value || typeof value !== "object" || !Object.keys(value).length) return;
+        this.error = "";
+        this.loading = false;
+        this.applySnapshot(value);
+      },
     },
     defaultProjection(value) {
       this.setProjection(value);
@@ -738,21 +750,29 @@ export default {
   },
   mounted() {
     this.loadWorldGeometry();
-    this.reloadData();
     this.syncProjectionAnimation();
-    this.stopTableRefreshSubscription = this.store.subscribeTableRefresh(
-      this.handleWsRefresh
-    );
+    this.stopMapSnapshotSubscription = this.store.subscribeMapSnapshot(this.handleRealtimeMapSnapshot);
+    const initialSnapshot = this.snapshot && Object.keys(this.snapshot).length
+      ? this.snapshot
+      : this.store.getRealtimeMapSnapshot();
+    if (initialSnapshot && typeof initialSnapshot === "object") {
+      this.applySnapshot(initialSnapshot);
+      this.loading = false;
+      this.error = "";
+    } else {
+      if (this.externalRealtime) {
+        this.loading = true;
+        this.store.requestRealtimeMapSnapshot(500);
+      } else {
+        this.reloadData();
+      }
+    }
   },
   beforeUnmount() {
-    if (this.wsRefreshTimer) {
-      clearTimeout(this.wsRefreshTimer);
-      this.wsRefreshTimer = null;
-    }
     this.stopGlobeRotation();
-    if (typeof this.stopTableRefreshSubscription === "function") {
-      this.stopTableRefreshSubscription();
-      this.stopTableRefreshSubscription = null;
+    if (typeof this.stopMapSnapshotSubscription === "function") {
+      this.stopMapSnapshotSubscription();
+      this.stopMapSnapshotSubscription = null;
     }
   },
   methods: {
@@ -1134,16 +1154,23 @@ export default {
         });
     },
     manualRefresh() {
+      if (this.externalRealtime) {
+        this.loading = true;
+        if (this.store.requestRealtimeMapSnapshot(500)) {
+          return Promise.resolve();
+        }
+      }
       return this.reloadData();
     },
-    handleWsRefresh() {
-      if (!this.liveRefreshEnabled) return;
-      if (this.loading) return;
-      if (this.wsRefreshTimer) return;
-      this.wsRefreshTimer = setTimeout(() => {
-        this.wsRefreshTimer = null;
-        this.reloadData();
-      }, 10000);
+    handleRealtimeMapSnapshot(event) {
+      const snapshot = event && event.snapshot ? event.snapshot : null;
+      if (!snapshot) return;
+      if (!this.externalRealtime && this.showRefresh && this.lastUpdated && !this.liveRefreshEnabled) {
+        return;
+      }
+      this.error = "";
+      this.loading = false;
+      this.applySnapshot(snapshot);
     },
   },
 };

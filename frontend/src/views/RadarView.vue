@@ -45,6 +45,8 @@
       <MapPanel
         panel-title="Topology Radar"
         panel-subtitle="See host placement and point density at a glance."
+        :snapshot="mapSnapshot"
+        :external-realtime="true"
         :show-refresh="true"
         :show-panel-header="false"
         :show-intro="true"
@@ -183,9 +185,6 @@ import MapPanel from "../components/MapPanel.vue";
 import HostRadarPanel from "../components/HostRadarPanel.vue";
 
 const RADAR_REFRESH_EVENT_TYPES = new Set([
-  "scan_map_snapshot",
-  "scan_map_update",
-  "packet",
   "stats_update",
 ]);
 const RADAR_REFRESH_DELAY_MS = 10000;
@@ -209,6 +208,7 @@ export default {
       mapSnapshot: {},
       wsRefreshTimer: null,
       stopTableRefreshSubscription: null,
+      stopMapSnapshotSubscription: null,
       riskPortColumns: [
         { key: "port", label: "Port" },
         { key: "value", label: "Hits" },
@@ -283,6 +283,7 @@ export default {
     },
   },
   mounted() {
+    this.stopMapSnapshotSubscription = this.store.subscribeMapSnapshot(this.handleRealtimeMapSnapshot);
     this.load();
     this.stopTableRefreshSubscription = this.store.subscribeTableRefresh(this.handleWsRefresh);
   },
@@ -295,22 +296,46 @@ export default {
       this.stopTableRefreshSubscription();
       this.stopTableRefreshSubscription = null;
     }
+    if (typeof this.stopMapSnapshotSubscription === "function") {
+      this.stopMapSnapshotSubscription();
+      this.stopMapSnapshotSubscription = null;
+    }
   },
   methods: {
+    handleRealtimeMapSnapshot(event) {
+      const snapshot = event && event.snapshot ? event.snapshot : null;
+      if (!snapshot) return;
+      this.mapSnapshot = snapshot;
+      this.lastUpdated = new Date().toLocaleTimeString();
+      if (this.error === "Failed to load map snapshot") {
+        this.error = "";
+      }
+    },
     handleWsRefresh(event) {
       const eventType = String((event && event.type) || "").trim().toLowerCase();
       if (!RADAR_REFRESH_EVENT_TYPES.has(eventType)) return;
       if (this.wsRefreshTimer || this.loading) return;
       this.wsRefreshTimer = setTimeout(() => {
         this.wsRefreshTimer = null;
-        this.load().catch(() => {
+        this.loadAnalytics().catch(() => {
           // keep the current radar visible on transient realtime failures
         });
       }, RADAR_REFRESH_DELAY_MS);
     },
+    loadAnalytics() {
+      return this.store.fetchJsonPromise("/api/charts/analytics").then((payload) => {
+        this.analytics = payload || {};
+        this.lastUpdated = new Date().toLocaleTimeString();
+        if (this.error === "Failed to load analytics") {
+          this.error = "";
+        }
+        return payload;
+      });
+    },
     load() {
       this.loading = true;
       this.error = "";
+      this.store.requestRealtimeMapSnapshot(500);
       return Promise.allSettled([
         this.store.fetchJsonPromise("/api/charts/analytics"),
         this.store.fetchJsonPromise("/api/map/scan?limit=500"),
@@ -325,8 +350,10 @@ export default {
           if (mapRes.status === "fulfilled") {
             this.mapSnapshot = (mapRes.value && mapRes.value.data) || {};
           } else if (!this.error) {
-            this.mapSnapshot = {};
-            this.error = (mapRes.reason && mapRes.reason.message) || "Failed to load map snapshot";
+            if (!this.mapSnapshot || !Object.keys(this.mapSnapshot).length) {
+              this.mapSnapshot = {};
+              this.error = (mapRes.reason && mapRes.reason.message) || "Failed to load map snapshot";
+            }
           }
           this.lastUpdated = new Date().toLocaleTimeString();
         })

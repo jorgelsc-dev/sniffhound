@@ -18,18 +18,18 @@
         <svg
           :viewBox="`0 0 ${stageWidth} ${stageHeight}`"
           role="img"
-          aria-label="Host transit radar with live packet flow animations"
+          aria-label="Historical host attack view with animated source to target packet lanes"
         >
           <defs>
-            <radialGradient :id="stageGlowGradientId" cx="50%" cy="44%" r="74%">
-              <stop offset="0%" stop-color="rgba(48, 181, 255, 0.22)" />
-              <stop offset="48%" stop-color="rgba(8, 26, 48, 0.94)" />
+            <radialGradient :id="stageGlowGradientId" cx="50%" cy="42%" r="78%">
+              <stop offset="0%" stop-color="rgba(54, 170, 255, 0.18)" />
+              <stop offset="46%" stop-color="rgba(8, 24, 42, 0.94)" />
               <stop offset="100%" stop-color="rgba(2, 8, 16, 1)" />
             </radialGradient>
             <linearGradient :id="frameGradientId" x1="0%" y1="0%" x2="100%" y2="0%">
               <stop offset="0%" stop-color="rgba(94, 227, 255, 0.16)" />
-              <stop offset="50%" stop-color="rgba(92, 245, 186, 0.6)" />
-              <stop offset="100%" stop-color="rgba(255, 176, 96, 0.16)" />
+              <stop offset="48%" stop-color="rgba(92, 245, 186, 0.56)" />
+              <stop offset="100%" stop-color="rgba(255, 176, 96, 0.18)" />
             </linearGradient>
             <filter :id="arcGlowFilterId" x="-30%" y="-30%" width="160%" height="160%">
               <feGaussianBlur stdDeviation="3.2" result="blurred" />
@@ -39,12 +39,23 @@
               </feMerge>
             </filter>
             <filter :id="nodeGlowFilterId" x="-80%" y="-80%" width="260%" height="260%">
-              <feGaussianBlur stdDeviation="4.6" result="nodeBlur" />
+              <feGaussianBlur stdDeviation="4.4" result="nodeBlur" />
               <feMerge>
                 <feMergeNode in="nodeBlur" />
                 <feMergeNode in="SourceGraphic" />
               </feMerge>
             </filter>
+            <marker
+              :id="attackMarkerId"
+              viewBox="0 0 10 10"
+              refX="8.2"
+              refY="5"
+              markerWidth="5.2"
+              markerHeight="5.2"
+              orient="auto"
+            >
+              <path d="M0,0 L10,5 L0,10 z" fill="rgba(255, 184, 116, 0.92)" />
+            </marker>
           </defs>
 
           <rect
@@ -60,43 +71,60 @@
             :width="stageWidth - (stagePadding * 2)"
             :height="stageHeight - (stagePadding * 2)"
             :fill="`url(#${stageGlowGradientId})`"
-            stroke="rgba(83, 166, 214, 0.22)"
+            stroke="rgba(83, 166, 214, 0.18)"
             stroke-width="1"
-            rx="20"
+            rx="24"
           />
           <rect
-            :x="stagePadding + 7"
-            :y="stagePadding + 7"
-            :width="stageWidth - (stagePadding * 2) - 14"
-            :height="stageHeight - (stagePadding * 2) - 14"
+            :x="stagePadding + 8"
+            :y="stagePadding + 8"
+            :width="stageWidth - (stagePadding * 2) - 16"
+            :height="stageHeight - (stagePadding * 2) - 16"
             fill="none"
             :stroke="`url(#${frameGradientId})`"
             stroke-width="1"
-            rx="17"
+            rx="20"
             opacity="0.78"
           />
 
-          <g class="host-radar-grid">
-            <circle
-              v-for="ring in stageRings"
-              :key="ring.id"
-              :cx="stageCenterX"
-              :cy="stageCenterY"
-              :r="ring.radius"
-              fill="none"
-              stroke="rgba(104, 181, 231, 0.12)"
-              stroke-width="0.9"
-              stroke-dasharray="5 8"
-            />
+          <g class="host-radar-zones">
+            <g v-for="zone in stageZones" :key="zone.id">
+              <rect
+                :x="zone.x"
+                :y="zone.y"
+                :width="zone.width"
+                :height="zone.height"
+                :rx="zone.rx"
+                :fill="zone.fill"
+                :stroke="zone.stroke"
+                stroke-width="0.9"
+                :stroke-dasharray="zone.dash"
+              />
+              <text
+                :x="zone.x + 14"
+                :y="zone.y + 20"
+                text-anchor="start"
+                fill="rgba(172, 206, 235, 0.76)"
+                font-size="10px"
+                font-weight="700"
+                letter-spacing="0.12em"
+              >
+                {{ zone.label }}
+              </text>
+            </g>
+          </g>
+
+          <g class="host-radar-guides">
             <line
-              v-for="beam in stageBeams"
-              :key="beam.id"
-              :x1="stageCenterX"
-              :y1="stageCenterY"
-              :x2="beam.x"
-              :y2="beam.y"
-              stroke="rgba(108, 190, 240, 0.1)"
+              v-for="guide in stageGuides"
+              :key="guide.id"
+              :x1="guide.x1"
+              :y1="guide.y1"
+              :x2="guide.x2"
+              :y2="guide.y2"
+              stroke="rgba(108, 190, 240, 0.08)"
               stroke-width="0.8"
+              stroke-dasharray="5 10"
             />
           </g>
 
@@ -107,9 +135,9 @@
               :d="arc.d"
               fill="none"
               :stroke="arc.glow"
-              :stroke-width="arc.strokeWidth + 2.6"
+              :stroke-width="arc.strokeWidth + 2.8"
               stroke-linecap="round"
-              opacity="0.18"
+              :opacity="arc.glowOpacity"
               :filter="`url(#${arcGlowFilterId})`"
             />
             <path
@@ -122,9 +150,23 @@
               stroke-linecap="round"
               class="host-radar-flow"
               :style="arc.style"
+              :opacity="arc.strokeOpacity"
+              :marker-end="arc.markerEnd"
             />
             <circle
-              v-for="arc in arcPaths"
+              v-for="arc in activeArcPaths"
+              :key="`impact-${arc.id}`"
+              :cx="arc.target.x"
+              :cy="arc.target.y"
+              :fill="arc.traceColor"
+              r="2"
+              opacity="0"
+            >
+              <animate attributeName="r" values="2;10;2" :dur="arc.duration" :begin="arc.begin" repeatCount="indefinite" />
+              <animate attributeName="opacity" values="0;0.24;0" :dur="arc.duration" :begin="arc.begin" repeatCount="indefinite" />
+            </circle>
+            <circle
+              v-for="arc in activeArcPaths"
               :key="`trace-${arc.id}`"
               :r="arc.traceRadius"
               :fill="arc.traceColor"
@@ -140,88 +182,86 @@
               v-for="node in layoutNodes"
               :key="node.ip"
               class="host-radar-node"
+              :class="{ 'host-radar-node--historical': !node.activeNow }"
               :transform="`translate(${node.x}, ${node.y})`"
+              :opacity="node.nodeOpacity"
               @click="navigateToHost(node)"
             >
               <title>{{ nodeTooltip(node) }}</title>
               <circle
                 :r="node.haloRadius"
                 :fill="node.glow"
-                opacity="0.28"
+                :opacity="node.activeNow ? 0.24 : 0.12"
                 :filter="`url(#${nodeGlowFilterId})`"
               />
               <circle
                 :r="node.ringRadius"
                 fill="none"
                 :stroke="node.ring"
-                stroke-width="1.1"
-                opacity="0.8"
+                stroke-width="1"
+                :opacity="node.activeNow ? 0.78 : 0.38"
               />
               <g :transform="`scale(${node.iconScale})`">
                 <rect
-                  x="-20"
-                  y="-16"
-                  width="40"
-                  height="24"
-                  rx="4"
+                  x="-16"
+                  y="-12"
+                  width="32"
+                  height="20"
+                  rx="3.5"
                   :fill="node.body"
                   stroke="rgba(235, 246, 255, 0.82)"
-                  stroke-width="0.9"
+                  stroke-width="0.85"
                 />
                 <rect
-                  x="-15"
-                  y="-12"
-                  width="30"
-                  height="16"
-                  rx="2.4"
+                  x="-12"
+                  y="-9"
+                  width="24"
+                  height="13"
+                  rx="2"
                   :fill="node.screen"
                 />
                 <rect
-                  x="-3.4"
-                  y="9"
-                  width="6.8"
-                  height="5.4"
-                  rx="1.2"
+                  x="-2.8"
+                  y="7.4"
+                  width="5.6"
+                  height="4.2"
+                  rx="1"
                   :fill="node.body"
                 />
                 <rect
-                  x="-13"
-                  y="14"
-                  width="26"
-                  height="4.2"
-                  rx="2.1"
+                  x="-10"
+                  y="11.2"
+                  width="20"
+                  height="3.4"
+                  rx="1.7"
                   :fill="node.base"
-                />
-                <circle
-                  cx="0"
-                  cy="16.2"
-                  r="1.1"
-                  fill="rgba(239, 248, 255, 0.9)"
                 />
               </g>
               <circle
-                :cx="node.iconScale > 1 ? 16 : 13"
-                cy="-13"
-                r="4"
+                cx="10"
+                cy="-9"
+                r="3.2"
                 :fill="node.badge"
                 stroke="rgba(3, 10, 18, 0.92)"
-                stroke-width="1.2"
+                stroke-width="1"
               />
               <text
-                y="38"
+                :y="node.labelY"
                 text-anchor="middle"
                 fill="rgba(237, 244, 255, 0.96)"
-                font-size="11.5px"
+                font-size="9.8px"
                 font-weight="700"
+                :opacity="node.labelOpacity"
               >
                 {{ compactIp(node.ip) }}
               </text>
               <text
-                y="53"
+                :y="node.metricY"
                 text-anchor="middle"
                 fill="rgba(170, 200, 226, 0.86)"
-                font-size="10px"
+                font-size="8.6px"
                 font-weight="600"
+                :opacity="node.metricOpacity"
               >
                 {{ node.metricLabel }}
               </text>
@@ -231,7 +271,7 @@
           <g v-else class="host-radar-empty">
             <text
               :x="stageCenterX"
-              :y="stageCenterY - 8"
+              :y="stageCenterY - 10"
               text-anchor="middle"
               fill="rgba(230, 239, 252, 0.94)"
               font-size="18px"
@@ -246,36 +286,37 @@
               fill="rgba(164, 193, 220, 0.82)"
               font-size="12px"
             >
-              Only routable public IPs are rendered here once live packet lanes appear between them.
+              Public hosts remain visible as history and live attack lanes animate from source to target.
             </text>
           </g>
         </svg>
 
         <div class="host-radar-overlay">
-          <div class="host-radar-overlay__eyebrow">Host Transit View</div>
+          <div class="host-radar-overlay__eyebrow">Host Attack View</div>
           <div class="host-radar-overlay__copy">
-            Packet traces move only across public host pairs, with every endpoint rendered as a workstation icon.
+            Live lanes pulse from source to target while recently seen public hosts stay on the board as historical workstations.
           </div>
         </div>
 
         <div class="host-radar-legend">
-          <span class="legend-chip legend-chip--public">Public host</span>
-          <span class="legend-chip legend-chip--flow">Packet lane</span>
+          <span class="legend-chip legend-chip--live">Live attack</span>
+          <span class="legend-chip legend-chip--history">Historical host</span>
+          <span class="legend-chip legend-chip--pc">PC node</span>
         </div>
       </div>
 
       <div class="host-radar-summary">
         <div class="summary-card">
-          <div class="summary-card__label">Visible public hosts</div>
-          <div class="summary-card__value">{{ layoutNodes.length }}</div>
+          <div class="summary-card__label">Live hosts</div>
+          <div class="summary-card__value">{{ activeHostCount }}</div>
         </div>
         <div class="summary-card">
-          <div class="summary-card__label">Public lanes</div>
-          <div class="summary-card__value">{{ arcPaths.length }}</div>
+          <div class="summary-card__label">Historical hosts</div>
+          <div class="summary-card__value">{{ historicalHostCount }}</div>
         </div>
         <div class="summary-card">
-          <div class="summary-card__label">Protocols</div>
-          <div class="summary-card__value">{{ visibleProtocolCount }}</div>
+          <div class="summary-card__label">Live lanes</div>
+          <div class="summary-card__value">{{ activeArcPaths.length }}</div>
         </div>
         <div class="summary-card">
           <div class="summary-card__label">Busiest node</div>
@@ -286,7 +327,9 @@
       <div v-if="hotLanes.length" class="host-radar-lanes">
         <div v-for="lane in hotLanes" :key="lane.id" class="lane-card">
           <div class="lane-card__route">{{ compactIp(lane.source) }} -> {{ compactIp(lane.target) }}</div>
-          <div class="lane-card__meta">{{ lane.packets }} packets · {{ lane.protocolLabel }}</div>
+          <div class="lane-card__meta">
+            {{ lane.packets }} packets · {{ lane.protocolLabel || "unknown" }} · {{ lane.activeNow ? "live" : "historical" }}
+          </div>
         </div>
       </div>
     </div>
@@ -299,8 +342,11 @@ import DataPanel from "./ui/DataPanel.vue";
 const STAGE_WIDTH = 980;
 const STAGE_HEIGHT = 560;
 const STAGE_PADDING = 20;
-const MAX_VISIBLE_HOSTS = 16;
-const MAX_VISIBLE_LINKS = 20;
+const MAX_VISIBLE_HOSTS = 24;
+const MAX_VISIBLE_LINKS = 28;
+const MAX_HISTORICAL_HOSTS = 42;
+const MAX_HISTORICAL_LINKS = 64;
+const HISTORY_RETENTION_MS = 1000 * 60 * 45;
 
 function normalizeIp(value) {
   return String(value || "").trim();
@@ -329,27 +375,27 @@ function classifyHost(ip, fallbackPrivate = false) {
 function protoPalette(proto) {
   if (proto === "tcp") {
     return {
-      stroke: "rgba(93, 204, 255, 0.78)",
-      glow: "rgba(93, 204, 255, 0.34)",
-      trace: "rgba(162, 230, 255, 0.96)",
+      stroke: "rgba(93, 204, 255, 0.82)",
+      glow: "rgba(93, 204, 255, 0.36)",
+      trace: "rgba(162, 230, 255, 0.98)",
     };
   }
   if (proto === "udp") {
     return {
-      stroke: "rgba(94, 244, 186, 0.76)",
+      stroke: "rgba(94, 244, 186, 0.8)",
       glow: "rgba(94, 244, 186, 0.34)",
-      trace: "rgba(179, 255, 224, 0.96)",
+      trace: "rgba(179, 255, 224, 0.98)",
     };
   }
-  if (proto === "icmp") {
+  if (proto === "icmp" || proto === "icmpv6") {
     return {
-      stroke: "rgba(255, 187, 98, 0.8)",
+      stroke: "rgba(255, 187, 98, 0.84)",
       glow: "rgba(255, 187, 98, 0.34)",
       trace: "rgba(255, 228, 182, 0.98)",
     };
   }
   return {
-    stroke: "rgba(164, 142, 255, 0.74)",
+    stroke: "rgba(164, 142, 255, 0.76)",
     glow: "rgba(164, 142, 255, 0.3)",
     trace: "rgba(219, 211, 255, 0.96)",
   };
@@ -406,7 +452,7 @@ export default {
     },
     subtitle: {
       type: String,
-      default: "Animated host-to-host packet flow with workstation nodes.",
+      default: "Animated source-to-target packet flow with historical workstation nodes.",
     },
     loading: {
       type: Boolean,
@@ -444,6 +490,8 @@ export default {
       stageHeight: STAGE_HEIGHT,
       stagePadding: STAGE_PADDING,
       stageUid: Math.random().toString(16).slice(2, 10),
+      historicalHosts: [],
+      historicalLinks: [],
     };
   },
   computed: {
@@ -451,7 +499,7 @@ export default {
       return this.stageWidth / 2;
     },
     stageCenterY() {
-      return this.stageHeight / 2 + 10;
+      return this.stageHeight / 2 + 4;
     },
     stageGlowGradientId() {
       return `host-stage-glow-${this.stageUid}`;
@@ -465,23 +513,68 @@ export default {
     nodeGlowFilterId() {
       return `host-stage-node-${this.stageUid}`;
     },
-    stageRings() {
+    attackMarkerId() {
+      return `host-stage-attack-${this.stageUid}`;
+    },
+    stageZones() {
       return [
-        { id: "ring-1", radius: 110 },
-        { id: "ring-2", radius: 192 },
-        { id: "ring-3", radius: 276 },
-        { id: "ring-4", radius: 348 },
+        {
+          id: "source",
+          label: "SOURCE SIDE",
+          x: 62,
+          y: 84,
+          width: 238,
+          height: 274,
+          rx: 18,
+          fill: "rgba(31, 89, 138, 0.12)",
+          stroke: "rgba(87, 183, 255, 0.18)",
+          dash: "7 10",
+        },
+        {
+          id: "transit",
+          label: "TRANSIT",
+          x: 322,
+          y: 72,
+          width: 336,
+          height: 296,
+          rx: 20,
+          fill: "rgba(18, 58, 90, 0.12)",
+          stroke: "rgba(92, 245, 186, 0.18)",
+          dash: "8 11",
+        },
+        {
+          id: "target",
+          label: "TARGET SIDE",
+          x: 680,
+          y: 84,
+          width: 238,
+          height: 274,
+          rx: 18,
+          fill: "rgba(89, 52, 26, 0.11)",
+          stroke: "rgba(255, 187, 98, 0.18)",
+          dash: "7 10",
+        },
+        {
+          id: "history",
+          label: "HISTORICAL HOSTS",
+          x: 58,
+          y: 428,
+          width: this.stageWidth - 116,
+          height: 76,
+          rx: 18,
+          fill: "rgba(7, 16, 28, 0.44)",
+          stroke: "rgba(148, 178, 203, 0.14)",
+          dash: "6 12",
+        },
       ];
     },
-    stageBeams() {
-      return Array.from({ length: 10 }, (_unused, index) => {
-        const angle = (-Math.PI / 2) + ((Math.PI * 2 * index) / 10);
-        return {
-          id: `beam-${index}`,
-          x: this.stageCenterX + (Math.cos(angle) * 364),
-          y: this.stageCenterY + (Math.sin(angle) * 228),
-        };
-      });
+    stageGuides() {
+      return [
+        { id: "guide-1", x1: 62, y1: 132, x2: 918, y2: 132 },
+        { id: "guide-2", x1: 62, y1: 194, x2: 918, y2: 194 },
+        { id: "guide-3", x1: 62, y1: 256, x2: 918, y2: 256 },
+        { id: "guide-4", x1: 62, y1: 318, x2: 918, y2: 318 },
+      ];
     },
     aggregatedLinks() {
       const raw = Array.isArray(this.snapshot && this.snapshot.links) ? this.snapshot.links : [];
@@ -519,7 +612,7 @@ export default {
             protocols,
             dominantProto: protocols[0] || "unknown",
             protocolLabel: protocols.slice(0, 3).join(", "),
-            weight: (entry.packets * 8) + Math.log10(entry.bytes + 10) * 22,
+            weight: (entry.packets * 8) + (Math.log10(entry.bytes + 10) * 22),
           };
         })
         .sort((left, right) => right.weight - left.weight || left.id.localeCompare(right.id));
@@ -539,26 +632,41 @@ export default {
             trafficPackets: 0,
             trafficBytes: 0,
             linkCount: 0,
+            outgoingPackets: 0,
+            incomingPackets: 0,
+            outgoingBytes: 0,
+            incomingBytes: 0,
             protocols: new Set(),
           });
         }
         return hosts.get(ip);
       };
 
-      const publicPoints = Array.isArray(this.snapshot && this.snapshot.public_points) ? this.snapshot.public_points : [];
+      const publicPoints = Array.isArray(this.snapshot && this.snapshot.public_points)
+        ? this.snapshot.public_points
+        : [];
       publicPoints.forEach((row) => seedHost(row, false));
       this.topHosts.forEach((row) => seedHost(row, false));
 
       this.aggregatedLinks.forEach((link) => {
         const sourceHost = seedHost({ ip: link.source }, false);
         const targetHost = seedHost({ ip: link.target }, false);
-        [sourceHost, targetHost].forEach((host) => {
-          if (!host) return;
-          host.trafficPackets += link.packets;
-          host.trafficBytes += link.bytes;
-          host.linkCount += 1;
-          link.protocols.forEach((proto) => host.protocols.add(proto));
-        });
+        if (sourceHost) {
+          sourceHost.trafficPackets += link.packets;
+          sourceHost.trafficBytes += link.bytes;
+          sourceHost.linkCount += 1;
+          sourceHost.outgoingPackets += link.packets;
+          sourceHost.outgoingBytes += link.bytes;
+          link.protocols.forEach((proto) => sourceHost.protocols.add(proto));
+        }
+        if (targetHost) {
+          targetHost.trafficPackets += link.packets;
+          targetHost.trafficBytes += link.bytes;
+          targetHost.linkCount += 1;
+          targetHost.incomingPackets += link.packets;
+          targetHost.incomingBytes += link.bytes;
+          link.protocols.forEach((proto) => targetHost.protocols.add(proto));
+        }
       });
 
       this.topHosts.forEach((row) => {
@@ -573,15 +681,27 @@ export default {
       return Array.from(hosts.values())
         .map((host) => {
           const protocols = Array.from(host.protocols).sort();
-          const emphasis = host.openPorts >= 12 || host.trafficPackets >= 18 ? 2 : host.openPorts >= 6 || host.trafficPackets >= 10 ? 1 : 0;
+          const emphasis = host.openPorts >= 12 || host.trafficPackets >= 18
+            ? 2
+            : host.openPorts >= 6 || host.trafficPackets >= 10
+              ? 1
+              : 0;
+          const role = host.outgoingPackets >= (host.incomingPackets * 1.28) && host.outgoingPackets >= 2
+            ? "source"
+            : host.incomingPackets >= (host.outgoingPackets * 1.28) && host.incomingPackets >= 2
+              ? "target"
+              : "relay";
           const theme = scopeTheme(host.scope, emphasis);
-          const score = (host.trafficPackets * 7) + (Math.min(48, host.openPorts) * 4) + (Math.log10(host.trafficBytes + 10) * 18);
+          const score = (host.trafficPackets * 7) +
+            (Math.min(48, host.openPorts) * 4) +
+            (Math.log10(host.trafficBytes + 10) * 18);
           return {
             ...host,
             protocols,
             emphasis,
+            role,
             score,
-            metricLabel: host.openPorts > 0 ? `${host.openPorts} ports` : `${host.trafficPackets} packets`,
+            metricLabel: host.openPorts > 0 ? `${host.openPorts} ports` : `${host.trafficPackets} pkts`,
             ...theme,
           };
         })
@@ -590,61 +710,48 @@ export default {
     visibleNodes() {
       const selected = [];
       const seen = new Set();
-      const pushHost = (host) => {
+      const hostLookup = new Map(this.historicalHosts.map((host) => [host.ip, host]));
+      const pushHost = (value) => {
+        const host = typeof value === "string" ? hostLookup.get(value) : value;
         if (!host || seen.has(host.ip) || selected.length >= MAX_VISIBLE_HOSTS) return;
         selected.push(host);
         seen.add(host.ip);
       };
 
-      this.aggregatedLinks.slice(0, MAX_VISIBLE_LINKS).forEach((link) => {
-        pushHost(this.hostIndex.find((host) => host.ip === link.source));
-        pushHost(this.hostIndex.find((host) => host.ip === link.target));
+      this.historicalLinks.slice(0, MAX_VISIBLE_LINKS).forEach((link) => {
+        pushHost(link.source);
+        pushHost(link.target);
       });
-      this.hostIndex.forEach((host) => pushHost(host));
+      this.historicalHosts.forEach((host) => pushHost(host));
       return selected;
     },
     layoutNodes() {
       const nodes = this.visibleNodes.slice(0, MAX_VISIBLE_HOSTS);
       if (!nodes.length) return [];
 
-      const layout = [];
-      const center = nodes[0];
-      layout.push({
-        ...center,
-        x: this.stageCenterX,
-        y: this.stageCenterY,
-        iconScale: 1.18,
-        haloRadius: 38,
-        ringRadius: 27,
+      const activeNodes = nodes.filter((node) => node.activeNow);
+      const historicalNodes = nodes.filter((node) => !node.activeNow);
+      const grouped = {
+        source: [],
+        relay: [],
+        target: [],
+      };
+
+      activeNodes.forEach((node) => {
+        const key = node.role === "source" || node.role === "target" ? node.role : "relay";
+        grouped[key].push(node);
       });
 
-      const rings = [
-        { capacity: 5, radiusX: 214, radiusY: 126, angleOffset: -Math.PI / 2 },
-        { capacity: 6, radiusX: 330, radiusY: 186, angleOffset: -Math.PI / 3.2 },
-        { capacity: 8, radiusX: 418, radiusY: 232, angleOffset: -Math.PI / 2.3 },
-      ];
-      let cursor = 1;
-      rings.forEach((ring, ringIndex) => {
-        const slice = nodes.slice(cursor, cursor + ring.capacity);
-        cursor += ring.capacity;
-        if (!slice.length) return;
-        slice.forEach((node, index) => {
-          const angle = ring.angleOffset + ((Math.PI * 2 * index) / slice.length);
-          layout.push({
-            ...node,
-            x: this.stageCenterX + (Math.cos(angle) * ring.radiusX),
-            y: this.stageCenterY + (Math.sin(angle) * ring.radiusY),
-            iconScale: ringIndex === 0 ? 1.02 : 0.92,
-            haloRadius: ringIndex === 0 ? 32 : 28,
-            ringRadius: ringIndex === 0 ? 23 : 20,
-          });
-        });
-      });
-      return layout;
+      return [
+        ...this.distributeVerticalNodes(grouped.source, [154, 242], 124, 360, 0.66, { emphasisBoost: 0.05 }),
+        ...this.distributeVerticalNodes(grouped.relay, [432, 548], 112, 384, 0.7, { emphasisBoost: 0.06 }),
+        ...this.distributeVerticalNodes(grouped.target, [734, 822], 124, 360, 0.66, { emphasisBoost: 0.05 }),
+        ...this.distributeHistoricalNodes(historicalNodes),
+      ].slice(0, MAX_VISIBLE_HOSTS);
     },
     visibleLinks() {
       const visibleIps = new Set(this.layoutNodes.map((node) => node.ip));
-      const rawLinks = this.aggregatedLinks
+      const rawLinks = this.historicalLinks
         .filter((link) => visibleIps.has(link.source) && visibleIps.has(link.target))
         .slice(0, MAX_VISIBLE_LINKS);
       const pairCounts = new Map();
@@ -652,10 +759,9 @@ export default {
         const pairKey = [link.source, link.target].sort().join("__");
         const pairCount = pairCounts.get(pairKey) || 0;
         pairCounts.set(pairKey, pairCount + 1);
-        const isReverseBias = pairCount % 2 === 1;
         return {
           ...link,
-          curveSign: isReverseBias ? -1 : 1,
+          curveSign: pairCount % 2 === 1 ? -1 : 1,
           curveLevel: Math.floor(pairCount / 2) + 1,
         };
       });
@@ -668,36 +774,67 @@ export default {
           const target = nodeLookup.get(link.target);
           if (!source || !target) return null;
           const palette = protoPalette(link.dominantProto);
-          const strength = Math.max(1.05, Math.min(2.8, 1 + (Math.log2(link.packets + 1) * 0.32)));
+          const strength = Math.max(1, Math.min(2.4, 1 + (Math.log2((link.packets || 0) + 1) * 0.28)));
+          const laneOpacity = link.activeNow
+            ? 0.92
+            : Math.max(0.2, (Number(link.staleFactor) || 0.2) * 0.52);
           return {
             id: `${link.id}-${index}`,
             source,
             target,
+            active: Boolean(link.activeNow),
             d: this.buildArcPath(source, target, link.curveSign, link.curveLevel),
             stroke: palette.stroke,
             glow: palette.glow,
             traceColor: palette.trace,
             strokeWidth: strength,
-            traceRadius: Math.max(2.8, Math.min(4.6, 2.4 + (Math.log2(link.packets + 1) * 0.38))),
-            duration: `${(2.8 + ((index % 5) * 0.28)).toFixed(2)}s`,
-            begin: `${(index % 7) * 0.16}s`,
+            strokeOpacity: laneOpacity,
+            glowOpacity: link.activeNow ? 0.18 : Math.max(0.06, laneOpacity * 0.38),
+            traceRadius: Math.max(2.4, Math.min(4.2, 2.1 + (Math.log2((link.packets || 0) + 1) * 0.34))),
+            duration: `${(2.7 + ((index % 5) * 0.22)).toFixed(2)}s`,
+            begin: `${(index % 7) * 0.15}s`,
+            markerEnd: link.activeNow ? `url(#${this.attackMarkerId})` : "",
             style: {
               animationDuration: `${(2.5 + ((index % 4) * 0.24)).toFixed(2)}s`,
-              animationDelay: `${(index % 6) * 0.13}s`,
+              animationDelay: `${(index % 6) * 0.11}s`,
             },
           };
         })
         .filter(Boolean);
     },
+    activeArcPaths() {
+      return this.arcPaths.filter((arc) => arc.active);
+    },
+    activeHostCount() {
+      return this.historicalHosts.filter((host) => host.activeNow).length;
+    },
+    historicalHostCount() {
+      return this.historicalHosts.filter((host) => !host.activeNow).length;
+    },
     visibleProtocolCount() {
-      return new Set(this.visibleLinks.flatMap((link) => link.protocols)).size;
+      return new Set(this.visibleLinks.flatMap((link) => link.protocols || [])).size;
     },
     busiestHostLabel() {
-      if (!this.layoutNodes.length) return "n/a";
-      return this.compactIp(this.layoutNodes[0].ip);
+      const hot = this.historicalHosts[0];
+      return hot ? this.compactIp(hot.ip) : "n/a";
     },
     hotLanes() {
       return this.visibleLinks.slice(0, 6);
+    },
+  },
+  watch: {
+    snapshot: {
+      deep: true,
+      immediate: true,
+      handler() {
+        this.syncHistoryFromCurrentData();
+      },
+    },
+    topHosts: {
+      deep: true,
+      handler() {
+        this.syncHistoryFromCurrentData();
+      },
     },
   },
   methods: {
@@ -705,6 +842,170 @@ export default {
       const ip = normalizeIp(value);
       if (ip.length <= 18) return ip;
       return `${ip.slice(0, 9)}...${ip.slice(-6)}`;
+    },
+    distributeVerticalNodes(nodes, xPositions, yMin, yMax, baseScale, options = {}) {
+      const ordered = [...nodes].sort((left, right) => right.score - left.score || left.ip.localeCompare(right.ip));
+      if (!ordered.length) return [];
+      const columnCount = ordered.length > 6 ? Math.min(xPositions.length, 2) : 1;
+      const columns = Array.from({ length: columnCount }, () => []);
+      ordered.forEach((node, index) => {
+        columns[index % columnCount].push(node);
+      });
+      return columns.flatMap((column, columnIndex) => column.map((node, index) => {
+        const y = column.length === 1
+          ? (yMin + yMax) / 2
+          : yMin + (((index + 1) / (column.length + 1)) * (yMax - yMin));
+        const emphasisBoost = Number(options.emphasisBoost || 0);
+        const iconScale = Math.min(0.84, baseScale + (node.emphasis * emphasisBoost));
+        return {
+          ...node,
+          x: xPositions[columnIndex] || xPositions[0] || this.stageCenterX,
+          y,
+          iconScale,
+          haloRadius: 14 + (node.emphasis * 3),
+          ringRadius: 10 + (node.emphasis * 2),
+          labelY: 21,
+          metricY: 33,
+          nodeOpacity: 1,
+          labelOpacity: 0.98,
+          metricOpacity: 0.84,
+        };
+      }));
+    },
+    distributeHistoricalNodes(nodes) {
+      const ordered = [...nodes]
+        .sort((left, right) => (right.lastSeenAt || 0) - (left.lastSeenAt || 0) || left.ip.localeCompare(right.ip))
+        .slice(0, Math.max(0, MAX_VISIBLE_HOSTS));
+      const firstRowCount = Math.min(10, ordered.length);
+      const secondRowCount = Math.min(10, Math.max(0, ordered.length - firstRowCount));
+      const rows = [
+        ordered.slice(0, firstRowCount),
+        ordered.slice(firstRowCount, firstRowCount + secondRowCount),
+      ].filter((row) => row.length);
+
+      const yPositions = [466, 510];
+      return rows.flatMap((row, rowIndex) => row.map((node, index) => {
+        const x = row.length === 1
+          ? this.stageCenterX
+          : 96 + (((index + 1) / (row.length + 1)) * (this.stageWidth - 192));
+        return {
+          ...node,
+          x,
+          y: yPositions[rowIndex] || 510,
+          iconScale: 0.48,
+          haloRadius: 8,
+          ringRadius: 6,
+          labelY: 16,
+          metricY: 27,
+          nodeOpacity: Math.max(0.34, Number(node.staleFactor || 0.34)),
+          labelOpacity: Math.max(0.52, Number(node.staleFactor || 0.34)),
+          metricOpacity: Math.max(0.4, Number(node.staleFactor || 0.34) * 0.92),
+        };
+      }));
+    },
+    syncHistoryFromCurrentData() {
+      const now = Date.now();
+      const currentHosts = this.hostIndex;
+      const currentLinks = this.aggregatedLinks;
+
+      const hostMap = new Map(
+        this.historicalHosts.map((host) => [
+          host.ip,
+          {
+            ...host,
+            protocols: Array.isArray(host.protocols) ? host.protocols.slice() : [],
+            activeNow: false,
+          },
+        ])
+      );
+
+      currentHosts.forEach((host) => {
+        const existing = hostMap.get(host.ip);
+        hostMap.set(host.ip, {
+          ...existing,
+          ...host,
+          firstSeenAt: existing && existing.firstSeenAt ? existing.firstSeenAt : now,
+          lastSeenAt: now,
+          activeNow: true,
+        });
+      });
+
+      let hosts = Array.from(hostMap.values())
+        .map((host) => {
+          const historyAgeMs = Math.max(0, now - Number(host.lastSeenAt || now));
+          const staleFactor = host.activeNow
+            ? 1
+            : Math.max(0.28, 1 - Math.min(0.72, historyAgeMs / HISTORY_RETENTION_MS));
+          return {
+            ...host,
+            historyAgeMs,
+            staleFactor,
+            metricLabel: host.activeNow
+              ? (host.openPorts > 0 ? `${host.openPorts} ports` : `${host.trafficPackets} pkts`)
+              : `hist ${Math.max(1, Math.round(historyAgeMs / 60000))}m`,
+          };
+        })
+        .filter((host) => host.activeNow || host.historyAgeMs <= HISTORY_RETENTION_MS)
+        .sort((left, right) =>
+          Number(right.activeNow) - Number(left.activeNow) ||
+          right.score - left.score ||
+          (right.lastSeenAt || 0) - (left.lastSeenAt || 0) ||
+          left.ip.localeCompare(right.ip)
+        )
+        .slice(0, MAX_HISTORICAL_HOSTS);
+
+      const hostWhitelist = new Set(hosts.map((host) => host.ip));
+      const linkMap = new Map(
+        this.historicalLinks.map((link) => [
+          link.id,
+          {
+            ...link,
+            protocols: Array.isArray(link.protocols) ? link.protocols.slice() : [],
+            activeNow: false,
+          },
+        ])
+      );
+
+      currentLinks.forEach((link) => {
+        const existing = linkMap.get(link.id);
+        linkMap.set(link.id, {
+          ...existing,
+          ...link,
+          firstSeenAt: existing && existing.firstSeenAt ? existing.firstSeenAt : now,
+          lastSeenAt: now,
+          activeNow: true,
+        });
+      });
+
+      const links = Array.from(linkMap.values())
+        .filter((link) => hostWhitelist.has(link.source) && hostWhitelist.has(link.target))
+        .map((link) => {
+          const historyAgeMs = Math.max(0, now - Number(link.lastSeenAt || now));
+          const staleFactor = link.activeNow
+            ? 1
+            : Math.max(0.22, 1 - Math.min(0.78, historyAgeMs / HISTORY_RETENTION_MS));
+          return {
+            ...link,
+            historyAgeMs,
+            staleFactor,
+          };
+        })
+        .filter((link) => link.activeNow || link.historyAgeMs <= HISTORY_RETENTION_MS)
+        .sort((left, right) =>
+          Number(right.activeNow) - Number(left.activeNow) ||
+          right.weight - left.weight ||
+          (right.lastSeenAt || 0) - (left.lastSeenAt || 0) ||
+          left.id.localeCompare(right.id)
+        )
+        .slice(0, MAX_HISTORICAL_LINKS);
+
+      hosts = hosts.filter((host) => {
+        if (host.activeNow) return true;
+        return links.some((link) => link.source === host.ip || link.target === host.ip) || host.historyAgeMs <= HISTORY_RETENTION_MS;
+      });
+
+      this.historicalHosts = hosts;
+      this.historicalLinks = links;
     },
     buildArcPath(source, target, curveSign = 1, curveLevel = 1) {
       const sx = Number(source.x) || 0;
@@ -718,14 +1019,17 @@ export default {
       const my = (sy + ty) / 2;
       const nx = -dy / distance;
       const ny = dx / distance;
-      const bend = Math.min(96, 24 + (distance * 0.16) + ((curveLevel - 1) * 18));
+      const bend = Math.min(84, 18 + (distance * 0.12) + ((curveLevel - 1) * 12));
       const cx = mx + (nx * bend * curveSign);
       const cy = my + (ny * bend * curveSign);
       return `M${sx.toFixed(2)},${sy.toFixed(2)} Q${cx.toFixed(2)},${cy.toFixed(2)} ${tx.toFixed(2)},${ty.toFixed(2)}`;
     },
     nodeTooltip(node) {
-      const protocols = node.protocols.length ? node.protocols.join(", ") : "no protocol sample";
-      return `${node.ip} | public host | ${node.trafficPackets} packets | ${node.openPorts} open ports | ${protocols}`;
+      const protocols = Array.isArray(node.protocols) && node.protocols.length
+        ? node.protocols.join(", ")
+        : "no protocol sample";
+      const history = node.activeNow ? "live" : "historical";
+      return `${node.ip} | public host | ${history} | ${node.trafficPackets} packets | ${node.openPorts} open ports | ${protocols}`;
     },
     navigateToHost(node) {
       if (!node || !node.ip || !this.$router) return;
@@ -747,8 +1051,8 @@ export default {
   border-radius: 24px;
   border: 1px solid rgba(94, 176, 226, 0.22);
   background:
-    radial-gradient(circle at 12% 16%, rgba(76, 190, 255, 0.2), transparent 34%),
-    radial-gradient(circle at 88% 14%, rgba(255, 177, 96, 0.12), transparent 28%),
+    radial-gradient(circle at 12% 16%, rgba(76, 190, 255, 0.16), transparent 34%),
+    radial-gradient(circle at 88% 14%, rgba(255, 177, 96, 0.08), transparent 28%),
     linear-gradient(180deg, rgba(4, 12, 24, 0.99), rgba(3, 8, 16, 0.98));
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.03),
@@ -762,25 +1066,28 @@ export default {
   inset: 0;
   pointer-events: none;
   background:
-    linear-gradient(180deg, rgba(145, 222, 255, 0.05), rgba(145, 222, 255, 0) 24%),
-    linear-gradient(180deg, rgba(120, 223, 255, 0) 0%, rgba(120, 223, 255, 0.08) 50%, rgba(120, 223, 255, 0) 100%);
-  opacity: 0.72;
+    linear-gradient(180deg, rgba(145, 222, 255, 0.04), rgba(145, 222, 255, 0) 24%),
+    radial-gradient(circle at 50% 50%, rgba(52, 230, 255, 0.04), transparent 48%);
+  opacity: 0.74;
 }
 
 .host-radar-stage::after {
   content: "";
   position: absolute;
-  inset: -18% 0 auto;
-  height: 44%;
+  top: 126px;
+  left: -18%;
+  width: 42%;
+  height: 94px;
   pointer-events: none;
   background: linear-gradient(
-    180deg,
+    90deg,
     rgba(112, 220, 255, 0),
-    rgba(112, 220, 255, 0.11),
+    rgba(112, 220, 255, 0.06),
+    rgba(255, 182, 101, 0.18),
     rgba(112, 220, 255, 0)
   );
-  transform: translateY(-100%);
-  animation: host-radar-scan 9s linear infinite;
+  transform: skewX(-18deg);
+  animation: host-threat-sweep 9s linear infinite;
 }
 
 .host-radar-stage svg {
@@ -842,17 +1149,21 @@ export default {
   backdrop-filter: blur(10px);
 }
 
-.legend-chip--public {
-  border-color: rgba(93, 204, 255, 0.9);
+.legend-chip--live {
+  border-color: rgba(255, 187, 98, 0.9);
 }
 
-.legend-chip--flow {
-  border-color: rgba(164, 142, 255, 0.9);
+.legend-chip--history {
+  border-color: rgba(164, 182, 205, 0.56);
+}
+
+.legend-chip--pc {
+  border-color: rgba(93, 204, 255, 0.84);
 }
 
 .host-radar-flow {
-  stroke-dasharray: 11 14;
-  animation: host-radar-flow 3s linear infinite;
+  stroke-dasharray: 10 13;
+  animation: host-radar-flow 2.8s linear infinite;
 }
 
 .host-radar-trace {
@@ -861,6 +1172,11 @@ export default {
 
 .host-radar-node {
   cursor: pointer;
+  transition: opacity 180ms ease;
+}
+
+.host-radar-node--historical {
+  cursor: default;
 }
 
 .host-radar-summary {
@@ -927,18 +1243,18 @@ export default {
   font-weight: 600;
 }
 
-@keyframes host-radar-scan {
+@keyframes host-threat-sweep {
   from {
-    transform: translateY(-110%);
+    transform: translateX(0%) skewX(-18deg);
   }
   to {
-    transform: translateY(240%);
+    transform: translateX(300%) skewX(-18deg);
   }
 }
 
 @keyframes host-radar-flow {
   from {
-    stroke-dashoffset: 54;
+    stroke-dashoffset: 52;
   }
   to {
     stroke-dashoffset: 0;
