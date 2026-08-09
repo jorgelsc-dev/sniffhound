@@ -137,26 +137,29 @@
               <animate attributeName="r" values="2;10;2" :dur="arc.duration" :begin="arc.begin" repeatCount="indefinite" />
               <animate attributeName="opacity" values="0;0.24;0" :dur="arc.duration" :begin="arc.begin" repeatCount="indefinite" />
             </circle>
-            <g
+            <circle
+              v-for="arc in arcPaths"
+              :key="`trace-glow-${arc.id}`"
+              :r="arc.traceRadius * 2.85"
+              :fill="arc.traceGlow"
+              class="host-radar-trace host-radar-trace--glow"
+              :opacity="arc.traceGlowOpacity"
+              :filter="`url(#${nodeGlowFilterId})`"
+            >
+              <animateMotion :dur="arc.duration" :begin="arc.begin" repeatCount="indefinite" :path="arc.d" />
+            </circle>
+            <circle
               v-for="arc in arcPaths"
               :key="`trace-${arc.id}`"
+              :r="arc.traceRadius"
+              :fill="arc.traceColor"
+              :stroke="arc.traceStroke"
+              stroke-width="0.58"
               class="host-radar-trace"
               :opacity="arc.traceOpacity"
             >
-              <circle
-                :r="arc.traceRadius * 2.7"
-                :fill="arc.traceGlow"
-                :opacity="arc.traceGlowOpacity"
-                :filter="`url(#${nodeGlowFilterId})`"
-              />
-              <circle
-                :r="arc.traceRadius"
-                :fill="arc.traceColor"
-                :stroke="arc.traceStroke"
-                stroke-width="0.58"
-              />
               <animateMotion :dur="arc.duration" :begin="arc.begin" repeatCount="indefinite" :path="arc.d" />
-            </g>
+            </circle>
           </g>
 
           <g v-if="layoutNodes.length" class="host-radar-nodes">
@@ -184,54 +187,52 @@
                 :opacity="node.activeNow ? 0.78 : 0.38"
               />
               <g :transform="`scale(${node.iconScale})`">
-                <rect
-                  x="-16"
-                  y="-12"
-                  width="32"
-                  height="20"
-                  rx="3.5"
+                <circle
+                  r="12.4"
                   :fill="node.body"
                   stroke="rgba(235, 246, 255, 0.82)"
-                  stroke-width="0.85"
+                  stroke-width="0.9"
                 />
-                <rect
-                  x="-12"
-                  y="-9"
-                  width="24"
-                  height="13"
-                  rx="2"
+                <circle
+                  r="7.2"
                   :fill="node.screen"
                 />
-                <rect
-                  x="-2.8"
-                  y="7.4"
-                  width="5.6"
-                  height="4.2"
-                  rx="1"
-                  :fill="node.body"
+                <path
+                  d="M0,-4.8 L0,4.8 M-4.8,0 L4.8,0"
+                  stroke="rgba(235, 246, 255, 0.74)"
+                  stroke-width="1.05"
+                  stroke-linecap="round"
                 />
-                <rect
-                  x="-10"
-                  y="11.2"
-                  width="20"
-                  height="3.4"
-                  rx="1.7"
+                <path
+                  d="M-8.8,7.8 L-3.6,3.8 M8.4,-7.2 L3.6,-3.2"
+                  :stroke="node.base"
+                  stroke-width="1.2"
+                  stroke-linecap="round"
+                />
+                <circle
+                  cx="-10.4"
+                  cy="9.2"
+                  r="3.3"
                   :fill="node.base"
                 />
+                <circle
+                  cx="10"
+                  cy="-8.6"
+                  r="3.1"
+                  :fill="node.badge"
+                />
+                <circle
+                  cx="0"
+                  cy="0"
+                  r="2.1"
+                  fill="rgba(238, 246, 255, 0.96)"
+                />
               </g>
-              <circle
-                cx="10"
-                cy="-9"
-                r="3.2"
-                :fill="node.badge"
-                stroke="rgba(3, 10, 18, 0.92)"
-                stroke-width="1"
-              />
               <text
                 :y="node.labelY"
                 text-anchor="middle"
                 fill="rgba(237, 244, 255, 0.96)"
-                font-size="9.8px"
+                font-size="9.2px"
                 font-weight="700"
                 :opacity="node.labelOpacity"
               >
@@ -241,7 +242,7 @@
                 :y="node.metricY"
                 text-anchor="middle"
                 fill="rgba(170, 200, 226, 0.86)"
-                font-size="8.6px"
+                font-size="8.1px"
                 font-weight="600"
                 :opacity="node.metricOpacity"
               >
@@ -283,7 +284,7 @@
         <div class="host-radar-legend">
           <span class="legend-chip legend-chip--live">Live attack</span>
           <span class="legend-chip legend-chip--history">Historical host</span>
-          <span class="legend-chip legend-chip--pc">PC node</span>
+          <span class="legend-chip legend-chip--pc">Node icon</span>
         </div>
       </div>
 
@@ -842,36 +843,43 @@ export default {
         rightNodes.length > leftNodes.length ? rightNodes.splice(Math.ceil(rightNodes.length / 2)) : []
       );
 
-      return [
+      return this.resolveNodeCollisions([
         this.decorateGraphNode(anchor, this.stageCenterX, 186, 0.74),
         ...this.placeNodesOnArc(leftNodes, {
-          centerX: 244,
-          centerY: 250,
-          radiusX: 118,
-          radiusY: 116,
-          startAngle: -126,
-          endAngle: 48,
-          baseScale: 0.62,
+          centerX: 220,
+          centerY: 252,
+          radiusX: 142,
+          radiusY: 132,
+          startAngle: -138,
+          endAngle: 58,
+          baseScale: 0.6,
         }),
         ...this.placeNodesOnArc(balancedCenter, {
           centerX: this.stageCenterX,
-          centerY: 300,
-          radiusX: 238,
-          radiusY: 84,
-          startAngle: -170,
-          endAngle: -12,
-          baseScale: 0.58,
+          centerY: 308,
+          radiusX: 286,
+          radiusY: 104,
+          startAngle: -176,
+          endAngle: -4,
+          baseScale: 0.56,
         }),
         ...this.placeNodesOnArc(rightNodes, {
-          centerX: 736,
-          centerY: 248,
-          radiusX: 118,
-          radiusY: 114,
-          startAngle: 132,
-          endAngle: 304,
-          baseScale: 0.62,
+          centerX: 760,
+          centerY: 252,
+          radiusX: 142,
+          radiusY: 132,
+          startAngle: 122,
+          endAngle: 316,
+          baseScale: 0.6,
         }),
-      ];
+      ], {
+        minDistance: 124,
+        minX: 90,
+        maxX: this.stageWidth - 90,
+        minY: 124,
+        maxY: 392,
+        iterations: 5,
+      });
     },
     placeNodesOnArc(nodes, config = {}) {
       const ordered = [...nodes].sort((left, right) => right.score - left.score || left.ip.localeCompare(right.ip));
@@ -893,20 +901,59 @@ export default {
       });
     },
     decorateGraphNode(node, x, y, baseScale = 0.58) {
-      const iconScale = Math.min(0.78, baseScale + (node.emphasis * 0.04) + (node.activeNow ? 0.02 : 0));
+      const iconScale = Math.min(0.74, baseScale + (node.emphasis * 0.04) + (node.activeNow ? 0.02 : 0));
       return {
         ...node,
         x,
         y,
         iconScale,
-        haloRadius: 10.4 + (node.emphasis * 2.5),
-        ringRadius: 7.8 + (node.emphasis * 1.7),
-        labelY: 17,
-        metricY: 28,
+        haloRadius: 11.8 + (node.emphasis * 2.7),
+        ringRadius: 8.4 + (node.emphasis * 1.9),
+        labelY: 20,
+        metricY: 31,
         nodeOpacity: 1,
         labelOpacity: 0.98,
         metricOpacity: 0.82,
       };
+    },
+    resolveNodeCollisions(nodes, options = {}) {
+      const minDistance = Math.max(24, Number(options.minDistance) || 96);
+      const minX = Number(options.minX) || 80;
+      const maxX = Number(options.maxX) || (this.stageWidth - 80);
+      const minY = Number(options.minY) || 96;
+      const maxY = Number(options.maxY) || (this.stageHeight - 96);
+      const iterations = Math.max(1, Number(options.iterations) || 4);
+      const working = nodes.map((node) => ({
+        ...node,
+        x: Number(node.x) || this.stageCenterX,
+        y: Number(node.y) || this.stageCenterY,
+      }));
+
+      for (let round = 0; round < iterations; round += 1) {
+        for (let index = 0; index < working.length; index += 1) {
+          for (let otherIndex = index + 1; otherIndex < working.length; otherIndex += 1) {
+            const node = working[index];
+            const other = working[otherIndex];
+            const dx = other.x - node.x;
+            const dy = other.y - node.y;
+            const distance = Math.hypot(dx, dy) || 0.001;
+            if (distance >= minDistance) continue;
+            const overlap = (minDistance - distance) / 2;
+            const nx = dx / distance;
+            const ny = dy / distance;
+            node.x -= nx * overlap;
+            node.y -= ny * overlap;
+            other.x += nx * overlap;
+            other.y += ny * overlap;
+          }
+        }
+        working.forEach((node) => {
+          node.x = Math.max(minX, Math.min(maxX, node.x));
+          node.y = Math.max(minY, Math.min(maxY, node.y));
+        });
+      }
+
+      return working;
     },
     distributeHistoricalNodes(nodes) {
       const ordered = [...nodes]
@@ -920,14 +967,14 @@ export default {
       ].filter((row) => row.length);
 
       const yPositions = [454, 502];
-      return rows.flatMap((row, rowIndex) => row.map((node, index) => {
+      return this.resolveNodeCollisions(rows.flatMap((row, rowIndex) => row.map((node, index) => {
         const progress = row.length === 1 ? 0.5 : index / (row.length - 1);
-        const x = 98 + (progress * (this.stageWidth - 196));
+        const x = 106 + (progress * (this.stageWidth - 212));
         const archLift = Math.sin(progress * Math.PI) * (rowIndex === 0 ? 20 : 12);
         const baseNode = this.decorateGraphNode(node, x, (yPositions[rowIndex] || 502) - archLift, 0.34);
         return {
           ...baseNode,
-          iconScale: Math.min(0.42, baseNode.iconScale),
+          iconScale: Math.min(0.4, baseNode.iconScale),
           haloRadius: 6.8,
           ringRadius: 5.2,
           labelY: 14,
@@ -936,7 +983,14 @@ export default {
           labelOpacity: Math.max(0.52, Number(node.staleFactor || 0.34)),
           metricOpacity: Math.max(0.4, Number(node.staleFactor || 0.34) * 0.92),
         };
-      }));
+      })), {
+        minDistance: 74,
+        minX: 90,
+        maxX: this.stageWidth - 90,
+        minY: 432,
+        maxY: 516,
+        iterations: 3,
+      });
     },
     syncHistoryFromCurrentData() {
       const now = Date.now();
