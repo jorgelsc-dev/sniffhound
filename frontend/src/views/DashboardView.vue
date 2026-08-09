@@ -3,7 +3,7 @@
     <ViewHeader
       overline="Operations"
       title="Dashboard"
-      description="Runtime control, live telemetry metrics, active sessions, and the latest traffic crossing SniffHound."
+      description="Runtime control, live telemetry metrics, and the latest captured traffic."
       :refresh-loading="loading"
       @refresh="load"
     />
@@ -31,7 +31,7 @@
       <v-col cols="12" xl="7">
         <DataPanel
           title="Runtime Posture"
-          subtitle="Both engines stay visible. Sniffer blockers and honeypot listener readiness are surfaced here."
+          subtitle="Both engines start stopped. Sniffer blockers and honeypot listener readiness are surfaced here."
           v-model:live-enabled="liveRefreshEnabled"
           :loading="loading"
           :error="''"
@@ -114,7 +114,7 @@
           <div class="d-flex flex-wrap ga-2">
             <v-btn color="primary" variant="flat" to="/sniffer">Open Sniffer</v-btn>
             <v-btn color="warning" variant="outlined" to="/honeypot">Open Honeypot</v-btn>
-            <v-btn color="info" variant="outlined" to="/targets">Session Inventory</v-btn>
+            <v-btn color="info" variant="outlined" to="/investigate">Investigate Host</v-btn>
           </div>
 
           <v-divider class="my-4" />
@@ -146,57 +146,7 @@
     </v-row>
 
     <v-row class="mt-4" dense>
-      <v-col cols="12" xl="4">
-        <EntityTablePanel
-          title="Sessions"
-          subtitle="Latest capture scopes and listener profiles."
-          v-model:live-enabled="liveRefreshEnabled"
-          :rows="recentTargets"
-          :columns="targetColumns"
-          :search-enabled="true"
-          search-label="Search sessions"
-          search-placeholder="Network, proto, interface..."
-          :search-fields="targetSearchFields"
-          :filter-definitions="targetFilterDefinitions"
-          :loading="loading"
-          :error="error"
-          :last-updated="lastUpdated"
-          :live-refresh="true"
-          empty-text="No sessions configured"
-          :page-size="6"
-          @refresh="load"
-        >
-          <template #cell-status="{ value }">
-            <v-chip size="small" :color="statusColor(value)" variant="tonal">
-              {{ normalizeStatus(value) }}
-            </v-chip>
-          </template>
-          <template #cell-actions="{ item }">
-            <div class="target-actions">
-              <v-btn
-                size="x-small"
-                color="success"
-                variant="tonal"
-                :disabled="loading || isActionLoading(item.id, 'start') || normalizeStatus(item.status) === 'active'"
-                @click="runTargetAction(item, 'start')"
-              >
-                Start
-              </v-btn>
-              <v-btn
-                size="x-small"
-                color="warning"
-                variant="tonal"
-                :disabled="loading || isActionLoading(item.id, 'stop') || normalizeStatus(item.status) === 'stopped'"
-                @click="runTargetAction(item, 'stop')"
-              >
-                Stop
-              </v-btn>
-            </div>
-          </template>
-        </EntityTablePanel>
-      </v-col>
-
-      <v-col cols="12" xl="8">
+      <v-col cols="12">
         <EntityTablePanel
           title="Latest Packets"
           subtitle="Newest captured frames from sniffer and honeypot sources."
@@ -255,61 +205,6 @@
       </v-col>
     </v-row>
 
-    <v-row class="mt-4" dense>
-      <v-col cols="12">
-        <EntityTablePanel
-          title="Latest Responses"
-          subtitle="Most recent payloads and banners decoded from captured traffic."
-          v-model:live-enabled="liveRefreshEnabled"
-          :rows="recentBanners"
-          :columns="bannerColumns"
-          :search-enabled="true"
-          search-label="Search responses"
-          search-placeholder="IP, port, response, flow..."
-          :search-fields="bannerSearchFields"
-          :filter-definitions="bannerFilterDefinitions"
-          :expandable-rows="true"
-          :loading="loading"
-          :error="error"
-          :last-updated="lastUpdated"
-          :live-refresh="true"
-          empty-text="No responses visible"
-          :page-size="8"
-          @refresh="load"
-        >
-          <template #cell-updated_at="{ value }">
-            {{ formatTimestamp(value) }}
-          </template>
-          <template #cell-interface="{ value }">
-            <v-chip size="x-small" :color="interfaceChipColor(value)" variant="tonal">
-              {{ value || "unknown" }}
-            </v-chip>
-          </template>
-          <template #cell-proto="{ value }">
-            <v-chip size="x-small" color="primary" variant="tonal">
-              {{ String(value || "unknown").toUpperCase() }}
-            </v-chip>
-          </template>
-          <template #cell-state="{ value }">
-            <v-chip size="x-small" :color="statusColor(value)" variant="tonal">
-              {{ value || "unknown" }}
-            </v-chip>
-          </template>
-          <template #cell-source="{ item }">
-            <span class="mono">{{ formatEndpoint(item.src_ip, item.src_port) }}</span>
-          </template>
-          <template #cell-target="{ item }">
-            <span class="mono">{{ formatEndpoint(item.dst_ip, item.dst_port) }}</span>
-          </template>
-          <template #cell-response_size="{ value }">
-            <span class="meta-cell">{{ formatBytes(value) || "-" }}</span>
-          </template>
-          <template #cell-response_plain="{ item }">
-            <span class="summary-cell">{{ buildResponseSummary(item, 160) || "-" }}</span>
-          </template>
-        </EntityTablePanel>
-      </v-col>
-    </v-row>
   </div>
 </template>
 
@@ -321,9 +216,7 @@ import EntityTablePanel from "../components/ui/EntityTablePanel.vue";
 import {
   buildPacketSizeSummary,
   buildPacketSummary,
-  buildResponseSummary,
   formatEndpoint,
-  formatBytes,
   formatTimestamp,
   isHoneypotInterface,
 } from "../utils/traffic";
@@ -347,32 +240,6 @@ export default {
       dashboard: {},
       analytics: {},
       packets: [],
-      banners: [],
-      actionLoading: {
-        id: null,
-        action: "",
-      },
-      targetColumns: [
-        { key: "network", label: "Network" },
-        { key: "proto", label: "Proto" },
-        { key: "status", label: "Status" },
-        { key: "interface", label: "Interface" },
-        { key: "actions", label: "Actions" },
-      ],
-      targetSearchFields: ["network", "proto", "status", "interface", "type", "port_mode"],
-      targetFilterDefinitions: [
-        {
-          key: "proto",
-          label: "Proto",
-          field: "proto",
-          optionLabel: (value) => String(value || "").toUpperCase(),
-        },
-        {
-          key: "status",
-          label: "Status",
-          field: "status",
-        },
-      ],
       packetColumns: [
         { key: "updated_at", label: "Seen" },
         { key: "interface", label: "Interface" },
@@ -420,49 +287,6 @@ export default {
           field: "state",
         },
       ],
-      bannerColumns: [
-        { key: "updated_at", label: "Seen" },
-        { key: "interface", label: "Interface" },
-        { key: "proto", label: "Proto" },
-        { key: "state", label: "State" },
-        { key: "source", label: "Source" },
-        { key: "target", label: "Target" },
-        { key: "response_size", label: "Size" },
-        { key: "response_plain", label: "Response" },
-      ],
-      bannerSearchFields: [
-        "updated_at",
-        "interface",
-        "proto",
-        "state",
-        "src_ip",
-        "src_port",
-        "dst_ip",
-        "dst_port",
-        "response_size",
-        "response_plain",
-        "summary",
-        "banner_text",
-        "flow_key",
-      ],
-      bannerFilterDefinitions: [
-        {
-          key: "proto",
-          label: "Proto",
-          field: "proto",
-          optionLabel: (value) => String(value || "").toUpperCase(),
-        },
-        {
-          key: "interface",
-          label: "Interface",
-          field: "interface",
-        },
-        {
-          key: "state",
-          label: "State",
-          field: "state",
-        },
-      ],
       wsRefreshTimer: null,
       stopTableRefreshSubscription: null,
     };
@@ -488,11 +312,11 @@ export default {
       const analyticsSummary = this.analytics.summary || {};
       return [
         {
-          key: "sessions",
-          label: "Sessions",
-          value: Number(this.counts.count_targets || 0),
-          caption: "Capture scopes and honeypot profiles",
-          icon: "mdi-account-switch",
+          key: "tags",
+          label: "Tags",
+          value: Number(this.counts.count_tags || 0),
+          caption: "Rule hits and parsed metadata",
+          icon: "mdi-tag-multiple",
           colorClass: "text-primary",
         },
         {
@@ -546,15 +370,8 @@ export default {
       const clients = this.dashboard && Array.isArray(this.dashboard.ws_clients) ? this.dashboard.ws_clients : [];
       return clients.length;
     },
-    recentTargets() {
-      const rows = this.dashboard && Array.isArray(this.dashboard.targets) ? this.dashboard.targets : [];
-      return rows.slice(0, 6);
-    },
     recentPackets() {
       return Array.isArray(this.packets) ? this.packets.slice(0, 8) : [];
-    },
-    recentBanners() {
-      return Array.isArray(this.banners) ? this.banners.slice(0, 8) : [];
     },
     snifferBlocked() {
       return String(this.snifferRuntime.capture_state || "").trim().toLowerCase() === "blocked";
@@ -562,7 +379,7 @@ export default {
     snifferStatusLabel() {
       if (this.snifferBlocked) return "Blocked";
       if (this.snifferRuntime.running) return "Running";
-      return "Idle";
+      return "Stopped";
     },
     snifferChipColor() {
       if (this.snifferBlocked) return "error";
@@ -586,7 +403,7 @@ export default {
     snifferSummary() {
       if (this.snifferBlocked) return this.snifferErrorSummary;
       if (this.snifferRuntime.running) return "Passive capture is running.";
-      return `Ready on ${this.snifferInterfacesLabel}.`;
+      return `Stopped. Ready on ${this.snifferInterfacesLabel}.`;
     },
     snifferErrorSummary() {
       const entries = this.snifferRuntime.errors && typeof this.snifferRuntime.errors === "object"
@@ -603,7 +420,7 @@ export default {
     },
     honeypotStatusLabel() {
       if (this.honeypotRuntime.running) return "Running";
-      return "Ready";
+      return "Stopped";
     },
     honeypotChipColor() {
       return this.honeypotRuntime.running ? "warning" : "secondary";
@@ -615,7 +432,7 @@ export default {
     },
     honeypotSummary() {
       if (this.honeypotRuntime.running) return "Service emulation is accepting inbound traffic.";
-      return "Ready to expose service listeners when started.";
+      return "Stopped until you start a listener profile.";
     },
   },
   watch: {
@@ -646,9 +463,7 @@ export default {
   methods: {
     buildPacketSizeSummary,
     buildPacketSummary,
-    buildResponseSummary,
     formatEndpoint,
-    formatBytes,
     formatTimestamp,
     normalizeStatus(value) {
       const raw = String(value || "active").trim().toLowerCase();
@@ -670,36 +485,6 @@ export default {
     interfaceChipColor(value) {
       return isHoneypotInterface(value) ? "warning" : "info";
     },
-    isActionLoading(id, action) {
-      return this.actionLoading.id === id && this.actionLoading.action === action;
-    },
-    runTargetAction(item, action) {
-      const targetId = Number(item && item.id);
-      if (!Number.isFinite(targetId) || targetId <= 0) {
-        this.error = "Invalid session id";
-        return Promise.resolve();
-      }
-      this.error = "";
-      this.actionLoading.id = targetId;
-      this.actionLoading.action = action;
-      return this.store
-        .fetchJsonPromise("/target/action/", {
-          method: "POST",
-          body: JSON.stringify({
-            id: targetId,
-            action,
-            clean_results: false,
-          }),
-        })
-        .then(() => this.load())
-        .catch((err) => {
-          this.error = err.message || `Failed to ${action} session`;
-        })
-        .finally(() => {
-          this.actionLoading.id = null;
-          this.actionLoading.action = "";
-        });
-    },
     handleWsRefresh(event) {
       if (!this.liveRefreshEnabled) return;
       const eventType = String((event && event.type) || "").trim().toLowerCase();
@@ -719,9 +504,8 @@ export default {
         this.store.fetchJsonPromise("/api/dashboard/"),
         this.store.fetchJsonPromise("/api/charts/analytics"),
         this.store.fetchJsonPromise("/ports/?limit=12"),
-        this.store.fetchJsonPromise("/banners/?limit=8"),
       ])
-        .then(([dashboardRes, analyticsRes, packetsRes, bannersRes]) => {
+        .then(([dashboardRes, analyticsRes, packetsRes]) => {
           const errors = [];
           if (dashboardRes.status === "fulfilled") {
             this.dashboard = dashboardRes.value || {};
@@ -740,12 +524,6 @@ export default {
           } else {
             this.packets = [];
             errors.push((packetsRes.reason && packetsRes.reason.message) || "Failed to load packets");
-          }
-          if (bannersRes.status === "fulfilled") {
-            this.banners = this.store.extractArray(bannersRes.value);
-          } else {
-            this.banners = [];
-            errors.push((bannersRes.reason && bannersRes.reason.message) || "Failed to load responses");
           }
           this.lastUpdated = new Date().toLocaleTimeString();
           this.error = errors.join(" | ");
@@ -815,12 +593,6 @@ export default {
 
 .runtime-stat__value {
   font-weight: 700;
-}
-
-.target-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
 }
 
 .flow-cell {

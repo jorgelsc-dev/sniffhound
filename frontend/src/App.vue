@@ -125,7 +125,6 @@ export default {
         { label: "SOC", to: "/soc", icon: "mdi-shield-search" },
         { label: "Protocolos", to: "/protocols", icon: "mdi-shuffle-variant" },
         { label: "Honeypot", to: "/honeypot", icon: "mdi-shield-bug" },
-        { label: "Sessions", to: "/targets", icon: "mdi-account-switch" },
       ],
     };
   },

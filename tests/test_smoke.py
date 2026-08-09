@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import os
 import socket
 import subprocess
@@ -16,7 +17,7 @@ from unittest.mock import patch
 import sniffhound
 from sniffhound import versioning
 from sniffhound.store import SniffStore
-from wsbuilder import Request
+from wsbuilder import Request, Response
 
 
 def _reload_auth_stack(require_auth: str = "1"):
@@ -263,6 +264,32 @@ class SmokeTests(unittest.TestCase):
         self.assertIn('<div id="app"></div>', body)
         self.assertIn('/assets/index-', body)
         self.assertIn('type="module"', body)
+
+    def test_http_send_guard_suppresses_broken_pipe_noise(self):
+        import sniffhound.app as app_module
+
+        class BrokenPipeConn:
+            def sendall(self, _data):
+                raise BrokenPipeError(errno.EPIPE, "Broken pipe")
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            app_module._guarded_send_http_response(BrokenPipeConn(), Response.text("ok"))
+
+        self.assertEqual(output.getvalue(), "")
+
+    def test_http_send_guard_keeps_non_disconnect_errors_visible(self):
+        import sniffhound.app as app_module
+
+        class ExplodingConn:
+            def sendall(self, _data):
+                raise RuntimeError("boom")
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            app_module._guarded_send_http_response(ExplodingConn(), Response.text("ok"))
+
+        self.assertIn("[http] send error 200: boom", output.getvalue())
 
     def test_session_token_is_eight_characters(self):
         import sniffhound.auth as auth_module

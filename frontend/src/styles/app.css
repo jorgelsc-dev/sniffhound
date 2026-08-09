@@ -170,6 +170,16 @@ body::before {
   transition: transform 0.15s ease, box-shadow 0.18s ease;
 }
 
+.v-btn--variant-flat,
+.v-btn--variant-elevated {
+  color: rgba(4, 11, 18, 0.96) !important;
+}
+
+.v-btn--variant-flat .v-icon,
+.v-btn--variant-elevated .v-icon {
+  color: inherit !important;
+}
+
 .v-btn:hover {
   transform: translateY(-1px);
   box-shadow: 0 8px 26px rgba(var(--brand-cyan-rgb), 0.1);
@@ -183,6 +193,7 @@ body::before {
 
 .v-field {
   border-radius: 12px;
+  color: rgba(233, 243, 255, 0.96);
 }
 
 .v-field input,
@@ -190,6 +201,28 @@ body::before {
 .v-field .v-field__input {
   letter-spacing: 0.002em;
   font-size: 0.94rem;
+  color: rgba(233, 243, 255, 0.96) !important;
+  caret-color: rgba(var(--brand-cyan-rgb), 0.94);
+}
+
+.v-field .v-select__selection,
+.v-field .v-select__selection-text,
+.v-field .v-field__field,
+.v-field .v-field__input input {
+  color: rgba(233, 243, 255, 0.96) !important;
+}
+
+.v-field .v-label,
+.v-field .v-field-label,
+.v-field .v-field__prepend-inner .v-icon,
+.v-field .v-field__append-inner .v-icon,
+.v-field .v-field__clearable .v-icon {
+  color: rgba(188, 206, 229, 0.9) !important;
+}
+
+.v-field .v-chip,
+.v-field .v-chip .v-chip__content {
+  color: rgba(233, 243, 255, 0.96);
 }
 
 code,

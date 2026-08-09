@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import mimetypes
 from functools import wraps
@@ -8,6 +9,11 @@ import threading
 from pathlib import Path
 from typing import Any
 
+import wsbuilder as _wsbuilder_package
+import wsbuilder.framework as _wsbuilder_framework
+import wsbuilder.http as _wsbuilder_http
+import wsbuilder.server as _wsbuilder_server
+import wsbuilder.ws as _wsbuilder_ws
 from wsbuilder import App, Response, parse_close_payload
 
 from . import __version__
@@ -64,6 +70,90 @@ SPA_ROUTES = (
     "/soc",
     "/api",
 )
+
+
+def _is_benign_http_send_error(exc: Exception) -> bool:
+    if isinstance(exc, (BrokenPipeError, ConnectionResetError)):
+        return True
+    return isinstance(exc, OSError) and getattr(exc, "errno", None) in {
+        errno.EPIPE,
+        errno.ECONNRESET,
+        errno.ECONNABORTED,
+    }
+
+
+def _guarded_send_http_response(conn, response, *, send_body=True):
+    status_code = int(response.status)
+    if not 100 <= status_code <= 599:
+        raise ValueError("HTTP response status must be between 100 and 599")
+    reason = _wsbuilder_http.validate_header_value(
+        response.reason or _wsbuilder_http.STATUS_MESSAGES.get(status_code, "Unknown")
+    )
+    headers = {}
+    seen_headers = set()
+    for name, value in (response.headers or {}).items():
+        header_name = _wsbuilder_http.validate_header_name(name)
+        normalized = header_name.lower()
+        if normalized in seen_headers:
+            raise ValueError(f"Duplicate response header: {header_name}")
+        seen_headers.add(normalized)
+        headers[header_name] = _wsbuilder_http.validate_header_value(value)
+
+    lowermap = {k.lower(): v for k, v in headers.items()}
+    status_allows_body = not (100 <= status_code < 200 or status_code in {204, 304})
+    should_send_body = bool(send_body and status_allows_body)
+    if not status_allows_body:
+        for name in list(headers):
+            if name.lower() in {"content-length", "transfer-encoding"}:
+                headers.pop(name)
+        lowermap = {k.lower(): v for k, v in headers.items()}
+    elif getattr(response, "is_stream", False):
+        if "transfer-encoding" not in lowermap and "content-length" not in lowermap:
+            headers["Transfer-Encoding"] = "chunked"
+        lowermap = {k.lower(): v for k, v in headers.items()}
+    elif "content-length" not in lowermap:
+        headers["Content-Length"] = str(len(response.body))
+        lowermap = {k.lower(): v for k, v in headers.items()}
+    if "connection" not in lowermap:
+        headers["Connection"] = "close"
+        lowermap = {k.lower(): v for k, v in headers.items()}
+    status_line = f"HTTP/1.1 {status_code} {reason}\r\n"
+    hdrs = ""
+    for key, value in headers.items():
+        hdrs += f"{key}: {value}\r\n"
+    resp = status_line + hdrs + "\r\n"
+    try:
+        conn.sendall(resp.encode("utf-8"))
+        if not should_send_body:
+            return
+        if getattr(response, "is_stream", False):
+            use_chunked = "chunked" in lowermap.get("transfer-encoding", "").lower()
+            for chunk in _wsbuilder_http._iter_stream_chunks(response.stream):
+                if use_chunked:
+                    conn.sendall(f"{len(chunk):X}\r\n".encode("utf-8"))
+                    conn.sendall(chunk)
+                    conn.sendall(b"\r\n")
+                else:
+                    conn.sendall(chunk)
+            if use_chunked:
+                conn.sendall(b"0\r\n\r\n")
+        else:
+            conn.sendall(response.body)
+    except Exception as exc:
+        if _is_benign_http_send_error(exc):
+            return
+        print(f"[http] send error {status_code}: {exc}")
+
+
+def _install_wsbuilder_http_send_guard():
+    _wsbuilder_http.send_http_response = _guarded_send_http_response
+    _wsbuilder_server.send_http_response = _guarded_send_http_response
+    _wsbuilder_ws.send_http_response = _guarded_send_http_response
+    _wsbuilder_framework.send_http_response = _guarded_send_http_response
+    _wsbuilder_package.send_http_response = _guarded_send_http_response
+
+
+_install_wsbuilder_http_send_guard()
 
 app = App()
 store = SniffStore(DB_PATH)

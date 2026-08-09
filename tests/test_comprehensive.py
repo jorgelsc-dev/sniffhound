@@ -7,6 +7,7 @@ Run with: pytest tests/ -v --cov=sniffhound
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import tempfile
@@ -240,6 +241,26 @@ class TestSnifferParsing(unittest.TestCase):
         self.store.close()
         self.temp_dir.cleanup()
 
+    def _ipv4_checksum(self, header: bytes) -> int:
+        total = 0
+        for index in range(0, len(header), 2):
+            total += int.from_bytes(header[index : index + 2], "big")
+        while total > 0xFFFF:
+            total = (total & 0xFFFF) + (total >> 16)
+        return (~total) & 0xFFFF
+
+    def _build_raw_ipv4_packet(self, *, proto: int, src_ip: str, dst_ip: str, body: bytes) -> bytes:
+        header = bytearray(20)
+        header[0] = 0x45
+        header[2:4] = (20 + len(body)).to_bytes(2, "big")
+        header[4:6] = (0x1337).to_bytes(2, "big")
+        header[8] = 64
+        header[9] = int(proto) & 0xFF
+        header[12:16] = ipaddress.IPv4Address(src_ip).packed
+        header[16:20] = ipaddress.IPv4Address(dst_ip).packed
+        header[10:12] = self._ipv4_checksum(header).to_bytes(2, "big")
+        return bytes(header) + bytes(body)
+
     def test_parse_raw_ipv4_packet_without_ethernet_header(self):
         packet = self.sniffer.parse_packet(
             bytes.fromhex(
@@ -289,6 +310,74 @@ class TestSnifferParsing(unittest.TestCase):
         self.assertEqual(packet["summary"], "STP BPDU")
         self.assertTrue(packet["flow_key"].startswith("stp|"))
 
+    def test_parse_unknown_ipv4_protocol_as_unknown(self):
+        packet = self.sniffer.parse_packet(
+            self._build_raw_ipv4_packet(
+                proto=47,
+                src_ip="10.10.10.10",
+                dst_ip="8.8.8.8",
+                body=b"GRE?",
+            ),
+            interface="eth0",
+        )
+
+        self.assertIsNotNone(packet)
+        self.assertEqual(packet["proto"], "unknown")
+        self.assertEqual(packet["src_ip"], "10.10.10.10")
+        self.assertEqual(packet["dst_ip"], "8.8.8.8")
+        self.assertIn("IPv4 protocol 47", packet["summary"])
+
+    def test_parse_sctp_packet(self):
+        body = (
+            (5000).to_bytes(2, "big")
+            + (3868).to_bytes(2, "big")
+            + b"\x00\x00\x00\x01"
+            + b"\x00\x00\x00\x00"
+            + b"diameter"
+        )
+        packet = self.sniffer.parse_packet(
+            self._build_raw_ipv4_packet(
+                proto=132,
+                src_ip="192.0.2.10",
+                dst_ip="198.51.100.20",
+                body=body,
+            ),
+            interface="eth0",
+        )
+
+        self.assertIsNotNone(packet)
+        self.assertEqual(packet["proto"], "sctp")
+        self.assertEqual(packet["src_port"], 5000)
+        self.assertEqual(packet["dst_port"], 3868)
+        self.assertIn("diameter", packet["payload_text"])
+
+    def test_parse_ipv6_packet_with_extension_header(self):
+        payload = b"mdns"
+        udp = (
+            (5353).to_bytes(2, "big")
+            + (5353).to_bytes(2, "big")
+            + (8 + len(payload)).to_bytes(2, "big")
+            + b"\x00\x00"
+            + payload
+        )
+        hop_by_hop = bytes([17, 0, 0, 0, 0, 0, 0, 0])
+        header = bytearray(40)
+        header[0] = 0x60
+        header[4:6] = (len(hop_by_hop) + len(udp)).to_bytes(2, "big")
+        header[6] = 0
+        header[7] = 64
+        header[8:24] = ipaddress.IPv6Address("2001:db8::1").packed
+        header[24:40] = ipaddress.IPv6Address("2001:db8::2").packed
+
+        packet = self.sniffer.parse_packet(bytes(header) + hop_by_hop + udp, interface="eth0")
+
+        self.assertIsNotNone(packet)
+        self.assertEqual(packet["proto"], "udp")
+        self.assertEqual(packet["ip_version"], 6)
+        self.assertEqual(packet["src_port"], 5353)
+        self.assertEqual(packet["dst_port"], 5353)
+        self.assertIn("mdns", packet["payload_text"])
+
 
 class TestSniffStore(unittest.TestCase):
     """Test SQLite store functionality."""
@@ -327,6 +416,25 @@ class TestSniffStore(unittest.TestCase):
 
         counts = self.store.summary_counts()
         self.assertEqual(counts["packets"], 1)
+
+    def test_register_packet_does_not_create_payload_from_summary_only(self):
+        """Summary-only packets should not become synthetic response rows."""
+        packet = {
+            "session_id": 1,
+            "proto": "tcp",
+            "src_ip": "172.64.155.209",
+            "dst_ip": "192.168.15.7",
+            "src_port": 443,
+            "dst_port": 43650,
+            "payload_text": "",
+            "payload_hex": "",
+            "summary": "TCP 172.64.155.209:443 -> 192.168.15.7:43650",
+            "raw_packet": b"\x45\x00",
+        }
+        self.store.register_packet(packet)
+
+        payloads = self.store.list_payloads(limit=10)
+        self.assertEqual(payloads, [])
 
     def test_packet_raw_binary_encoding(self):
         """Raw packet binary should be encoded as hex string."""

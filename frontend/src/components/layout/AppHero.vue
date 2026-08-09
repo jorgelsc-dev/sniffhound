@@ -6,12 +6,12 @@
         <div class="text-h4 text-md-h3 font-weight-bold">SniffHound Control Room</div>
         <div class="text-body-1 text-medium-emphasis mt-2">
           Operate the sniffer and honeypot from one place, then drill into dedicated traffic
-          views for passive capture, inbound honeypot hits, and session inventory.
+          views for passive capture, inbound honeypot hits, and host investigation.
         </div>
         <div class="d-flex flex-wrap ga-3 mt-4">
           <v-btn color="primary" variant="flat" to="/sniffer">Sniffer</v-btn>
           <v-btn color="warning" variant="outlined" to="/honeypot">Honeypot</v-btn>
-          <v-btn color="info" variant="outlined" to="/targets">Sessions</v-btn>
+          <v-btn color="info" variant="outlined" to="/investigate">Investigate</v-btn>
         </div>
         <v-alert
           class="usage-notice mt-5"
@@ -33,7 +33,7 @@
                 <div>
                   <div class="text-subtitle-2 font-weight-medium">Runtime Modes</div>
                   <div class="text-caption text-medium-emphasis">
-                    Both engines stay visible here. Start one or stop the active one.
+                    Both engines stay visible here. Start only what you need and keep the other one stopped.
                   </div>
                 </div>
                 <v-chip size="small" :color="runtimeChipColor" variant="tonal" prepend-icon="mdi-toggle-switch">
@@ -165,7 +165,7 @@ export default {
       return runtime.honeypot && typeof runtime.honeypot === "object" ? runtime.honeypot : {};
     },
     runtimeModeLabel() {
-      return this.runtimeMode === "honeypot" ? "Active: Honeypot" : "Active: Sniffer";
+      return this.runtimeMode === "honeypot" ? "Selected: Honeypot" : "Selected: Sniffer";
     },
     runtimeChipColor() {
       return this.runtimeMode === "honeypot" ? "warning" : "info";
@@ -261,17 +261,17 @@ export default {
         const captureState = String(engine.capture_state || "").trim().toLowerCase();
         if (captureState === "blocked") return "Blocked";
         if (captureState === "running") return "Running";
-        return this.runtimeMode === "sniffer" ? "Idle" : "Ready";
+        return "Stopped";
       }
       if (this.runtimeMode === "honeypot" && engine && engine.running) {
         return "Running";
       }
-      return this.runtimeMode === "honeypot" ? "Idle" : "Ready";
+      return "Stopped";
     },
     runtimeStatusColor(status, isActive) {
       if (status === "Blocked") return "error";
       if (status === "Running") return isActive ? "success" : "info";
-      if (status === "Idle") return "warning";
+      if (status === "Stopped") return "secondary";
       return "secondary";
     },
     describeRuntimeSummary(mode, engine) {

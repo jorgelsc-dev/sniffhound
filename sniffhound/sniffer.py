@@ -35,8 +35,18 @@ STP_MULTICAST_MAC = "01:80:c2:00:00:00"
 LLC_STP_HEADER = b"\x42\x42\x03"
 IP_PROTO_TCP = 6
 IP_PROTO_UDP = 17
+IP_PROTO_SCTP = 132
 IP_PROTO_ICMP = 1
 IP_PROTO_ICMPV6 = 58
+IP_PROTO_IPV6_HOP_BY_HOP = 0
+IP_PROTO_IPV6_ROUTING = 43
+IP_PROTO_IPV6_FRAGMENT = 44
+IP_PROTO_IPV6_ESP = 50
+IP_PROTO_IPV6_AH = 51
+IP_PROTO_IPV6_DESTINATION = 60
+IP_PROTO_IPV6_MOBILITY = 135
+IP_PROTO_IPV6_HIP = 139
+IP_PROTO_IPV6_SHIM6 = 140
 SOL_PACKET = 263
 PACKET_ADD_MEMBERSHIP = 1
 PACKET_MR_PROMISC = 1
@@ -287,7 +297,7 @@ class Sniffer:
         tags = self._build_packet_tags(packet, matches)
         packet["rule_hits"] = matches
         packet["tags"] = tags
-        packet["banner_text"] = packet.get("banner_text") or packet.get("summary") or packet.get("payload_text") or ""
+        packet["banner_text"] = packet.get("banner_text") or packet.get("payload_text") or ""
         saved = self.store.register_packet(packet)
         self._touch_packet(saved or packet)
         self._broadcast_packet(saved or packet)
@@ -408,7 +418,7 @@ class Sniffer:
             packet.get("dst_port") or 0,
         )
         packet["direction"] = self._direction_for(packet)
-        packet["banner_text"] = packet.get("banner_text") or packet.get("summary") or packet.get("payload_text") or ""
+        packet["banner_text"] = packet.get("banner_text") or packet.get("payload_text") or ""
         packet["state"] = packet.get("state") or ("open" if packet.get("payload_len", 0) else "filtered")
         packet["payload_text"] = packet.get("payload_text") or ""
         packet["payload_hex"] = packet.get("payload_hex") or ""
@@ -500,10 +510,12 @@ class Sniffer:
             self._parse_tcp(packet, body)
         elif proto == IP_PROTO_UDP:
             self._parse_udp(packet, body)
+        elif proto == IP_PROTO_SCTP:
+            self._parse_sctp(packet, body)
         elif proto == IP_PROTO_ICMP:
             self._parse_icmp(packet, body)
         else:
-            packet["proto"] = f"ip{proto}"
+            packet["proto"] = "unknown"
             packet["summary"] = f"IPv4 protocol {proto} {packet['src_ip']} → {packet['dst_ip']}"
             packet["payload_text"] = bytes_to_text_preview(body)
             packet["banner_text"] = packet["payload_text"]
@@ -517,24 +529,71 @@ class Sniffer:
             packet["banner_text"] = packet["payload_text"]
             return
         packet["ip_version"] = 6
-        next_header = payload[6]
         packet["hop_limit"] = payload[7]
         packet["src_ip"] = str(ipaddress.IPv6Address(payload[8:24]))
         packet["dst_ip"] = str(ipaddress.IPv6Address(payload[24:40]))
-        body = payload[40:]
+        next_header, body, detail = self._unwrap_ipv6_transport(payload)
         if next_header == IP_PROTO_TCP:
             self._parse_tcp(packet, body, ip_version=6)
         elif next_header == IP_PROTO_UDP:
             self._parse_udp(packet, body, ip_version=6)
-        elif next_header in {IP_PROTO_ICMPV6}:
+        elif next_header == IP_PROTO_SCTP:
+            self._parse_sctp(packet, body, ip_version=6)
+        elif next_header == IP_PROTO_ICMPV6:
             self._parse_icmp(packet, body, ipv6=True)
         else:
-            packet["proto"] = f"ip6-{next_header}"
-            packet["summary"] = f"IPv6 protocol {next_header} {packet['src_ip']} → {packet['dst_ip']}"
+            packet["proto"] = "unknown"
+            packet["summary"] = f"IPv6 {detail} {packet['src_ip']} → {packet['dst_ip']}"
             packet["payload_text"] = bytes_to_text_preview(body)
             packet["banner_text"] = packet["payload_text"]
         if not packet.get("summary"):
             packet["summary"] = self._fallback_summary(packet)
+
+    def _unwrap_ipv6_transport(self, payload: bytes) -> tuple[int | None, bytes, str]:
+        next_header = payload[6]
+        offset = 40
+
+        # Walk common IPv6 extension headers so we still reach the transport payload.
+        while True:
+            if next_header in {
+                IP_PROTO_IPV6_HOP_BY_HOP,
+                IP_PROTO_IPV6_ROUTING,
+                IP_PROTO_IPV6_DESTINATION,
+                IP_PROTO_IPV6_MOBILITY,
+                IP_PROTO_IPV6_HIP,
+                IP_PROTO_IPV6_SHIM6,
+            }:
+                if len(payload) < offset + 2:
+                    return None, payload[offset:], "truncated IPv6 extension"
+                header_length = (payload[offset + 1] + 1) * 8
+                if header_length <= 0 or len(payload) < offset + header_length:
+                    return None, payload[offset:], "truncated IPv6 extension"
+                next_header = payload[offset]
+                offset += header_length
+                continue
+            if next_header == IP_PROTO_IPV6_FRAGMENT:
+                if len(payload) < offset + 8:
+                    return None, payload[offset:], "truncated IPv6 fragment"
+                fragment_offset = ((int.from_bytes(payload[offset + 2 : offset + 4], "big")) >> 3) & 0x1FFF
+                next_header = payload[offset]
+                offset += 8
+                if fragment_offset:
+                    return None, payload[offset:], "non-initial IPv6 fragment"
+                continue
+            if next_header == IP_PROTO_IPV6_AH:
+                if len(payload) < offset + 2:
+                    return None, payload[offset:], "truncated IPv6 auth header"
+                header_length = (payload[offset + 1] + 2) * 4
+                if header_length <= 0 or len(payload) < offset + header_length:
+                    return None, payload[offset:], "truncated IPv6 auth header"
+                next_header = payload[offset]
+                offset += header_length
+                continue
+            if next_header == IP_PROTO_IPV6_ESP:
+                return None, payload[offset:], "encrypted IPv6 ESP payload"
+            break
+
+        return next_header, payload[offset:], f"protocol {next_header}"
 
     def _parse_arp(self, packet: dict, payload: bytes):
         if len(payload) < 28:
@@ -609,6 +668,23 @@ class Sniffer:
         packet["payload_text"] = self._interpret_payload(packet, payload)
         packet["banner_text"] = packet["payload_text"] or self._classify_udp_banner(packet, payload)
         packet["summary"] = packet["banner_text"] or f"UDP {packet['src_ip']}:{packet['src_port']} → {packet['dst_ip']}:{packet['dst_port']}"
+        if ip_version == 6 and not packet.get("hop_limit"):
+            packet["hop_limit"] = 64
+
+    def _parse_sctp(self, packet: dict, body: bytes, *, ip_version: int = 4):
+        if len(body) < 12:
+            packet["proto"] = "sctp"
+            packet["summary"] = "SCTP packet"
+            packet["payload_text"] = bytes_to_text_preview(body)
+            packet["banner_text"] = packet["payload_text"]
+            return
+        packet["proto"] = "sctp"
+        packet["src_port"] = int.from_bytes(body[0:2], "big")
+        packet["dst_port"] = int.from_bytes(body[2:4], "big")
+        payload = body[12:]
+        packet["payload_text"] = self._interpret_payload(packet, payload)
+        packet["banner_text"] = packet["payload_text"]
+        packet["summary"] = packet["banner_text"] or f"SCTP {packet['src_ip']}:{packet['src_port']} → {packet['dst_ip']}:{packet['dst_port']}"
         if ip_version == 6 and not packet.get("hop_limit"):
             packet["hop_limit"] = 64
 
@@ -713,7 +789,7 @@ class Sniffer:
             "summary": str(sample.get("summary") or ""),
             "payload_text": payload_text,
             "payload_hex": payload_bytes.hex(),
-            "banner_text": str(sample.get("summary") or payload_text or ""),
+            "banner_text": str(sample.get("banner_text") or payload_text or ""),
             "direction": "unknown",
             "raw_packet": payload_bytes,
             "created_at": now,

@@ -291,7 +291,7 @@
           :error="''"
           :last-updated="lastUpdated"
           :live-refresh="false"
-          :page-size="8"
+          :page-size="20"
           empty-text="No findings for the active cycle"
         >
           <template #cell-cycle="{ value }">
@@ -409,7 +409,7 @@
           :error="''"
           :last-updated="lastUpdated"
           :live-refresh="false"
-          :page-size="8"
+          :page-size="20"
           empty-text="No host evidence available"
         >
           <template #cell-ip="{ value }">
@@ -449,7 +449,7 @@
           :error="''"
           :last-updated="lastUpdated"
           :live-refresh="false"
-          :page-size="8"
+          :page-size="20"
           empty-text="No conversation evidence available"
         >
           <template #cell-value="{ value }">
@@ -491,7 +491,7 @@
           :error="''"
           :last-updated="lastUpdated"
           :live-refresh="false"
-          :page-size="8"
+          :page-size="20"
           empty-text="No port evidence available"
         >
           <template #cell-port="{ value }">
@@ -530,7 +530,7 @@
           :error="''"
           :last-updated="lastUpdated"
           :live-refresh="false"
-          :page-size="8"
+          :page-size="20"
           empty-text="No payload pattern evidence available"
         >
           <template #cell-value="{ value }">
@@ -1005,7 +1005,7 @@ export default {
       this.error = "";
       try {
         const payload = await this.store.fetchJsonPromise(
-          `/api/soc/analysis/?cycles=${encodeURIComponent(requestedCycles)}&limit=500`
+          `/api/soc/analysis/?cycles=${encodeURIComponent(requestedCycles)}&limit=2000`
         );
         if (loadSeq !== this.loadSequence) return;
         this.analysis = payload || {};
@@ -1147,6 +1147,31 @@ export default {
 
 .soc-tabs {
   border-bottom: 1px solid rgba(104, 184, 229, 0.14);
+  overflow-x: auto;
+}
+
+.soc-tabs :deep(.v-slide-group__content) {
+  gap: 10px;
+  padding-bottom: 2px;
+}
+
+.soc-tabs :deep(.v-tab) {
+  min-height: 74px;
+  padding-inline: 18px;
+  border-radius: 18px 18px 0 0;
+  background: rgba(8, 14, 22, 0.46);
+  color: rgba(204, 223, 244, 0.88);
+  transition: background-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.soc-tabs :deep(.v-tab--selected) {
+  color: rgba(243, 248, 255, 0.98);
+  background: linear-gradient(180deg, rgba(19, 34, 52, 0.94), rgba(10, 18, 28, 0.98));
+  box-shadow: inset 0 0 0 1px rgba(112, 188, 231, 0.2);
+}
+
+.soc-tabs :deep(.v-tab__slider) {
+  opacity: 0;
 }
 
 .soc-tab {

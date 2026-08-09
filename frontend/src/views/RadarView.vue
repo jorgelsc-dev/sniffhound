@@ -3,7 +3,7 @@
     <ViewHeader
       overline="Recon"
       title="Traffic Radar"
-      description="A fast map of what is hot right now: protocol mix, risky ports, top hosts, and the live topology."
+      description="Map active hosts, highlight busy ports, and jump into the busiest IPs."
       :refresh-loading="loading"
       @refresh="load"
     />
@@ -28,94 +28,18 @@
     </v-alert>
 
     <div class="mt-6">
-      <HostRadarPanel
-        title="Host Transit Radar"
-        subtitle="Animated host-to-host lanes with each node rendered as a workstation."
-        :snapshot="mapSnapshot"
-        :top-hosts="topHosts"
-        :loading="loading"
-        :error="error"
-        :last-updated="lastUpdated"
-        :show-refresh="true"
-        @refresh="load"
-      />
-    </div>
-
-    <div class="mt-4">
       <MapPanel
         panel-title="Topology Radar"
         panel-subtitle="See host placement and point density at a glance."
         :snapshot="mapSnapshot"
         :external-realtime="true"
         :show-refresh="true"
-        :show-panel-header="false"
-        :show-intro="true"
+        :show-panel-header="true"
+        :show-intro="false"
         :show-projection-switch="true"
         :immersive="true"
       />
     </div>
-
-    <v-row class="mt-4" dense>
-      <v-col cols="12" xl="7">
-        <DataPanel
-          title="Timeline"
-          subtitle="Packet activity over time."
-          :loading="loading"
-          :error="''"
-          :last-updated="lastUpdated"
-          :show-refresh="false"
-        >
-          <div class="timeline-chip-grid">
-            <v-chip
-              v-for="item in timelineSeries"
-              :key="item.label"
-              size="small"
-              variant="tonal"
-              color="info"
-            >
-              {{ item.label }}: {{ item.value }}
-            </v-chip>
-            <span v-if="!timelineSeries.length" class="text-body-2 text-medium-emphasis">
-              No timeline points yet.
-            </span>
-          </div>
-        </DataPanel>
-      </v-col>
-
-      <v-col cols="12" xl="5">
-        <DataPanel
-          title="Signals"
-          subtitle="Protocol mix, service signatures, and tag patterns."
-          :loading="loading"
-          :error="''"
-          :last-updated="lastUpdated"
-          :show-refresh="false"
-        >
-          <div class="d-flex flex-wrap ga-2 mb-3">
-            <v-chip
-              v-for="item in portsByProto"
-              :key="item.label"
-              size="small"
-              variant="tonal"
-              color="info"
-            >
-              {{ item.label }} · {{ item.value }}
-            </v-chip>
-          </div>
-          <div class="d-flex flex-wrap ga-2">
-            <v-chip
-              v-for="item in topSignatures"
-              :key="item.label"
-              size="small"
-              variant="outlined"
-              color="warning"
-            >
-              {{ item.label }}
-            </v-chip>
-          </div>
-        </DataPanel>
-      </v-col>
-    </v-row>
 
     <v-row class="mt-4" dense>
       <v-col cols="12" xl="6">
@@ -132,7 +56,7 @@
           search-label="Search ports"
           search-placeholder="Port, hit count, or label"
           empty-text="No risk ports yet"
-          :page-size="8"
+          :page-size="12"
           @refresh="load"
         >
           <template #cell-port="{ value }">
@@ -157,7 +81,7 @@
           search-label="Search hosts"
           search-placeholder="IP or open ports"
           empty-text="No host activity yet"
-          :page-size="8"
+          :page-size="12"
           @refresh="load"
         >
           <template #cell-ip="{ item, value }">
@@ -179,10 +103,8 @@
 <script>
 import store from "../state/appStore";
 import ViewHeader from "../components/ui/ViewHeader.vue";
-import DataPanel from "../components/ui/DataPanel.vue";
 import EntityTablePanel from "../components/ui/EntityTablePanel.vue";
 import MapPanel from "../components/MapPanel.vue";
-import HostRadarPanel from "../components/HostRadarPanel.vue";
 
 const RADAR_REFRESH_EVENT_TYPES = new Set([
   "stats_update",
@@ -193,10 +115,8 @@ export default {
   name: "RadarView",
   components: {
     ViewHeader,
-    DataPanel,
     EntityTablePanel,
     MapPanel,
-    HostRadarPanel,
   },
   data() {
     return {
@@ -261,20 +181,11 @@ export default {
         },
       ];
     },
-    timelineSeries() {
-      return Array.isArray(this.analytics.timeline) ? this.analytics.timeline.slice(-14) : [];
-    },
-    topSignatures() {
-      return Array.isArray(this.analytics.top_service_signatures) ? this.analytics.top_service_signatures.slice(0, 12) : [];
-    },
-    portsByProto() {
-      return Array.isArray(this.analytics.ports_by_proto) ? this.analytics.ports_by_proto.slice(0, 8) : [];
-    },
     riskPorts() {
-      return Array.isArray(this.analytics.risk_ports) ? this.analytics.risk_ports.slice(0, 12) : [];
+      return Array.isArray(this.analytics.risk_ports) ? this.analytics.risk_ports.slice(0, 24) : [];
     },
     topHosts() {
-      return Array.isArray(this.analytics.top_ips_by_open_ports) ? this.analytics.top_ips_by_open_ports.slice(0, 12) : [];
+      return Array.isArray(this.analytics.top_ips_by_open_ports) ? this.analytics.top_ips_by_open_ports.slice(0, 24) : [];
     },
   },
   watch: {

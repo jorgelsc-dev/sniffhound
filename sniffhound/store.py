@@ -771,7 +771,7 @@ class SniffStore:
         rows = self._fetchall("SELECT DISTINCT proto FROM packets ORDER BY proto ASC")
         protocols = [normalize_protocol_name(row["proto"]) for row in rows if row.get("proto")]
         if not protocols:
-            protocols = ["arp", "icmp", "icmpv6", "tcp", "udp", "ipv6", "unknown"]
+            protocols = ["arp", "icmp", "icmpv6", "sctp", "stp", "tcp", "udp", "ipv6", "unknown"]
         return sorted(set(protocols))
 
     def list_packets(self, *, proto="", session_id=0, search="", interface="", mode="", limit=250, offset=0):
@@ -2066,7 +2066,6 @@ class SniffStore:
                     "state": row.get("state") or "open",
                     "banner": row.get("banner_text") or row.get("summary") or "",
                     "tags_text": tags_text,
-                    "progress": 100.0,
                 }
             )
         transport = {
@@ -2116,7 +2115,8 @@ class SniffStore:
         rule_hits = packet.get("rule_hits") if isinstance(packet.get("rule_hits"), list) else []
         tags = packet.get("tags") if isinstance(packet.get("tags"), list) else []
         payload_text = normalize_text(packet.get("payload_text") or "", limit=400)
-        banner_text = normalize_text(packet.get("banner_text") or packet.get("summary") or payload_text, limit=400)
+        summary_text = normalize_text(packet.get("summary") or "", limit=400)
+        banner_text = normalize_text(packet.get("banner_text") or payload_text, limit=400)
         payload_hex = str(packet.get("payload_hex") or "")
         length = safe_int(packet.get("length", 0), 0)
         payload_len = safe_int(packet.get("payload_len", 0), 0)
@@ -2152,7 +2152,7 @@ class SniffStore:
             safe_int(packet.get("icmp_type", 0), 0),
             safe_int(packet.get("icmp_code", 0), 0),
             safe_int(packet.get("arp_opcode", 0), 0),
-            normalize_text(packet.get("summary") or "", limit=400),
+            summary_text,
             payload_text,
             payload_hex,
             banner_text,

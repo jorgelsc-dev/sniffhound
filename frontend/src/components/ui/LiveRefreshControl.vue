@@ -282,27 +282,27 @@ export default {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .live-refresh-control__toggle-shell {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  min-height: 32px;
-  padding: 4px 6px 4px 8px;
-  border: 1px solid rgba(255, 170, 73, 0.72);
+  gap: 8px;
+  min-height: 28px;
+  padding: 3px 5px 3px 7px;
+  border: 1px solid rgba(255, 170, 73, 0.48);
   border-radius: 999px;
-  background: linear-gradient(180deg, rgba(18, 26, 39, 0.94), rgba(10, 16, 27, 0.96));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  background: linear-gradient(180deg, rgba(16, 24, 36, 0.94), rgba(9, 14, 24, 0.96));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03), 0 8px 18px rgba(2, 8, 14, 0.16);
 }
 
 .live-refresh-control__spark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   border-radius: 999px;
   color: rgba(255, 182, 87, 0.96);
   background: rgba(255, 170, 73, 0.12);
@@ -317,7 +317,7 @@ export default {
 
 .live-refresh-control__label {
   color: rgba(239, 244, 251, 0.96);
-  font-size: 0.66rem;
+  font-size: 0.6rem;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -329,7 +329,7 @@ export default {
   align-items: center;
   gap: 5px;
   color: rgba(192, 204, 221, 0.9);
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   font-weight: 600;
   line-height: 1.05;
 }
@@ -361,12 +361,12 @@ export default {
 }
 
 .live-refresh-control__switch :deep(.v-selection-control__wrapper) {
-  width: 38px;
-  height: 24px;
+  width: 34px;
+  height: 20px;
 }
 
 .live-refresh-control__switch :deep(.v-switch__thumb) {
-  transform: scale(0.82);
+  transform: scale(0.72);
 }
 
 .live-refresh-control__refresh {
@@ -374,12 +374,14 @@ export default {
 }
 
 .live-refresh-control__refresh :deep(.v-btn__content) {
-  font-size: 0.76rem;
+  font-size: 0.72rem;
   font-weight: 700;
 }
 
 .live-refresh-control__settings {
   flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
 }
 
 .live-refresh-control__menu-switch {

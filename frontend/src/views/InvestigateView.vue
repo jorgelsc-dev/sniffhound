@@ -137,7 +137,7 @@
           search-placeholder="IP, port, proto, state, banner, or tags"
           :filter-definitions="serviceFilters"
           empty-text="No services for this host"
-          :page-size="8"
+          :page-size="12"
           @refresh="load"
         >
           <template #cell-port="{ value }">
@@ -148,16 +148,13 @@
           <template #cell-banner="{ value }">
             <span class="summary-cell">{{ value || "-" }}</span>
           </template>
-          <template #cell-progress="{ value }">
-            <ProgressCell :value="value" />
-          </template>
         </EntityTablePanel>
       </v-col>
 
       <v-col cols="12" xl="5">
         <EntityTablePanel
-          title="Payload Evidence"
-          subtitle="Captured response bodies and banner rows."
+          title="Captured Responses"
+          subtitle="Decoded payload text and protocol banners tied to this host."
           :rows="payloadRows"
           :columns="payloadColumns"
           :loading="loading"
@@ -169,7 +166,7 @@
           search-placeholder="IP, port, proto, or response"
           :filter-definitions="payloadFilters"
           empty-text="No payload evidence for this host"
-          :page-size="8"
+          :page-size="12"
           @refresh="load"
         >
           <template #cell-response_plain="{ value }">
@@ -195,7 +192,7 @@
           search-placeholder="Flow key, source, target, or banner"
           :filter-definitions="flowFilters"
           empty-text="No flows for this host"
-          :page-size="8"
+          :page-size="12"
           @refresh="load"
         >
           <template #cell-banner_text="{ value }">
@@ -219,7 +216,7 @@
           search-placeholder="Key, value, proto, IP, or port"
           :filter-definitions="tagFilters"
           empty-text="No tags for this host"
-          :page-size="8"
+          :page-size="12"
           @refresh="load"
         />
       </v-col>
@@ -232,7 +229,6 @@ import store from "../state/appStore";
 import ViewHeader from "../components/ui/ViewHeader.vue";
 import DataPanel from "../components/ui/DataPanel.vue";
 import EntityTablePanel from "../components/ui/EntityTablePanel.vue";
-import ProgressCell from "../components/ui/ProgressCell.vue";
 import { uniqueSorted } from "../utils/traffic";
 
 export default {
@@ -241,7 +237,6 @@ export default {
     ViewHeader,
     DataPanel,
     EntityTablePanel,
-    ProgressCell,
   },
   data() {
     return {
@@ -258,7 +253,6 @@ export default {
         { key: "proto", label: "Proto" },
         { key: "state", label: "State" },
         { key: "banner", label: "Banner" },
-        { key: "progress", label: "Progress" },
       ],
       payloadColumns: [
         { key: "ip", label: "IP" },

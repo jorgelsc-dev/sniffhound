@@ -34,7 +34,7 @@ DB_PATH = str(_env("SNIFFHOUND_DB_PATH", "SniffHound.db")).strip() or "SniffHoun
 DEBUG = _as_bool(_env("SNIFFHOUND_DEBUG", "1"), default=True)
 RUNTIME_MODE = str(_env("SNIFFHOUND_RUNTIME_MODE", _env("SNIFFHOUND_MODE", "sniffer"))).strip().lower() or "sniffer"
 
-CAPTURE_AUTO_START = _as_bool(_env("SNIFFHOUND_CAPTURE_AUTO_START", "1"), default=True)
+CAPTURE_AUTO_START = _as_bool(_env("SNIFFHOUND_CAPTURE_AUTO_START", "0"), default=False)
 CAPTURE_DEMO_MODE = _as_bool(_env("SNIFFHOUND_CAPTURE_DEMO_MODE", "0"), default=False)
 CAPTURE_INTERFACES = tuple(
     item.strip()

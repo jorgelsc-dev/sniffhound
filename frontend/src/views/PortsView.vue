@@ -56,47 +56,12 @@
             <v-chip size="small" color="primary" variant="tonal">
               {{ activeProtoLabel }}
             </v-chip>
-            <v-chip size="small" color="success" variant="tonal">
-              Active: {{ activeTargetCount }}
-            </v-chip>
-            <v-chip size="small" color="warning" variant="tonal">
-              Stopped: {{ stoppedTargetCount }}
+            <v-chip size="small" color="info" variant="tonal">
+              Visible rows: {{ visibleRowCount }}
             </v-chip>
             <v-chip size="small" variant="outlined">
-              Sessions: {{ matchingTargetCount }}
+              Total rows: {{ totalRowCount }}
             </v-chip>
-          </div>
-          <div class="protocol-toolbar__actions">
-            <v-btn
-              size="small"
-              color="success"
-              variant="tonal"
-              :disabled="loading || isBulkActionLoading('start') || !stoppedTargetCount"
-              @click="runBulkTargetAction('start')"
-            >
-              Start {{ activeProtoShortLabel }}
-            </v-btn>
-            <v-btn
-              size="small"
-              color="warning"
-              variant="tonal"
-              :disabled="loading || isBulkActionLoading('stop') || !activeTargetCount"
-              @click="runBulkTargetAction('stop')"
-            >
-              Stop {{ activeProtoShortLabel }}
-            </v-btn>
-            <v-btn
-              size="small"
-              color="info"
-              variant="tonal"
-              :disabled="loading || isBulkActionLoading('restart') || !matchingTargetCount"
-              @click="runBulkTargetAction('restart')"
-            >
-              Restart {{ activeProtoShortLabel }}
-            </v-btn>
-            <v-btn size="small" variant="outlined" to="/targets">
-              View Sessions
-            </v-btn>
           </div>
         </div>
         <v-tabs v-model="tab" color="primary" class="mt-4">
@@ -260,7 +225,7 @@ import {
   matchesSearch,
 } from "../utils/traffic";
 
-const FALLBACK_PROTOCOLS = ["tcp", "udp", "icmp", "sctp"];
+const FALLBACK_PROTOCOLS = ["tcp", "udp", "icmp", "icmpv6", "arp", "sctp", "stp", "unknown"];
 const PAGE_SIZE = 80;
 const REFRESH_EVENT_TYPES = new Set(["packet", "stats_update", "runtime_mode"]);
 
@@ -280,13 +245,11 @@ export default {
       liveRefreshEnabled: false,
       tab: "tcp",
       protocols: [],
-      targets: [],
       portsByProto: {},
       tableFilters: {
         query: "",
         state: "",
       },
-      actionLoading: "",
       portActionLoading: {
         id: null,
         action: "",
@@ -315,27 +278,11 @@ export default {
       const proto = String(this.tab || "").trim().toUpperCase();
       return proto ? `Control ${proto}` : "Control";
     },
-    activeProtoShortLabel() {
-      const proto = String(this.tab || "").trim().toUpperCase();
-      return proto ? `${proto} sessions` : "sessions";
+    visibleRowCount() {
+      return Array.isArray(this.filteredRowsByProto[this.tab]) ? this.filteredRowsByProto[this.tab].length : 0;
     },
-    targetsForActiveProto() {
-      const activeProto = String(this.tab || "").trim().toLowerCase();
-      if (!activeProto) return [];
-      return this.targets.filter((item) => this.normalizeTargetProto(item && item.proto) === activeProto);
-    },
-    matchingTargetCount() {
-      return this.targetsForActiveProto.length;
-    },
-    activeTargetCount() {
-      return this.targetsForActiveProto.filter((item) =>
-        ["active", "restarting"].includes(this.normalizeTargetStatus(item && item.status))
-      ).length;
-    },
-    stoppedTargetCount() {
-      return this.targetsForActiveProto.filter(
-        (item) => this.normalizeTargetStatus(item && item.status) === "stopped"
-      ).length;
+    totalRowCount() {
+      return Array.isArray(this.rowsFor(this.tab)) ? this.rowsFor(this.tab).length : 0;
     },
     portSlotNames() {
       return {
@@ -448,25 +395,11 @@ export default {
   methods: {
     buildPacketSummary,
     formatTimestamp,
-    normalizeTargetProto(value) {
-      const proto = String(value || "").trim().toLowerCase();
-      if (proto === "stcp") return "sctp";
-      return proto;
-    },
-    normalizeTargetStatus(value) {
-      const raw = String(value || "active").trim().toLowerCase();
-      if (raw === "restarting") return "restarting";
-      if (raw === "stopped") return "stopped";
-      return "active";
-    },
     normalizePortScanState(value) {
       const raw = String(value || "active").trim().toLowerCase();
       if (raw === "restarting") return "restarting";
       if (raw === "stopped") return "stopped";
       return "active";
-    },
-    isBulkActionLoading(action) {
-      return this.actionLoading === action;
     },
     isPortActionLoading(id, action) {
       return this.portActionLoading.id === id && this.portActionLoading.action === action;
@@ -627,16 +560,10 @@ export default {
         return protocols.length ? protocols : FALLBACK_PROTOCOLS;
       });
     },
-    loadTargets() {
-      return this.store.fetchJsonPromise("/targets/").then((targetsRes) => {
-        this.targets = this.store.extractArray(targetsRes);
-        return this.targets;
-      });
-    },
     loadPortsForProtocols(protocols) {
       const list = Array.isArray(protocols) && protocols.length ? protocols : FALLBACK_PROTOCOLS;
       return Promise.allSettled(
-        list.map((proto) => this.store.fetchJsonPromise(`/ports/${proto}/`))
+        list.map((proto) => this.store.fetchJsonPromise(`/ports/?proto=${encodeURIComponent(proto)}`))
       ).then((responses) => {
         const mapped = {};
         list.forEach((proto, index) => {
@@ -663,7 +590,7 @@ export default {
       const activeProto = String(this.tab || "").trim().toLowerCase();
       if (!activeProto) return Promise.resolve();
       return this.store
-        .fetchJsonPromise(`/ports/${activeProto}/`)
+        .fetchJsonPromise(`/ports/?proto=${encodeURIComponent(activeProto)}`)
         .then((payload) => {
           this.portsByProto = {
             ...this.portsByProto,
@@ -680,13 +607,10 @@ export default {
     load() {
       this.loading = true;
       this.error = "";
-      return Promise.allSettled([this.loadProtocols(), this.loadTargets()])
-        .then(([protocolsRes, targetsRes]) => {
+      return Promise.allSettled([this.loadProtocols()])
+        .then(([protocolsRes]) => {
           const protocols =
             protocolsRes.status === "fulfilled" ? protocolsRes.value : FALLBACK_PROTOCOLS;
-          if (targetsRes.status !== "fulfilled") {
-            this.targets = [];
-          }
           if (!protocols.length) {
             this.protocols = [];
             this.portsByProto = {};
@@ -707,7 +631,6 @@ export default {
         })
         .catch((err) => {
           this.protocols = FALLBACK_PROTOCOLS;
-          this.targets = [];
           this.portsByProto = {};
           this.resetPagination();
           this.sortByByProto = {};
@@ -718,47 +641,6 @@ export default {
         })
         .finally(() => {
           this.loading = false;
-        });
-    },
-    runBulkTargetAction(action) {
-      const proto = String(this.tab || "").trim().toLowerCase();
-      if (!proto) {
-        this.error = "No active protocol selected";
-        return Promise.resolve();
-      }
-      if (!this.matchingTargetCount) {
-        this.error = `No active sessions found for ${proto.toUpperCase()}`;
-        return Promise.resolve();
-      }
-      if (action === "stop") {
-        const ok = typeof window !== "undefined"
-          ? window.confirm(`Stop all ${proto.toUpperCase()} sessions?`)
-          : true;
-        if (!ok) return Promise.resolve();
-      }
-      if (action === "restart") {
-        const ok = typeof window !== "undefined"
-          ? window.confirm(`Restart all ${proto.toUpperCase()} sessions and clear previous results?`)
-          : true;
-        if (!ok) return Promise.resolve();
-      }
-      this.error = "";
-      this.actionLoading = action;
-      return this.store
-        .fetchJsonPromise("/target/action/bulk/", {
-          method: "POST",
-          body: JSON.stringify({
-            action,
-            proto,
-            clean_results: action === "restart",
-          }),
-        })
-        .then(() => this.load())
-        .catch((err) => {
-          this.error = err.message || `Failed to ${action} ${proto} sessions`;
-        })
-        .finally(() => {
-          this.actionLoading = "";
         });
     },
     runPortAction(item, action) {
