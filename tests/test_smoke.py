@@ -183,6 +183,8 @@ class SmokeTests(unittest.TestCase):
         self.assertEqual(response.status, 200)
         self.assertTrue(payload["require_auth"])
         self.assertFalse(payload["authenticated"])
+        self.assertEqual(payload["message"], "Security code required")
+        self.assertEqual(payload["security_code_length"], 8)
 
     def test_api_routes_return_401_without_token(self):
         _auth_module, app_module = _reload_auth_stack("1")
@@ -205,6 +207,28 @@ class SmokeTests(unittest.TestCase):
                 "/api/hello",
                 "",
                 {"authorization": "Bearer Ab12Cd34"},
+                b"",
+                ("127.0.0.1", 0),
+            )
+            response = app_module.app.dispatch(request)
+            payload = json.loads(response.body.decode("utf-8"))
+        finally:
+            auth_module._SESSION_TOKEN = previous_token
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(payload["status"], "ok")
+
+    def test_api_routes_accept_valid_security_code_header(self):
+        auth_module, app_module = _reload_auth_stack("1")
+
+        previous_token = auth_module._SESSION_TOKEN
+        try:
+            auth_module._SESSION_TOKEN = "Ab12Cd34"
+            request = Request(
+                "GET",
+                "/api/hello",
+                "",
+                {"x-security-code": "Ab12Cd34"},
                 b"",
                 ("127.0.0.1", 0),
             )
@@ -369,6 +393,23 @@ class SmokeTests(unittest.TestCase):
         self.assertIn("[status] mode=sniffer", output.getvalue())
         self.assertIn("ws_clients=2", output.getvalue())
 
+    def test_manage_quit_command_requests_single_shutdown(self):
+        import sniffhound.manage as manage_module
+
+        output = io.StringIO()
+        with patch.object(manage_module, "request_process_shutdown", return_value=True) as shutdown_mock, redirect_stdout(output):
+            manage_module._handle_console_line(
+                "/quit",
+                host="127.0.0.1",
+                port=45678,
+                runtime=object(),
+                hub=object(),
+                append_chat_message=lambda *args, **kwargs: {},
+            )
+
+        shutdown_mock.assert_called_once_with()
+        self.assertIn("Stopping SniffHound", output.getvalue())
+
     def test_manage_stop_interactive_console_closes_input_and_joins_thread(self):
         import sniffhound.manage as manage_module
 
@@ -494,6 +535,45 @@ class SmokeTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         error_mock.assert_called_once_with("127.0.0.1", 45678)
         banner_mock.assert_not_called()
+
+    def test_app_shutdown_endpoint_requests_graceful_process_shutdown(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "traffic.db"
+            previous_db = os.environ.get("SNIFFHOUND_DB_PATH")
+            previous_auth = os.environ.get("SNIFFHOUND_REQUIRE_AUTH")
+            os.environ["SNIFFHOUND_DB_PATH"] = str(db_path)
+            os.environ["SNIFFHOUND_REQUIRE_AUTH"] = "0"
+            try:
+                _settings_module, _auth_module, app_module = _reload_runtime_stack("0")
+
+                request = Request(
+                    "POST",
+                    "/api/app/shutdown",
+                    "",
+                    {"content-type": "application/json"},
+                    json.dumps({"delay": 0.35}).encode("utf-8"),
+                    ("127.0.0.1", 0),
+                )
+
+                with patch.object(app_module, "request_process_shutdown", return_value=True) as shutdown_mock:
+                    response = app_module.app.dispatch(request)
+                payload = json.loads(response.body.decode("utf-8"))
+
+                self.assertEqual(response.status, 200)
+                self.assertTrue(payload["shutdown_requested"])
+                self.assertTrue(payload["shutdown_pending"])
+                self.assertEqual(payload["delay_seconds"], 0.35)
+                shutdown_mock.assert_called_once_with(delay=0.35)
+                app_module.store.close()
+            finally:
+                if previous_db is None:
+                    os.environ.pop("SNIFFHOUND_DB_PATH", None)
+                else:
+                    os.environ["SNIFFHOUND_DB_PATH"] = previous_db
+                if previous_auth is None:
+                    os.environ.pop("SNIFFHOUND_REQUIRE_AUTH", None)
+                else:
+                    os.environ["SNIFFHOUND_REQUIRE_AUTH"] = previous_auth
 
     def test_static_file_response_uses_body(self):
         import sniffhound.app as app_module

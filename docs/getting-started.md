@@ -9,11 +9,19 @@
 
 ## Instalar
 
-### Desde PyPI
+### Desde el paquete Debian (`.deb`)
+
+Descarga el artefacto del workflow `Package Debian` en GitHub Actions e instala el archivo generado:
 
 ```bash
-python -m pip install --upgrade pip setuptools wheel
-python -m pip install sniffhound
+sudo apt install ./sniffhound_<version>_<arch>.deb
+```
+
+Fallback con `dpkg`:
+
+```bash
+sudo dpkg -i ./sniffhound_<version>_<arch>.deb
+sudo apt -f install
 ```
 
 ### Desde el repo
@@ -25,39 +33,17 @@ python -m pip install --upgrade pip setuptools wheel
 python -m pip install -e .
 ```
 
-### Bundle offline para `pip`
+### Build local del paquete Debian
 
-Si necesitas instalar SniffHound en una maquina sin internet, prepara antes un `wheelhouse` en una maquina compatible con acceso a red.
-
-Compatibilidad minima entre maquina de build y maquina destino:
-
-- mismo sistema operativo
-- misma arquitectura
-- misma version principal/secundaria de Python
-
-Si `frontend/dist` no existe, el build ejecuta `npm ci && npm run build`. Solo la maquina que arma el bundle necesita Node `>=22.12.0`.
-
-Build del bundle:
+Construye la SPA y luego genera el artefacto:
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install --upgrade pip setuptools wheel build
-python -m build
-mkdir -p wheelhouse
-cp dist/*.whl wheelhouse/
-python -m pip download --dest wheelhouse "wsbuilder>=0.18.0"
-tar -czf sniffhound-offline-bundle.tar.gz wheelhouse
-```
-
-Instalacion offline:
-
-```bash
-tar -xzf sniffhound-offline-bundle.tar.gz
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install --no-index --find-links wheelhouse sniffhound
-sniffhound
+cd frontend
+npm ci
+npm run build
+cd ..
+./scripts/build_deb.sh
+sudo apt install ./dist/sniffhound_<version>_<arch>.deb
 ```
 
 ## Arranque rapido

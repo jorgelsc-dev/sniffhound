@@ -11,8 +11,10 @@
       :auth-required="authRequired"
       :auth-status="authStatus"
       :ws-status="wsStatus"
+      :shutdown-pending="shutdownPending"
       @open-drawer="drawer = true"
       @open-auth="openAuthPrompt"
+      @shutdown-app="shutdownApplication"
     />
 
     <v-main class="app-main">
@@ -34,11 +36,11 @@
             <div class="auth-stage-kicker">Protected Console</div>
             <h1 class="auth-stage-title">Autenticación requerida</h1>
             <p class="auth-stage-copy">
-              Introduce el access token mostrado en la terminal para desbloquear el dashboard y
-              reanudar HTTP y WebSocket.
+              Introduce el código de seguridad mostrado en la terminal para desbloquear el
+              dashboard y reanudar HTTP y WebSocket.
             </p>
             <v-btn color="primary" size="large" variant="flat" @click="openAuthPrompt">
-              Introducir token
+              Introducir código
             </v-btn>
             <v-alert
               v-if="authError"
@@ -57,17 +59,17 @@
     <v-dialog :model-value="authPromptOpen" persistent max-width="520">
       <v-card class="auth-dialog-card" rounded="xl">
         <div class="auth-dialog-topline" />
-        <v-card-title class="text-h5 pt-6">Session Access Token</v-card-title>
+        <v-card-title class="text-h5 pt-6">Código De Seguridad</v-card-title>
         <v-card-text class="pt-4">
           <p class="auth-dialog-copy">
-            Copia el token de 8 caracteres desde la terminal de `sniffhound`. Se guarda solo en
-            `sessionStorage` y se borra cuando el backend responde `401` o el WebSocket devuelve
+            Copia el código de 8 caracteres desde la terminal de `sniffhound`. Se guarda en
+            `localStorage` y se invalida cuando el backend responde `401` o el WebSocket devuelve
             `4401`.
           </p>
           <v-text-field
             ref="authInput"
             v-model="accessTokenInput"
-            label="Access token"
+            label="Código de seguridad"
             variant="outlined"
             density="comfortable"
             autocapitalize="off"
@@ -153,6 +155,9 @@ export default {
       const name = String((this.$route && this.$route.name) || "").toLowerCase();
       return name === "dashboard";
     },
+    shutdownPending() {
+      return Boolean(this.store.state.shutdownPending);
+    },
   },
   watch: {
     authPromptOpen: {
@@ -186,6 +191,20 @@ export default {
         .finally(() => {
           this.authSubmitting = false;
         });
+    },
+    shutdownApplication() {
+      if (this.shutdownPending) return;
+      if (typeof window !== "undefined") {
+        const confirmed = window.confirm(
+          "Stop SniffHound and close the local dashboard process?"
+        );
+        if (!confirmed) return;
+      }
+      this.store.shutdownApplication().catch((error) => {
+        if (typeof window !== "undefined" && error && error.message) {
+          window.alert(error.message);
+        }
+      });
     },
   },
 };

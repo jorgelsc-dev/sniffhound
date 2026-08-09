@@ -41,6 +41,18 @@
       <v-spacer />
 
       <div class="status-rail">
+        <v-btn
+          color="error"
+          variant="tonal"
+          size="small"
+          prepend-icon="mdi-power"
+          class="shutdown-btn"
+          :loading="shutdownPending"
+          :disabled="shutdownPending"
+          @click="$emit('shutdown-app')"
+        >
+          {{ shutdownPending ? "Stopping..." : "Stop App" }}
+        </v-btn>
         <v-chip
           :color="authStateColor"
           variant="tonal"
@@ -98,8 +110,12 @@ export default {
       type: String,
       default: "offline",
     },
+    shutdownPending: {
+      type: Boolean,
+      default: false,
+    },
   },
-  emits: ["open-auth", "open-drawer"],
+  emits: ["open-auth", "open-drawer", "shutdown-app"],
   computed: {
     authStateLabel() {
       if (!this.authRequired) return "Auth Open";
@@ -242,6 +258,11 @@ export default {
 
 .auth-chip {
   cursor: pointer;
+}
+
+.shutdown-btn {
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 @media (max-width: 959px) {
