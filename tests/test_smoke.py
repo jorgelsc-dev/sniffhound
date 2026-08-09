@@ -117,6 +117,61 @@ class SmokeTests(unittest.TestCase):
             finally:
                 store.close()
 
+    def test_map_snapshot_geolocates_public_hosts_and_keeps_multicast_out_of_public_points(self):
+        class FakeGeoResolver:
+            def describe_source(self):
+                return "country-db-zoneinfo"
+
+            def lookup(self, ip):
+                if ip == "72.249.55.101":
+                    return {
+                        "country_code": "US",
+                        "country": "United States",
+                        "lat": 39.78373,
+                        "lon": -100.445882,
+                        "precision": "country",
+                    }
+                return {}
+
+            def close(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "sniffhound.db"
+            store = SniffStore(db_path)
+            try:
+                store._geoip_resolver = FakeGeoResolver()
+                store.register_packet(
+                    {
+                        "session_id": 1,
+                        "proto": "udp",
+                        "src_ip": "72.249.55.101",
+                        "dst_ip": "224.0.0.251",
+                        "src_port": 5353,
+                        "dst_port": 5353,
+                        "length": 128,
+                        "summary": "mDNS sample",
+                    }
+                )
+
+                snapshot = store.map_snapshot(limit=50)
+
+                self.assertEqual(snapshot["summary"]["public_hosts"], 1)
+                self.assertEqual(snapshot["summary"]["private_hosts"], 1)
+                self.assertEqual(snapshot["summary"]["unmapped_public_hosts"], 0)
+                self.assertEqual(snapshot["geoip"]["source"], "country-db-zoneinfo")
+                self.assertEqual(snapshot["geoip"]["resolved_public_hosts"], 1)
+                self.assertEqual(snapshot["geoip"]["total_public_hosts"], 1)
+                self.assertEqual(len(snapshot["public_points"]), 1)
+                self.assertEqual(snapshot["public_points"][0]["ip"], "72.249.55.101")
+                self.assertEqual(snapshot["public_points"][0]["country_code"], "US")
+                self.assertAlmostEqual(snapshot["public_points"][0]["lat"], 39.78373)
+                self.assertAlmostEqual(snapshot["public_points"][0]["lon"], -100.445882)
+                self.assertEqual(snapshot["private_hosts"][0]["ip"], "224.0.0.251")
+                self.assertEqual(snapshot["private_hosts"][0]["scope"], "multicast")
+            finally:
+                store.close()
+
     def test_rulesets_list_survives_tuple_rows(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "sniffhound.db"

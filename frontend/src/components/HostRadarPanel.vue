@@ -87,44 +87,16 @@
             opacity="0.78"
           />
 
-          <g class="host-radar-zones">
-            <g v-for="zone in stageZones" :key="zone.id">
-              <rect
-                :x="zone.x"
-                :y="zone.y"
-                :width="zone.width"
-                :height="zone.height"
-                :rx="zone.rx"
-                :fill="zone.fill"
-                :stroke="zone.stroke"
-                stroke-width="0.9"
-                :stroke-dasharray="zone.dash"
-              />
-              <text
-                :x="zone.x + 14"
-                :y="zone.y + 20"
-                text-anchor="start"
-                fill="rgba(172, 206, 235, 0.76)"
-                font-size="10px"
-                font-weight="700"
-                letter-spacing="0.12em"
-              >
-                {{ zone.label }}
-              </text>
-            </g>
-          </g>
-
-          <g class="host-radar-guides">
-            <line
-              v-for="guide in stageGuides"
-              :key="guide.id"
-              :x1="guide.x1"
-              :y1="guide.y1"
-              :x2="guide.x2"
-              :y2="guide.y2"
-              stroke="rgba(108, 190, 240, 0.08)"
-              stroke-width="0.8"
-              stroke-dasharray="5 10"
+          <g class="host-radar-mesh">
+            <path
+              v-for="meshPath in backdropPaths"
+              :key="meshPath.id"
+              :d="meshPath.d"
+              fill="none"
+              :stroke="meshPath.stroke"
+              :stroke-width="meshPath.strokeWidth"
+              :stroke-dasharray="meshPath.dash"
+              :opacity="meshPath.opacity"
             />
           </g>
 
@@ -292,9 +264,9 @@
         </svg>
 
         <div class="host-radar-overlay">
-          <div class="host-radar-overlay__eyebrow">Host Attack View</div>
+          <div class="host-radar-overlay__eyebrow">Host Graph View</div>
           <div class="host-radar-overlay__copy">
-            Live lanes pulse from source to target while recently seen public hosts stay on the board as historical workstations.
+            Public hosts stay in a live node graph while packet attacks animate from source to destination and older PCs fade into historical lanes.
           </div>
         </div>
 
@@ -360,16 +332,45 @@ function isPublicHost(ip, fallbackPrivate = false) {
   return classifyHost(ip, fallbackPrivate) === "public";
 }
 
+function parseIpv4Octets(value) {
+  const match = String(value || "").match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!match) return null;
+  const octets = match.slice(1).map((item) => Number(item));
+  return octets.every((item) => Number.isInteger(item) && item >= 0 && item <= 255)
+    ? octets
+    : null;
+}
+
 function classifyHost(ip, fallbackPrivate = false) {
   const raw = normalizeIp(ip).toLowerCase();
   if (!raw) return fallbackPrivate ? "private" : "public";
-  if (raw === "localhost" || raw === "::1" || raw.startsWith("127.")) return "local";
-  if (raw.startsWith("10.") || raw.startsWith("192.168.")) return "private";
-  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(raw)) return "private";
-  if (raw.startsWith("169.254.")) return "local";
-  if (raw.startsWith("fc") || raw.startsWith("fd")) return "private";
-  if (raw.startsWith("fe80:")) return "local";
-  return fallbackPrivate ? "private" : "public";
+  if (raw === "localhost" || raw === "::1") return "local";
+  if (raw === "::") return "reserved";
+  if (raw.includes(":")) {
+    if (raw.startsWith("fe80:")) return "local";
+    if (raw.startsWith("fc") || raw.startsWith("fd")) return "private";
+    if (raw.startsWith("ff")) return "multicast";
+    if (raw.startsWith("2001:db8")) return "reserved";
+    return "public";
+  }
+
+  const octets = parseIpv4Octets(raw);
+  if (!octets) return fallbackPrivate ? "private" : "public";
+  const [a, b, c, d] = octets;
+
+  if (a === 127) return "local";
+  if (a === 169 && b === 254) return "local";
+  if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) return "private";
+  if (a === 100 && b >= 64 && b <= 127) return "private";
+  if (a === 198 && (b === 18 || b === 19)) return "private";
+  if (a >= 224 && a <= 239) return "multicast";
+  if (a === 0 || a >= 240 || (a === 255 && b === 255 && c === 255 && d === 255)) return "reserved";
+  if (a === 192 && b === 0 && c === 0) return "reserved";
+  if (a === 192 && b === 0 && c === 2) return "reserved";
+  if (a === 192 && b === 88 && c === 99) return "reserved";
+  if (a === 198 && b === 51 && c === 100) return "reserved";
+  if (a === 203 && b === 0 && c === 113) return "reserved";
+  return "public";
 }
 
 function protoPalette(proto) {
@@ -516,64 +517,40 @@ export default {
     attackMarkerId() {
       return `host-stage-attack-${this.stageUid}`;
     },
-    stageZones() {
+    backdropPaths() {
       return [
         {
-          id: "source",
-          label: "SOURCE SIDE",
-          x: 62,
-          y: 84,
-          width: 238,
-          height: 274,
-          rx: 18,
-          fill: "rgba(31, 89, 138, 0.12)",
-          stroke: "rgba(87, 183, 255, 0.18)",
-          dash: "7 10",
+          id: "mesh-left",
+          d: this.buildBackdropArc(96, 336, 534, 152, -1, 0.2),
+          stroke: "rgba(86, 214, 255, 0.18)",
+          strokeWidth: 1.1,
+          dash: "",
+          opacity: 0.82,
         },
         {
-          id: "transit",
-          label: "TRANSIT",
-          x: 322,
-          y: 72,
-          width: 336,
-          height: 296,
-          rx: 20,
-          fill: "rgba(18, 58, 90, 0.12)",
-          stroke: "rgba(92, 245, 186, 0.18)",
-          dash: "8 11",
+          id: "mesh-core",
+          d: this.buildBackdropArc(172, 244, 810, 230, 1, 0.16),
+          stroke: "rgba(96, 245, 189, 0.14)",
+          strokeWidth: 0.96,
+          dash: "9 14",
+          opacity: 0.9,
         },
         {
-          id: "target",
-          label: "TARGET SIDE",
-          x: 680,
-          y: 84,
-          width: 238,
-          height: 274,
-          rx: 18,
-          fill: "rgba(89, 52, 26, 0.11)",
-          stroke: "rgba(255, 187, 98, 0.18)",
-          dash: "7 10",
+          id: "mesh-right",
+          d: this.buildBackdropArc(440, 146, 886, 332, 1, 0.18),
+          stroke: "rgba(255, 186, 114, 0.16)",
+          strokeWidth: 1.06,
+          dash: "",
+          opacity: 0.8,
         },
         {
-          id: "history",
-          label: "HISTORICAL HOSTS",
-          x: 58,
-          y: 428,
-          width: this.stageWidth - 116,
-          height: 76,
-          rx: 18,
-          fill: "rgba(7, 16, 28, 0.44)",
-          stroke: "rgba(148, 178, 203, 0.14)",
-          dash: "6 12",
+          id: "mesh-history",
+          d: this.buildBackdropArc(84, 410, 896, 406, -1, 0.08),
+          stroke: "rgba(122, 188, 255, 0.12)",
+          strokeWidth: 0.9,
+          dash: "6 16",
+          opacity: 0.82,
         },
-      ];
-    },
-    stageGuides() {
-      return [
-        { id: "guide-1", x1: 62, y1: 132, x2: 918, y2: 132 },
-        { id: "guide-2", x1: 62, y1: 194, x2: 918, y2: 194 },
-        { id: "guide-3", x1: 62, y1: 256, x2: 918, y2: 256 },
-        { id: "guide-4", x1: 62, y1: 318, x2: 918, y2: 318 },
       ];
     },
     aggregatedLinks() {
@@ -731,21 +708,8 @@ export default {
 
       const activeNodes = nodes.filter((node) => node.activeNow);
       const historicalNodes = nodes.filter((node) => !node.activeNow);
-      const grouped = {
-        source: [],
-        relay: [],
-        target: [],
-      };
-
-      activeNodes.forEach((node) => {
-        const key = node.role === "source" || node.role === "target" ? node.role : "relay";
-        grouped[key].push(node);
-      });
-
       return [
-        ...this.distributeVerticalNodes(grouped.source, [154, 242], 124, 360, 0.66, { emphasisBoost: 0.05 }),
-        ...this.distributeVerticalNodes(grouped.relay, [432, 548], 112, 384, 0.7, { emphasisBoost: 0.06 }),
-        ...this.distributeVerticalNodes(grouped.target, [734, 822], 124, 360, 0.66, { emphasisBoost: 0.05 }),
+        ...this.distributeActiveGraphNodes(activeNodes),
         ...this.distributeHistoricalNodes(historicalNodes),
       ].slice(0, MAX_VISIBLE_HOSTS);
     },
@@ -843,60 +807,119 @@ export default {
       if (ip.length <= 18) return ip;
       return `${ip.slice(0, 9)}...${ip.slice(-6)}`;
     },
-    distributeVerticalNodes(nodes, xPositions, yMin, yMax, baseScale, options = {}) {
+    distributeActiveGraphNodes(nodes) {
       const ordered = [...nodes].sort((left, right) => right.score - left.score || left.ip.localeCompare(right.ip));
       if (!ordered.length) return [];
-      const columnCount = ordered.length > 6 ? Math.min(xPositions.length, 2) : 1;
-      const columns = Array.from({ length: columnCount }, () => []);
-      ordered.forEach((node, index) => {
-        columns[index % columnCount].push(node);
+      if (ordered.length === 1) {
+        return [this.decorateGraphNode(ordered[0], this.stageCenterX, 214, 0.72)];
+      }
+      if (ordered.length === 2) {
+        return [
+          this.decorateGraphNode(ordered[0], this.stageCenterX - 172, 224, 0.68),
+          this.decorateGraphNode(ordered[1], this.stageCenterX + 172, 246, 0.68),
+        ];
+      }
+
+      const anchor = ordered[0];
+      const remainder = ordered.slice(1);
+      const leftNodes = remainder.filter((node) => node.role === "source");
+      const rightNodes = remainder.filter((node) => node.role === "target");
+      const centerNodes = remainder.filter((node) => node.role !== "source" && node.role !== "target");
+      const balancedCenter = centerNodes.concat(
+        leftNodes.length > rightNodes.length ? leftNodes.splice(Math.ceil(leftNodes.length / 2)) : [],
+        rightNodes.length > leftNodes.length ? rightNodes.splice(Math.ceil(rightNodes.length / 2)) : []
+      );
+
+      return [
+        this.decorateGraphNode(anchor, this.stageCenterX, 186, 0.74),
+        ...this.placeNodesOnArc(leftNodes, {
+          centerX: 244,
+          centerY: 250,
+          radiusX: 118,
+          radiusY: 116,
+          startAngle: -126,
+          endAngle: 48,
+          baseScale: 0.62,
+        }),
+        ...this.placeNodesOnArc(balancedCenter, {
+          centerX: this.stageCenterX,
+          centerY: 300,
+          radiusX: 238,
+          radiusY: 84,
+          startAngle: -170,
+          endAngle: -12,
+          baseScale: 0.58,
+        }),
+        ...this.placeNodesOnArc(rightNodes, {
+          centerX: 736,
+          centerY: 248,
+          radiusX: 118,
+          radiusY: 114,
+          startAngle: 132,
+          endAngle: 304,
+          baseScale: 0.62,
+        }),
+      ];
+    },
+    placeNodesOnArc(nodes, config = {}) {
+      const ordered = [...nodes].sort((left, right) => right.score - left.score || left.ip.localeCompare(right.ip));
+      if (!ordered.length) return [];
+      const centerX = Number(config.centerX) || this.stageCenterX;
+      const centerY = Number(config.centerY) || this.stageCenterY;
+      const radiusX = Math.max(24, Number(config.radiusX) || 120);
+      const radiusY = Math.max(18, Number(config.radiusY) || 80);
+      const startAngle = (Number(config.startAngle) || -140) * (Math.PI / 180);
+      const endAngle = (Number(config.endAngle) || -40) * (Math.PI / 180);
+      const baseScale = Number(config.baseScale) || 0.58;
+      return ordered.map((node, index) => {
+        const progress = ordered.length === 1 ? 0.5 : index / (ordered.length - 1);
+        const angle = startAngle + ((endAngle - startAngle) * progress);
+        const sway = ((index % 2 === 0 ? 1 : -1) * Math.min(14, 7 + ordered.length));
+        const x = centerX + (Math.cos(angle) * radiusX) + (Math.sin(angle) * sway * 0.14);
+        const y = centerY + (Math.sin(angle) * radiusY) + ((index % 2 === 0 ? -1 : 1) * sway * 0.34);
+        return this.decorateGraphNode(node, x, y, baseScale);
       });
-      return columns.flatMap((column, columnIndex) => column.map((node, index) => {
-        const y = column.length === 1
-          ? (yMin + yMax) / 2
-          : yMin + (((index + 1) / (column.length + 1)) * (yMax - yMin));
-        const emphasisBoost = Number(options.emphasisBoost || 0);
-        const iconScale = Math.min(0.84, baseScale + (node.emphasis * emphasisBoost));
-        return {
-          ...node,
-          x: xPositions[columnIndex] || xPositions[0] || this.stageCenterX,
-          y,
-          iconScale,
-          haloRadius: 14 + (node.emphasis * 3),
-          ringRadius: 10 + (node.emphasis * 2),
-          labelY: 21,
-          metricY: 33,
-          nodeOpacity: 1,
-          labelOpacity: 0.98,
-          metricOpacity: 0.84,
-        };
-      }));
+    },
+    decorateGraphNode(node, x, y, baseScale = 0.58) {
+      const iconScale = Math.min(0.78, baseScale + (node.emphasis * 0.04) + (node.activeNow ? 0.02 : 0));
+      return {
+        ...node,
+        x,
+        y,
+        iconScale,
+        haloRadius: 10.4 + (node.emphasis * 2.5),
+        ringRadius: 7.8 + (node.emphasis * 1.7),
+        labelY: 17,
+        metricY: 28,
+        nodeOpacity: 1,
+        labelOpacity: 0.98,
+        metricOpacity: 0.82,
+      };
     },
     distributeHistoricalNodes(nodes) {
       const ordered = [...nodes]
         .sort((left, right) => (right.lastSeenAt || 0) - (left.lastSeenAt || 0) || left.ip.localeCompare(right.ip))
         .slice(0, Math.max(0, MAX_VISIBLE_HOSTS));
-      const firstRowCount = Math.min(10, ordered.length);
-      const secondRowCount = Math.min(10, Math.max(0, ordered.length - firstRowCount));
+      const firstRowCount = Math.min(12, ordered.length);
+      const secondRowCount = Math.min(12, Math.max(0, ordered.length - firstRowCount));
       const rows = [
         ordered.slice(0, firstRowCount),
         ordered.slice(firstRowCount, firstRowCount + secondRowCount),
       ].filter((row) => row.length);
 
-      const yPositions = [466, 510];
+      const yPositions = [454, 502];
       return rows.flatMap((row, rowIndex) => row.map((node, index) => {
-        const x = row.length === 1
-          ? this.stageCenterX
-          : 96 + (((index + 1) / (row.length + 1)) * (this.stageWidth - 192));
+        const progress = row.length === 1 ? 0.5 : index / (row.length - 1);
+        const x = 98 + (progress * (this.stageWidth - 196));
+        const archLift = Math.sin(progress * Math.PI) * (rowIndex === 0 ? 20 : 12);
+        const baseNode = this.decorateGraphNode(node, x, (yPositions[rowIndex] || 502) - archLift, 0.34);
         return {
-          ...node,
-          x,
-          y: yPositions[rowIndex] || 510,
-          iconScale: 0.48,
-          haloRadius: 8,
-          ringRadius: 6,
-          labelY: 16,
-          metricY: 27,
+          ...baseNode,
+          iconScale: Math.min(0.42, baseNode.iconScale),
+          haloRadius: 6.8,
+          ringRadius: 5.2,
+          labelY: 14,
+          metricY: 24,
           nodeOpacity: Math.max(0.34, Number(node.staleFactor || 0.34)),
           labelOpacity: Math.max(0.52, Number(node.staleFactor || 0.34)),
           metricOpacity: Math.max(0.4, Number(node.staleFactor || 0.34) * 0.92),
@@ -1020,6 +1043,19 @@ export default {
       const nx = -dy / distance;
       const ny = dx / distance;
       const bend = Math.min(84, 18 + (distance * 0.12) + ((curveLevel - 1) * 12));
+      const cx = mx + (nx * bend * curveSign);
+      const cy = my + (ny * bend * curveSign);
+      return `M${sx.toFixed(2)},${sy.toFixed(2)} Q${cx.toFixed(2)},${cy.toFixed(2)} ${tx.toFixed(2)},${ty.toFixed(2)}`;
+    },
+    buildBackdropArc(sx, sy, tx, ty, curveSign = 1, curvature = 0.18) {
+      const dx = tx - sx;
+      const dy = ty - sy;
+      const distance = Math.hypot(dx, dy) || 1;
+      const mx = (sx + tx) / 2;
+      const my = (sy + ty) / 2;
+      const nx = -dy / distance;
+      const ny = dx / distance;
+      const bend = Math.min(146, 18 + (distance * Math.max(0.04, curvature)));
       const cx = mx + (nx * bend * curveSign);
       const cy = my + (ny * bend * curveSign);
       return `M${sx.toFixed(2)},${sy.toFixed(2)} Q${cx.toFixed(2)},${cy.toFixed(2)} ${tx.toFixed(2)},${ty.toFixed(2)}`;

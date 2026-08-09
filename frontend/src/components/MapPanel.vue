@@ -589,6 +589,8 @@ export default {
     },
     geoipSourceLabel() {
       const source = String(this.geoipStatus.source || "").trim().toLowerCase();
+      if (source === "country-db-zoneinfo") return "GeoIP country DB";
+      if (source === "country-db") return "GeoIP country DB";
       if (source === "repo-seed-file") return "GeoIP repo seed";
       if (source === "fallback-rir-seed") return "GeoIP fallback";
       if (source === "external-db") return "GeoIP local DB";
@@ -602,8 +604,17 @@ export default {
     },
     geoipInfoText() {
       const parts = [];
-      const rows = Number(this.geoipStatus.rows) || 0;
-      if (rows > 0) parts.push(`${rows.toLocaleString()} blocks`);
+      const source = String(this.geoipStatus.source || "").trim().toLowerCase();
+      const resolvedHosts = Number(this.geoipStatus.resolved_public_hosts) || 0;
+      const totalPublicHosts = Number(this.geoipStatus.total_public_hosts) || 0;
+      if (source === "country-db-zoneinfo" || source === "country-db") {
+        if (totalPublicHosts > 0) {
+          parts.push(`${resolvedHosts}/${totalPublicHosts} hosts mapped`);
+        }
+      } else {
+        const rows = Number(this.geoipStatus.rows) || 0;
+        if (rows > 0) parts.push(`${rows.toLocaleString()} blocks`);
+      }
       if (this.geoipStatus.generated_at) parts.push(`seed ${this.geoipStatus.generated_at}`);
       if (this.geoipStatus.partial) parts.push("partial catalog");
       return parts.join(" · ");
@@ -632,9 +643,9 @@ export default {
     projectedPublicPoints() {
       const points = this.publicPoints
         .map((item) => {
-          const lon = Number(item.lon);
-          const lat = Number(item.lat);
-          if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+          const coords = this.pointCoordinates(item);
+          if (!coords) return null;
+          const { lon, lat } = coords;
           const projected = this.projectPoint(lon, lat);
           if (!projected) return null;
           const depth = Number.isFinite(projected.depth) ? projected.depth : 1;
@@ -921,6 +932,25 @@ export default {
     projectPoint(lon, lat) {
       return this.isGlobeMode ? this.projectPointGlobe(lon, lat) : this.projectPointFlat(lon, lat);
     },
+    pointCoordinates(item) {
+      if (!item || typeof item !== "object") return null;
+      const lonRaw = item.lon;
+      const latRaw = item.lat;
+      if (
+        lonRaw === null ||
+        lonRaw === undefined ||
+        latRaw === null ||
+        latRaw === undefined ||
+        lonRaw === "" ||
+        latRaw === ""
+      ) {
+        return null;
+      }
+      const lon = Number(lonRaw);
+      const lat = Number(latRaw);
+      if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+      return { lon, lat };
+    },
     geometryToPathsFlat(geometry) {
       const geom = geometry && typeof geometry === "object" ? geometry : null;
       if (!geom || !Array.isArray(geom.coordinates)) return [];
@@ -1088,9 +1118,9 @@ export default {
       let latSum = 0;
       let totalWeight = 0;
       rows.forEach((item) => {
-        const lon = Number(item && item.lon);
-        const lat = Number(item && item.lat);
-        if (!Number.isFinite(lon) || !Number.isFinite(lat)) return;
+        const coords = this.pointCoordinates(item);
+        if (!coords) return;
+        const { lon, lat } = coords;
         const weight = Math.max(1, Number(item && item.open_port_count) || 0);
         const radians = this.degToRad(lon);
         sinSum += Math.sin(radians) * weight;

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
+import ipaddress
 import json
 import sqlite3
 import threading
@@ -28,6 +31,18 @@ PACKET_TABLE_LIMIT = 2000
 PAYLOAD_TABLE_LIMIT = 2000
 FLOW_TABLE_LIMIT = 2000
 TAG_TABLE_LIMIT = 4000
+_GEOIP_COUNTRY_DB_PATHS = (
+    Path("/usr/share/GeoIP/GeoIP.dat"),
+    Path("/usr/local/share/GeoIP/GeoIP.dat"),
+)
+_GEOIP_COUNTRY_V6_DB_PATHS = (
+    Path("/usr/share/GeoIP/GeoIPv6.dat"),
+    Path("/usr/local/share/GeoIP/GeoIPv6.dat"),
+)
+_ZONEINFO_COUNTRY_PATHS = (
+    Path("/usr/share/zoneinfo/zone1970.tab"),
+    Path("/usr/share/zoneinfo/zone.tab"),
+)
 
 
 def _row_to_dict(row, columns=None):
@@ -62,23 +77,211 @@ def _coerce_json(value, default):
     return json_loads(value, default=default)
 
 
-def _soc_ip_scope(ip: str) -> str:
+def _ip_scope(ip: str) -> str:
     text = str(ip or "").strip()
     if not text:
         return "unknown"
     try:
-        import ipaddress
-
         ip_obj = ipaddress.ip_address(text)
     except Exception:
         return "unknown"
     if ip_obj.is_loopback:
         return "local"
-    if ip_obj.is_private or ip_obj.is_link_local:
-        return "private"
     if ip_obj.is_multicast:
         return "multicast"
-    return "public"
+    if ip_obj.is_private or ip_obj.is_link_local:
+        return "private"
+    if getattr(ip_obj, "is_reserved", False) or getattr(ip_obj, "is_unspecified", False):
+        return "reserved"
+    if ip_obj.is_global:
+        return "public"
+    return "private"
+
+
+def _soc_ip_scope(ip: str) -> str:
+    return _ip_scope(ip)
+
+
+def _parse_iso6709_component(value: str) -> float | None:
+    text = str(value or "").strip()
+    if not text or text[0] not in "+-":
+        return None
+    sign = -1.0 if text[0] == "-" else 1.0
+    digits = text[1:]
+    if len(digits) not in (4, 5, 6, 7) or not digits.isdigit():
+        return None
+    degree_len = 2 if len(digits) in (4, 6) else 3
+    degree = int(digits[:degree_len])
+    minute = int(digits[degree_len : degree_len + 2])
+    second = int(digits[degree_len + 2 : degree_len + 4]) if len(digits) > degree_len + 2 else 0
+    return sign * (degree + (minute / 60.0) + (second / 3600.0))
+
+
+def _parse_iso6709_pair(value: str) -> tuple[float | None, float | None]:
+    text = str(value or "").strip()
+    if not text:
+        return None, None
+    split_at = -1
+    for index in range(1, len(text)):
+        if text[index] in "+-":
+            split_at = index
+            break
+    if split_at <= 0:
+        return None, None
+    return _parse_iso6709_component(text[:split_at]), _parse_iso6709_component(text[split_at:])
+
+
+def _load_country_centroids() -> dict[str, dict[str, float]]:
+    buckets: dict[str, list[float]] = {}
+    for path in _ZONEINFO_COUNTRY_PATHS:
+        if not path.exists():
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        except Exception:
+            continue
+        for line in lines:
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            countries = [item.strip().upper() for item in parts[0].split(",") if item.strip()]
+            lat, lon = _parse_iso6709_pair(parts[1])
+            if lat is None or lon is None:
+                continue
+            for country_code in countries:
+                bucket = buckets.setdefault(country_code, [0.0, 0.0, 0.0])
+                bucket[0] += lat
+                bucket[1] += lon
+                bucket[2] += 1.0
+        break
+    centroids = {}
+    for country_code, values in buckets.items():
+        count = values[2] or 1.0
+        centroids[country_code] = {
+            "lat": round(values[0] / count, 6),
+            "lon": round(values[1] / count, 6),
+        }
+    return centroids
+
+
+class _GeoCountryResolver:
+    def __init__(self):
+        self._lock = threading.RLock()
+        self._cache: dict[str, dict] = {}
+        self._centroids = _load_country_centroids()
+        self._lib = None
+        self._db_v4 = None
+        self._db_v6 = None
+        self._load_library()
+
+    def _load_library(self):
+        library_name = ctypes.util.find_library("GeoIP")
+        if not library_name:
+            return
+        try:
+            self._lib = ctypes.CDLL(library_name)
+        except Exception:
+            self._lib = None
+            return
+        self._lib.GeoIP_open.argtypes = [ctypes.c_char_p, ctypes.c_int]
+        self._lib.GeoIP_open.restype = ctypes.c_void_p
+        self._lib.GeoIP_delete.argtypes = [ctypes.c_void_p]
+        self._lib.GeoIP_delete.restype = None
+        self._lib.GeoIP_country_code_by_addr.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        self._lib.GeoIP_country_code_by_addr.restype = ctypes.c_char_p
+        self._lib.GeoIP_country_name_by_addr.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        self._lib.GeoIP_country_name_by_addr.restype = ctypes.c_char_p
+        if hasattr(self._lib, "GeoIP_country_code_by_addr_v6"):
+            self._lib.GeoIP_country_code_by_addr_v6.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+            self._lib.GeoIP_country_code_by_addr_v6.restype = ctypes.c_char_p
+        if hasattr(self._lib, "GeoIP_country_name_by_addr_v6"):
+            self._lib.GeoIP_country_name_by_addr_v6.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+            self._lib.GeoIP_country_name_by_addr_v6.restype = ctypes.c_char_p
+        self._db_v4 = self._open_database(_GEOIP_COUNTRY_DB_PATHS)
+        self._db_v6 = self._open_database(_GEOIP_COUNTRY_V6_DB_PATHS)
+
+    def _open_database(self, paths: tuple[Path, ...]):
+        if not self._lib:
+            return None
+        for path in paths:
+            if not path.exists():
+                continue
+            try:
+                handle = self._lib.GeoIP_open(str(path).encode("utf-8"), 0)
+            except Exception:
+                handle = None
+            if handle:
+                return handle
+        return None
+
+    def describe_source(self) -> str:
+        if (self._db_v4 or self._db_v6) and self._centroids:
+            return "country-db-zoneinfo"
+        if self._db_v4 or self._db_v6:
+            return "country-db"
+        return "empty"
+
+    def lookup(self, ip: str) -> dict:
+        text = str(ip or "").strip()
+        if not text:
+            return {}
+        cached = self._cache.get(text)
+        if cached is not None:
+            return dict(cached)
+        try:
+            ip_obj = ipaddress.ip_address(text)
+        except Exception:
+            return {}
+
+        country_code = ""
+        country_name = ""
+        encoded = text.encode("utf-8", errors="ignore")
+        with self._lock:
+            if ip_obj.version == 6 and self._db_v6 and hasattr(self._lib, "GeoIP_country_code_by_addr_v6"):
+                raw_code = self._lib.GeoIP_country_code_by_addr_v6(self._db_v6, encoded)
+                raw_name = self._lib.GeoIP_country_name_by_addr_v6(self._db_v6, encoded)
+            elif self._db_v4:
+                raw_code = self._lib.GeoIP_country_code_by_addr(self._db_v4, encoded)
+                raw_name = self._lib.GeoIP_country_name_by_addr(self._db_v4, encoded)
+            else:
+                raw_code = None
+                raw_name = None
+        if raw_code:
+            try:
+                country_code = raw_code.decode("utf-8", errors="ignore").strip().upper()
+            except Exception:
+                country_code = ""
+        if raw_name:
+            try:
+                country_name = raw_name.decode("utf-8", errors="ignore").strip()
+            except Exception:
+                country_name = ""
+
+        centroid = self._centroids.get(country_code or "")
+        result = {
+            "found": bool(country_code),
+            "country_code": country_code,
+            "country": country_name,
+            "lat": centroid.get("lat") if centroid else None,
+            "lon": centroid.get("lon") if centroid else None,
+            "precision": "country" if centroid else "",
+            "source": self.describe_source(),
+        }
+        self._cache[text] = dict(result)
+        return result
+
+    def close(self):
+        with self._lock:
+            for handle in (self._db_v4, self._db_v6):
+                if handle and self._lib:
+                    try:
+                        self._lib.GeoIP_delete(handle)
+                    except Exception:
+                        pass
+            self._db_v4 = None
+            self._db_v6 = None
 
 
 def _soc_payload_signature(text: str) -> str:
@@ -111,6 +314,7 @@ class SniffStore:
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.execute("PRAGMA busy_timeout=5000")
+        self._geoip_resolver = _GeoCountryResolver()
         self._create_schema()
         self._seed_baseline()
 
@@ -347,6 +551,10 @@ class SniffStore:
 
     def close(self):
         with self._lock:
+            try:
+                self._geoip_resolver.close()
+            except Exception:
+                pass
             try:
                 self._conn.close()
             except Exception:
@@ -1758,10 +1966,24 @@ class SniffStore:
             "total_hosts": len(hosts),
             "public_hosts": len([item for item in hosts.values() if not item["private"]]),
             "private_hosts": len([item for item in hosts.values() if item["private"]]),
-            "unmapped_public_hosts": len([item for item in hosts.values() if not item["private"] and not item.get("lat")]),
+            "unmapped_public_hosts": len(
+                [
+                    item
+                    for item in hosts.values()
+                    if not item["private"] and (item.get("lat") is None or item.get("lon") is None)
+                ]
+            ),
             "total_ports": self.list_count("packets"),
             "total_open_ports": self._count_where("packets", "state = 'open'"),
         }
+        resolved_public_hosts = len(
+            [
+                item
+                for item in public_points
+                if item.get("lat") is not None and item.get("lon") is not None
+            ]
+        )
+        geoip_source = self._geoip_resolver.describe_source()
         return {
             "generated_at": utc_now(),
             "origin": {"ip": "127.0.0.1", "label": "Sniff origin"},
@@ -1770,30 +1992,32 @@ class SniffStore:
             "private_hosts": private_hosts,
             "private_bucket": {"count": len(private_hosts)},
             "geoip": {
-                "source": "local",
-                "rows": len(hosts),
+                "source": geoip_source,
+                "rows": resolved_public_hosts,
+                "resolved_public_hosts": resolved_public_hosts,
+                "total_public_hosts": len(public_points),
                 "generated_at": utc_now(),
-                "partial": False,
+                "partial": resolved_public_hosts < len(public_points),
+                "precision": "country" if geoip_source.startswith("country-db") else "",
             },
             "links": links,
         }
 
     def _host_node(self, ip: str) -> dict:
-        private = False
-        try:
-            import ipaddress
-
-            ip_obj = ipaddress.ip_address(ip)
-            private = bool(ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_multicast)
-        except Exception:
-            pass
+        scope = _ip_scope(ip)
+        private = scope != "public"
+        geo = self._geoip_resolver.lookup(ip) if not private else {}
         return {
             "id": ip,
             "ip": ip,
             "label": ip,
             "private": private,
-            "lat": 0.0,
-            "lon": 0.0,
+            "scope": scope,
+            "lat": safe_float(geo.get("lat"), None) if geo.get("lat") is not None else None,
+            "lon": safe_float(geo.get("lon"), None) if geo.get("lon") is not None else None,
+            "country_code": str(geo.get("country_code") or "").upper(),
+            "country": str(geo.get("country") or "").strip(),
+            "geo_precision": str(geo.get("precision") or "").strip(),
         }
 
     def endpoint_catalog(self, routes: list[dict]) -> list[dict]:
@@ -1855,10 +2079,15 @@ class SniffStore:
             "summary": "Observed",
             "status": "mixed_filtering" if related_packets else "low_filtering",
         }
+        host_node = self._host_node(ip)
         geo = {
-            "found": False,
-            "area": "",
-            "country": "",
+            "found": bool(host_node.get("country_code")),
+            "area": host_node.get("country") or "",
+            "country": host_node.get("country") or "",
+            "country_code": host_node.get("country_code") or "",
+            "lat": host_node.get("lat"),
+            "lon": host_node.get("lon"),
+            "precision": host_node.get("geo_precision") or "",
         }
         return {
             "ip": ip,
