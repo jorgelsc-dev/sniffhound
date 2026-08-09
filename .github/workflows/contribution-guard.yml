@@ -62,6 +62,11 @@ jobs:
           failed=0
 
           for sha in "${commits[@]}"; do
+            if git merge-base --is-ancestor "$sha" "$BASE_SHA"; then
+              echo "Skipping commit already reachable from base: $sha"
+              continue
+            fi
+
             author="$(git show -s --format='%an' "$sha")"
             email="$(git show -s --format='%ae' "$sha")"
             body="$(git show -s --format='%B' "$sha")"
