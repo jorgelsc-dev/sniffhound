@@ -7,6 +7,21 @@ Repositorio: [https://github.com/jorgelsc-dev/sniffhound](https://github.com/jor
 Artefacto oficial: paquete Debian `.deb` en GitHub Actions<br>
 Comando: `sniffhound`
 
+## Autoria, licencia y proteccion
+
+- Autor y mantenedor principal: `JorgelSC Dev`
+- Licencia del codigo: `MIT`
+- Aviso legal y de identidad del proyecto: [`NOTICE`](NOTICE)
+- Reglas de contribucion y trazabilidad: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- Politica de seguridad y manejo responsable: [`SECURITY.md`](SECURITY.md)
+- Gobernanza y protecciones del repositorio: [`docs/governance.md`](docs/governance.md)
+
+Punto importante:
+
+- La licencia MIT concede permisos sobre el codigo del repositorio, pero no concede derechos de marca sobre el nombre `SniffHound`, sus logos, ni el dominio oficial.
+- Las contribuciones humanas deben llevar `Signed-off-by:` y completar la declaracion de autoria/procedencia en cada PR.
+- `CODEOWNERS` y el workflow `contribution-guard` refuerzan la revision y la trazabilidad.
+
 ## Mapa rapido
 
 `Operador -> token de sesion -> dashboard / API -> RuntimeController -> Sniffer | Honeypot -> SQLite -> charts / mapa / WebSocket`
