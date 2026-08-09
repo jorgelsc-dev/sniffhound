@@ -23,6 +23,7 @@ from .settings import (
     RUNTIME_MODE,
 )
 from .honeypot import HoneypotEngine
+from .process_control import process_shutdown_requested, request_process_shutdown
 from .sniffer import Sniffer
 from .store import SniffStore
 from .utils import bytes_to_hex_preview, clamp_int, json_dumps, normalize_protocol_name, normalize_text, safe_float, safe_int, utc_now
@@ -332,6 +333,7 @@ ENDPOINTS = [
     {"method": "POST", "path": "/api/ws/broadcast", "desc": "Broadcast a WebSocket payload."},
     {"method": "POST", "path": "/api/ws/ping", "desc": "Ping all WebSocket clients."},
     {"method": "POST", "path": "/api/ws/close", "desc": "Close one or all WebSocket clients."},
+    {"method": "POST", "path": "/api/app/shutdown", "desc": "Request a graceful shutdown of the local SniffHound process."},
     {"method": "GET", "path": "/api/chat/messages", "desc": "Chat message log."},
     {"method": "POST", "path": "/api/chat/clear", "desc": "Clear chat message log."},
     {"method": "GET", "path": "/api/catalog/file/banner-rules", "desc": "File catalog rulesets."},
@@ -447,12 +449,18 @@ def _extract_request_token(request) -> str | None:
     if token:
         return token
 
-    direct_token = _request_header(request, "X-Access-Token", "x-access-token")
+    direct_token = _request_header(
+        request,
+        "X-Security-Code",
+        "x-security-code",
+        "X-Access-Token",
+        "x-access-token",
+    )
     if direct_token:
         return str(direct_token).strip() or None
 
     query = getattr(request, "query", {}) or {}
-    for key in ("access_token", "token", "auth"):
+    for key in ("security_code", "access_token", "token", "auth"):
         value = query.get(key)
         if value:
             return str(value).strip() or None
@@ -463,7 +471,7 @@ def _authenticate_request(request) -> tuple[bool, dict[str, Any] | None]:
     return authenticate_request(_extract_request_token(request))
 
 
-def _unauthorized_response(message: str = "Authentication required") -> Response:
+def _unauthorized_response(message: str = "Security code required") -> Response:
     return Response.json(
         {
             "status": "error",
@@ -1228,20 +1236,26 @@ def auth_session(request):
         return {
             "require_auth": True,
             "authenticated": False,
-            "message": "Access token required",
+            "message": "Security code required",
+            "security_code_label": "Security code",
+            "security_code_length": 8,
             "ws_auth_close_code": WS_AUTH_CLOSE_CODE,
         }
     if REQUIRE_AUTH and token and not is_authenticated:
         return {
             "require_auth": True,
             "authenticated": False,
-            "message": "Invalid access token",
+            "message": "Invalid security code",
+            "security_code_label": "Security code",
+            "security_code_length": 8,
             "ws_auth_close_code": WS_AUTH_CLOSE_CODE,
         }
     return {
         "require_auth": bool(REQUIRE_AUTH),
         "authenticated": bool(is_authenticated or not REQUIRE_AUTH),
         "message": "Authenticated" if is_authenticated else "Authentication not required",
+        "security_code_label": "Security code",
+        "security_code_length": 8,
         "ws_auth_close_code": WS_AUTH_CLOSE_CODE,
     }
 
@@ -1312,6 +1326,19 @@ def chat_messages(request):
 def chat_clear(_request):
     _CHAT_MESSAGES.clear()
     return {"status": "ok"}
+
+
+@app.api("/api/app/shutdown", methods=("POST",))
+def app_shutdown(request):
+    payload = _read_json_body(request)
+    delay_seconds = max(0.0, min(safe_float(payload.get("delay"), 0.2), 3.0))
+    requested = request_process_shutdown(delay=delay_seconds)
+    return {
+        "status": "ok",
+        "shutdown_requested": bool(requested),
+        "shutdown_pending": bool(requested or process_shutdown_requested()),
+        "delay_seconds": delay_seconds,
+    }
 
 
 @app.api("/api/ip/domains/", methods=("GET",))
@@ -1554,7 +1581,7 @@ def _apply_api_auth_guards():
             if REQUIRE_AUTH:
                 is_authenticated, _user_info = _authenticate_request(request)
                 if not is_authenticated:
-                    return _unauthorized_response("Invalid or missing access token")
+                    return _unauthorized_response("Invalid or missing security code")
             return _handler(request, *args, **kwargs)
 
         guarded_handler._sniffhound_auth_wrapped = True
@@ -1572,7 +1599,7 @@ def websocket_handler(ws, request=None):
                         {
                             "type": "auth_required",
                             "status": 401,
-                            "message": "Invalid or missing access token",
+                            "message": "Invalid or missing security code",
                             "generated_at": utc_now(),
                         }
                     )

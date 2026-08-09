@@ -3,10 +3,12 @@ import { apiBaseEnv } from "../utils/runtimeEnv";
 
 const AUTH_SESSION_PATH = "/api/auth/session";
 const STORAGE_KEY_API = "sniffhound.apiBase";
-const STORAGE_KEY_AUTH = "sniffhound.sessionToken";
+const STORAGE_KEY_AUTH = "sniffhound.securityCode";
+const LEGACY_STORAGE_KEY_AUTH = "sniffhound.sessionToken";
 const WS_RECONNECT_DELAY_MS = 1800;
 const WS_REFRESH_THROTTLE_MS = 10000;
 const WS_AUTH_CLOSE_CODE = 4401;
+const APP_SHUTDOWN_DELAY_SECONDS = 0.2;
 const WS_REFRESH_EVENT_TYPES = new Set([
   "welcome",
   "scan_map_snapshot",
@@ -28,6 +30,7 @@ const state = reactive({
   authToken: "",
   authError: "",
   authPromptOpen: false,
+  shutdownPending: false,
 });
 
 const tableRefreshSubscribers = new Set();
@@ -75,21 +78,40 @@ function setApiBase(value) {
 }
 
 function readStoredAuthToken() {
-  if (typeof window === "undefined" || !window.sessionStorage) {
+  if (typeof window === "undefined" || !window.localStorage) {
     return "";
   }
-  return String(window.sessionStorage.getItem(STORAGE_KEY_AUTH) || "").trim();
+  const current = String(window.localStorage.getItem(STORAGE_KEY_AUTH) || "").trim();
+  if (current) {
+    return current;
+  }
+  const legacy = typeof window.sessionStorage !== "undefined"
+    ? String(window.sessionStorage.getItem(LEGACY_STORAGE_KEY_AUTH) || "").trim()
+    : "";
+  if (legacy) {
+    window.localStorage.setItem(STORAGE_KEY_AUTH, legacy);
+    if (typeof window.sessionStorage !== "undefined") {
+      window.sessionStorage.removeItem(LEGACY_STORAGE_KEY_AUTH);
+    }
+  }
+  return legacy;
 }
 
 function persistAuthToken(token) {
-  if (typeof window === "undefined" || !window.sessionStorage) {
+  if (typeof window === "undefined" || !window.localStorage) {
     return;
   }
   if (token) {
-    window.sessionStorage.setItem(STORAGE_KEY_AUTH, token);
+    window.localStorage.setItem(STORAGE_KEY_AUTH, token);
+    if (typeof window.sessionStorage !== "undefined") {
+      window.sessionStorage.removeItem(LEGACY_STORAGE_KEY_AUTH);
+    }
     return;
   }
-  window.sessionStorage.removeItem(STORAGE_KEY_AUTH);
+  window.localStorage.removeItem(STORAGE_KEY_AUTH);
+  if (typeof window.sessionStorage !== "undefined") {
+    window.sessionStorage.removeItem(LEGACY_STORAGE_KEY_AUTH);
+  }
 }
 
 function setAuthToken(token) {
@@ -211,6 +233,9 @@ function buildHttpError(res, text, data) {
 
 function applyAuthHeader(headers = {}, token = state.authToken) {
   const nextHeaders = { ...headers };
+  if (token && !nextHeaders["X-Security-Code"] && !nextHeaders["x-security-code"]) {
+    nextHeaders["X-Security-Code"] = token;
+  }
   if (
     token &&
     !nextHeaders.Authorization &&
@@ -309,7 +334,7 @@ function fetchJson(path, options = {}) {
 }
 
 function requestSessionAuth(token = state.authToken) {
-  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  const headers = token ? { "X-Security-Code": token } : {};
   return fetchJsonPromise(
     AUTH_SESSION_PATH,
     { method: "GET", headers },
@@ -330,6 +355,7 @@ function activateAuthenticatedSession() {
 function bootstrap() {
   state.authReady = false;
   state.authError = "";
+  state.shutdownPending = false;
   state.authToken = readStoredAuthToken();
   return requestSessionAuth(state.authToken)
     .then((payload) => {
@@ -343,7 +369,7 @@ function bootstrap() {
       state.authStatus = "required";
       state.authReady = true;
       state.authPromptOpen = true;
-      state.authError = String((payload && payload.message) || "Access token required");
+      state.authError = String((payload && payload.message) || "Security code required");
       setAuthToken("");
       destroyRealtime();
       return payload;
@@ -360,7 +386,7 @@ function bootstrap() {
 function authenticateSessionToken(rawToken) {
   const token = String(rawToken || "").trim();
   if (!token) {
-    const error = new Error("Access token required");
+    const error = new Error("Security code required");
     state.authRequired = true;
     state.authStatus = "required";
     state.authError = error.message;
@@ -370,8 +396,8 @@ function authenticateSessionToken(rawToken) {
   return requestSessionAuth(token).then((payload) => {
     state.authRequired = Boolean(payload && payload.require_auth);
     if (!payload || !payload.authenticated) {
-      handleUnauthorized((payload && payload.message) || "Invalid access token");
-      throw new Error((payload && payload.message) || "Invalid access token");
+      handleUnauthorized((payload && payload.message) || "Invalid security code");
+      throw new Error((payload && payload.message) || "Invalid security code");
     }
     setAuthToken(token);
     return activateAuthenticatedSession().then(() => payload);
@@ -417,26 +443,30 @@ function wsUrl() {
     parsed.pathname = "/ws/";
     parsed.search = "";
     if (state.authToken) {
-      parsed.searchParams.set("access_token", state.authToken);
+      parsed.searchParams.set("security_code", state.authToken);
     }
     return parsed.toString();
   } catch {
     if (typeof window !== "undefined") {
       const protocol = window.location.protocol === "https:" ? "wss" : "ws";
       const suffix = state.authToken
-        ? `?access_token=${encodeURIComponent(state.authToken)}`
+        ? `?security_code=${encodeURIComponent(state.authToken)}`
         : "";
       return `${protocol}://${window.location.host}/ws/${suffix}`;
     }
   }
   const suffix = state.authToken
-    ? `?access_token=${encodeURIComponent(state.authToken)}`
+    ? `?security_code=${encodeURIComponent(state.authToken)}`
     : "";
   return `ws://127.0.0.1:45678/ws/${suffix}`;
 }
 
 function scheduleReconnect() {
   if (typeof window === "undefined") return;
+  if (state.shutdownPending) {
+    state.wsStatus = "offline";
+    return;
+  }
   if (state.authRequired && state.authStatus !== "authenticated") {
     lockRealtimeForAuth();
     return;
@@ -452,12 +482,20 @@ function scheduleReconnect() {
 
 function reconnectRealtime() {
   if (typeof window === "undefined") return;
+  if (state.shutdownPending) {
+    state.wsStatus = "offline";
+    return;
+  }
   destroyRealtime();
   connectRealtime();
 }
 
 function connectRealtime() {
   if (typeof window === "undefined" || typeof window.WebSocket === "undefined") {
+    state.wsStatus = "offline";
+    return;
+  }
+  if (state.shutdownPending) {
     state.wsStatus = "offline";
     return;
   }
@@ -502,7 +540,7 @@ function connectRealtime() {
     if (!payload || typeof payload !== "object") return;
     const type = String(payload.type || "").trim().toLowerCase();
     if (type === "auth_required") {
-      handleUnauthorized(payload.message || "Session expired. Re-enter access token.");
+      handleUnauthorized(payload.message || "Session expired. Re-enter the security code.");
       try {
         socket.close(WS_AUTH_CLOSE_CODE, "Unauthorized");
       } catch {
@@ -530,7 +568,7 @@ function connectRealtime() {
     if (wsClient !== socket) return;
     wsClient = null;
     if (event && event.code === WS_AUTH_CLOSE_CODE) {
-      handleUnauthorized("Session expired. Re-enter access token.");
+      handleUnauthorized("Session expired. Re-enter the security code.");
       return;
     }
     state.wsStatus = "offline";
@@ -539,7 +577,25 @@ function connectRealtime() {
 }
 
 function initRealtime() {
+  if (state.shutdownPending) return;
   connectRealtime();
+}
+
+function shutdownApplication() {
+  if (state.shutdownPending) {
+    return Promise.resolve({ status: "ok", shutdown_pending: true, shutdown_requested: false });
+  }
+  state.shutdownPending = true;
+  clearReconnectTimer();
+  destroyRealtime();
+  return fetchJsonPromise("/api/app/shutdown", {
+    method: "POST",
+    body: JSON.stringify({ delay: APP_SHUTDOWN_DELAY_SECONDS }),
+  }).catch((error) => {
+    state.shutdownPending = false;
+    reconnectRealtime();
+    throw error;
+  });
 }
 
 function subscribeTableRefresh(handler) {
@@ -566,6 +622,7 @@ export default {
   initRuntime,
   setRuntimeMode,
   controlRuntimeMode,
+  shutdownApplication,
   setSnifferInterface,
   setSnifferInterfaces,
   reconnectRealtime,

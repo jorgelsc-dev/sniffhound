@@ -1,17 +1,9 @@
 """
-Simple Token-Based Authentication for SniffHound
+Simple security-code authentication for SniffHound.
 
-Provides easy authentication using 8-character mixed-case random tokens.
-Tokens are generated at startup and displayed in terminal.
-
-Usage:
-    from sniffhound.auth import get_session_token, verify_token
-    
-    # Get the session token (displayed at startup)
-    token = get_session_token()
-    
-    # Verify token from request
-    is_valid = verify_token(token)
+SniffHound generates an 8-character code at startup and shows it in the
+terminal. The frontend must present the same code to unlock HTTP and WebSocket
+communication with the backend.
 """
 
 from __future__ import annotations
@@ -29,6 +21,7 @@ from typing import Any
 
 SESSION_TOKEN_LENGTH = 8
 SESSION_TOKEN_ALPHABET = string.ascii_letters + string.digits
+SECURITY_CODE_LENGTH = SESSION_TOKEN_LENGTH
 JWT_ALGORITHM = "HS256"
 JWT_SECRET = os.getenv("SNIFFHOUND_JWT_SECRET", "sniffhound-local-signing-key")
 JWT_DEFAULT_TTL_SECONDS = int(os.getenv("SNIFFHOUND_JWT_TTL", "3600"))
@@ -117,7 +110,7 @@ REQUIRE_AUTH = os.getenv("SNIFFHOUND_REQUIRE_AUTH", "1").lower() in {"1", "true"
 
 
 def initialize_session_token() -> str:
-    """Initialize session token at startup (called once)."""
+    """Initialize the startup security code once per process."""
     global _SESSION_TOKEN
     if _SESSION_TOKEN is None:
         _SESSION_TOKEN = _generate_random_token(SESSION_TOKEN_LENGTH)
@@ -125,22 +118,14 @@ def initialize_session_token() -> str:
 
 
 def get_session_token() -> str:
-    """Get the current session token."""
+    """Get the current startup security code."""
     if _SESSION_TOKEN is None:
         return initialize_session_token()
     return _SESSION_TOKEN
 
 
 def verify_token(token: str | None) -> bool:
-    """
-    Verify if token matches session token.
-
-    Args:
-        token: Token to verify
-
-    Returns:
-        True if valid, False otherwise
-    """
+    """Verify whether the provided value matches the active security code."""
     if not token:
         return not REQUIRE_AUTH
 
@@ -201,3 +186,15 @@ def authenticate_request(token: str | None) -> tuple[bool, dict[str, Any] | None
         "authenticated": True,
         "auth_type": "session",
     }
+
+
+def initialize_security_code() -> str:
+    return initialize_session_token()
+
+
+def get_security_code() -> str:
+    return get_session_token()
+
+
+def verify_security_code(token: str | None) -> bool:
+    return verify_token(token)

@@ -3,7 +3,6 @@ from __future__ import annotations
 import errno
 import os
 import shlex
-import signal
 import socket
 import shutil
 import sys
@@ -12,6 +11,7 @@ import unicodedata
 import webbrowser
 from dataclasses import dataclass
 
+from .process_control import request_process_shutdown, reset_process_shutdown_request
 from .settings import CAPTURE_AUTO_START, CAPTURE_DEMO_MODE, HOST, PORT
 
 try:
@@ -42,7 +42,7 @@ CONSOLE_COMMAND_SPECS = (
     ),
     ConsoleCommandSpec("/start", "Start the active engine", aliases=("/run",)),
     ConsoleCommandSpec("/stop", "Stop the active engine"),
-    ConsoleCommandSpec("/token", "Show the current access token"),
+    ConsoleCommandSpec("/token", "Show the current security code"),
     ConsoleCommandSpec("/url", "Show the current dashboard URL"),
     ConsoleCommandSpec("/clients", "List connected WebSocket clients"),
     ConsoleCommandSpec("/broadcast", "Broadcast an operator note", aliases=("/say",)),
@@ -108,11 +108,11 @@ def _banner_line(value: str = "", *, align: str = "left") -> str:
 
 
 def _print_startup_banner(host: str, port: int):
-    """Print beautiful startup banner with access token."""
-    from .auth import get_session_token, REQUIRE_AUTH
+    """Print the startup banner with the active security code."""
+    from .auth import REQUIRE_AUTH, get_security_code
     from . import __version__
 
-    token = get_session_token()
+    token = get_security_code()
     base_url = f"http://{host}:{port}"
     lines = [
         _banner_rule("╔", "═", "╗"),
@@ -123,11 +123,11 @@ def _print_startup_banner(host: str, port: int):
         _banner_line(f"  Link: {base_url}/"),
         _banner_line(f"  Auth Required: {'YES' if REQUIRE_AUTH else 'NO'}"),
         _banner_line(),
-        _banner_line("  ACCESS TOKEN (use this to login):"),
+        _banner_line("  SECURITY CODE (required to unlock the frontend):"),
         _banner_line(),
         _banner_line(f"    {token}"),
         _banner_line(),
-        _banner_line("  Copy the token above and paste it in the login prompt"),
+        _banner_line("  Copy the code above and paste it in the auth prompt"),
         _banner_line(),
         _banner_rule("╠", "═", "╣"),
         _banner_line("  Press Ctrl+C to stop"),
@@ -377,9 +377,9 @@ def _handle_console_line(
         return
 
     if command == "/token":
-        from .auth import get_session_token
+        from .auth import get_security_code
 
-        print(f"[console] Access token: {get_session_token()}")
+        print(f"[console] Security code: {get_security_code()}")
         return
 
     if command == "/url":
@@ -421,8 +421,10 @@ def _handle_console_line(
         return
 
     if command == "/quit":
-        print("[console] Stopping SniffHound...")
-        os.kill(os.getpid(), signal.SIGINT)
+        if request_process_shutdown():
+            print("[console] Stopping SniffHound...")
+        else:
+            print("[console] Shutdown already in progress.")
         return
 
     print(f"[console] Unknown command: {command}. Type /help.")
@@ -450,7 +452,7 @@ def _start_interactive_console(
                 break
             except KeyboardInterrupt:
                 print()
-                os.kill(os.getpid(), signal.SIGINT)
+                request_process_shutdown()
                 break
             _handle_console_line(
                 line,
@@ -492,6 +494,7 @@ def _stop_interactive_console(
 
 
 def main():
+    reset_process_shutdown_request()
     host = str(HOST)
     requested_port = int(PORT)
     selected_port = _select_listen_port(host, requested_port)
@@ -529,6 +532,7 @@ def main():
     finally:
         _stop_interactive_console(console_thread)
         shutdown_capture()
+        reset_process_shutdown_request()
     return 0
 
 
