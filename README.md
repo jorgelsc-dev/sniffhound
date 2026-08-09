@@ -47,16 +47,22 @@ Punto importante:
 
 ### Desde el paquete Debian (`.deb`)
 
-Descarga el artefacto del workflow `Package Debian` en GitHub Actions e instala el archivo generado:
+Descarga el paquete publico desde `Releases` e instala el archivo generado:
+
+```text
+https://github.com/jorgelsc-dev/sniffhound/releases/download/latest/sniffhound_latest.deb
+```
+
+Tambien puedes usar el asset versionado del release mas reciente. La pestana `Packages` de GitHub puede aparecer vacia porque este proyecto distribuye el `.deb` como asset publico de `Releases`, no mediante GitHub Packages.
 
 ```bash
-sudo apt install ./sniffhound_<version>_<arch>.deb
+sudo apt install ./sniffhound_latest.deb
 ```
 
 Fallback con `dpkg` si prefieres instalar manualmente:
 
 ```bash
-sudo dpkg -i ./sniffhound_<version>_<arch>.deb
+sudo dpkg -i ./sniffhound_latest.deb
 sudo apt -f install
 ```
 

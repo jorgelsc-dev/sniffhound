@@ -11,7 +11,7 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   deb-package:
@@ -48,6 +48,27 @@ jobs:
       - name: Build Debian package
         run: ./scripts/build_deb.sh
 
+      - name: Capture package filenames
+        id: package_files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          deb_file="$(find dist -maxdepth 1 -type f -name '*.deb' | head -n1)"
+          sha_file="${deb_file}.sha256"
+          deb_name="$(basename "$deb_file")"
+          latest_deb="dist/sniffhound_latest.deb"
+          latest_sha="${latest_deb}.sha256"
+
+          cp "$deb_file" "$latest_deb"
+          cp "$sha_file" "$latest_sha"
+
+          echo "deb_file=$deb_file" >> "$GITHUB_OUTPUT"
+          echo "sha_file=$sha_file" >> "$GITHUB_OUTPUT"
+          echo "deb_name=$deb_name" >> "$GITHUB_OUTPUT"
+          echo "latest_deb=$latest_deb" >> "$GITHUB_OUTPUT"
+          echo "latest_sha=$latest_sha" >> "$GITHUB_OUTPUT"
+
       - name: Show package metadata
         run: dpkg-deb --info dist/*.deb
 
@@ -60,3 +81,41 @@ jobs:
             dist/*.deb.sha256
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish public release assets
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEB_FILE: ${{ steps.package_files.outputs.deb_file }}
+          SHA_FILE: ${{ steps.package_files.outputs.sha_file }}
+          LATEST_DEB: ${{ steps.package_files.outputs.latest_deb }}
+          LATEST_SHA: ${{ steps.package_files.outputs.latest_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          title="Latest Debian build"
+          notes="$(mktemp)"
+          {
+            echo "Public Debian assets for the latest successful build from \`main\`."
+            echo
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Workflow run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "- Stable asset: \`sniffhound_latest.deb\`"
+          } > "$notes"
+
+          if gh release view latest >/dev/null 2>&1; then
+            gh release edit latest --title "$title" --notes-file "$notes"
+          else
+            gh release create latest \
+              --title "$title" \
+              --notes-file "$notes" \
+              --target "$GITHUB_SHA"
+          fi
+
+          gh release upload latest \
+            "$DEB_FILE" \
+            "$SHA_FILE" \
+            "$LATEST_DEB" \
+            "$LATEST_SHA" \
+            --clobber
