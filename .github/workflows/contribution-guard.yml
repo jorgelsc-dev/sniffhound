@@ -27,6 +27,8 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
 
@@ -35,9 +37,22 @@ jobs:
             exit 0
           fi
 
-          range="origin/${BASE_REF}..HEAD"
+          if ! git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null; then
+            echo "::error::Head commit ${HEAD_SHA} is not available in the local checkout."
+            exit 1
+          fi
 
-          mapfile -t commits < <(git rev-list "$range")
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            echo "::warning::Base commit ${BASE_SHA} is not available locally, falling back to origin/${BASE_REF}."
+            BASE_SHA="$(git rev-parse "origin/${BASE_REF}")"
+          fi
+
+          merge_base="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
+          range="${merge_base}..${HEAD_SHA}"
+
+          echo "Validating commit sign-off on first-parent non-merge commits in range: ${range}"
+
+          mapfile -t commits < <(git rev-list --first-parent --no-merges "$range")
 
           if [[ "${#commits[@]}" -eq 0 ]]; then
             echo "No commits to validate."
