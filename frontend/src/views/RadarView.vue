@@ -28,6 +28,22 @@
     </v-alert>
 
     <div class="mt-6">
+      <HostRadarPanel
+        title="Host Interaction Radar"
+        subtitle="Clickable host nodes and animated traffic relationships between captured endpoints."
+        :snapshot="mapSnapshot"
+        :top-hosts="topHosts"
+        :loading="loading"
+        :error="error"
+        :last-updated="lastUpdated"
+        :show-refresh="true"
+        :live-refresh="false"
+        :live-enabled="false"
+        @refresh="load"
+      />
+    </div>
+
+    <div class="mt-6">
       <MapPanel
         panel-title="Topology Radar"
         panel-subtitle="See host placement and point density at a glance."
@@ -104,6 +120,7 @@
 import store from "../state/appStore";
 import ViewHeader from "../components/ui/ViewHeader.vue";
 import EntityTablePanel from "../components/ui/EntityTablePanel.vue";
+import HostRadarPanel from "../components/HostRadarPanel.vue";
 import MapPanel from "../components/MapPanel.vue";
 
 const RADAR_REFRESH_EVENT_TYPES = new Set([
@@ -116,6 +133,7 @@ export default {
   components: {
     ViewHeader,
     EntityTablePanel,
+    HostRadarPanel,
     MapPanel,
   },
   data() {
