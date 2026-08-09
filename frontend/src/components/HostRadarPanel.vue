@@ -384,6 +384,15 @@ function classifyHost(ip, fallbackPrivate = false) {
   return "public";
 }
 
+function stableHash(value) {
+  const text = String(value || "");
+  let hash = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = ((hash * 33) + text.charCodeAt(index)) >>> 0;
+  }
+  return hash || 1;
+}
+
 function protoPalette(proto) {
   if (proto === "tcp") {
     return {
@@ -720,13 +729,7 @@ export default {
     layoutNodes() {
       const nodes = this.visibleNodes.slice(0, MAX_VISIBLE_HOSTS);
       if (!nodes.length) return [];
-
-      const activeNodes = nodes.filter((node) => node.activeNow);
-      const historicalNodes = nodes.filter((node) => !node.activeNow);
-      return [
-        ...this.distributeActiveGraphNodes(activeNodes),
-        ...this.distributeHistoricalNodes(historicalNodes),
-      ].slice(0, MAX_VISIBLE_HOSTS);
+      return this.layoutRelationshipGraph(nodes).slice(0, MAX_VISIBLE_HOSTS);
     },
     visibleLinks() {
       const visibleIps = new Set(this.layoutNodes.map((node) => node.ip));
@@ -824,6 +827,209 @@ export default {
       if (ip.length <= 18) return ip;
       return `${ip.slice(0, 9)}...${ip.slice(-6)}`;
     },
+    layoutRelationshipGraph(nodes) {
+      const ordered = [...nodes].sort((left, right) =>
+        Number(right.activeNow) - Number(left.activeNow) ||
+        right.score - left.score ||
+        (right.lastSeenAt || 0) - (left.lastSeenAt || 0) ||
+        left.ip.localeCompare(right.ip)
+      );
+      if (!ordered.length) return [];
+      if (ordered.length === 1) {
+        return [this.decorateGraphNode(ordered[0], this.stageCenterX, this.stageCenterY - 24, 0.62, ordered.length)];
+      }
+
+      const nodeIds = new Set(ordered.map((node) => node.ip));
+      const relationLinks = this.historicalLinks
+        .filter((link) => nodeIds.has(link.source) && nodeIds.has(link.target))
+        .slice(0, MAX_VISIBLE_LINKS);
+
+      const degreeMap = new Map(ordered.map((node) => [node.ip, 0]));
+      relationLinks.forEach((link) => {
+        degreeMap.set(link.source, (degreeMap.get(link.source) || 0) + 1);
+        degreeMap.set(link.target, (degreeMap.get(link.target) || 0) + 1);
+      });
+
+      const anchor = ordered.reduce((best, node) => {
+        const weight = (Number(node.activeNow) * 220) + ((degreeMap.get(node.ip) || 0) * 38) + Number(node.score || 0);
+        if (!best || weight > best.weight) {
+          return { node, weight };
+        }
+        return best;
+      }, null)?.node || ordered[0];
+
+      const totalNodes = ordered.length;
+      const centerX = this.stageCenterX;
+      const centerY = this.stageCenterY - (totalNodes >= 10 ? 4 : 18);
+      const innerRadiusX = 136 + Math.min(72, totalNodes * 5.5);
+      const innerRadiusY = 92 + Math.min(56, totalNodes * 3.6);
+      const outerRadiusX = innerRadiusX + 88;
+      const outerRadiusY = innerRadiusY + 74;
+      const farRadiusX = outerRadiusX + 54;
+      const farRadiusY = outerRadiusY + 38;
+      const bounds = {
+        minX: 86,
+        maxX: this.stageWidth - 86,
+        minY: 118,
+        maxY: this.stageHeight - 74,
+      };
+
+      const positions = new Map();
+      ordered.forEach((node, index) => {
+        if (node.ip === anchor.ip) {
+          positions.set(node.ip, {
+            x: centerX,
+            y: centerY - 12,
+            vx: 0,
+            vy: 0,
+            fixed: true,
+          });
+          return;
+        }
+        const hash = stableHash(node.ip);
+        const jitter = ((hash % 1000) / 1000) - 0.5;
+        const activeBias = node.activeNow ? 0 : 1;
+        const ring = index <= 6
+          ? 0
+          : index <= 14
+            ? 1
+            : 2;
+        let angleDeg = 90;
+        if (node.role === "source") angleDeg = 208;
+        else if (node.role === "target") angleDeg = 332;
+        else if (node.scope === "local") angleDeg = 258;
+        else if (node.scope === "multicast" || node.scope === "reserved") angleDeg = 20;
+        const angle = (angleDeg + (jitter * (node.activeNow ? 58 : 96))) * (Math.PI / 180);
+        const radiusX = ring === 0 ? innerRadiusX : ring === 1 ? outerRadiusX : farRadiusX;
+        const radiusY = ring === 0 ? innerRadiusY : ring === 1 ? outerRadiusY : farRadiusY;
+        positions.set(node.ip, {
+          x: centerX + (Math.cos(angle) * radiusX * (1 + (activeBias * 0.08))),
+          y: centerY + (Math.sin(angle) * radiusY * (1 + (activeBias * 0.12))),
+          vx: 0,
+          vy: 0,
+          fixed: false,
+        });
+      });
+
+      for (let step = 0; step < 54; step += 1) {
+        for (let index = 0; index < ordered.length; index += 1) {
+          for (let otherIndex = index + 1; otherIndex < ordered.length; otherIndex += 1) {
+            const left = ordered[index];
+            const right = ordered[otherIndex];
+            const lp = positions.get(left.ip);
+            const rp = positions.get(right.ip);
+            if (!lp || !rp) continue;
+            const dx = rp.x - lp.x;
+            const dy = rp.y - lp.y;
+            const distance = Math.max(1, Math.hypot(dx, dy));
+            const repulsion = Math.min(26, (12000 / (distance * distance)));
+            const nx = dx / distance;
+            const ny = dy / distance;
+            if (!lp.fixed) {
+              lp.vx -= nx * repulsion;
+              lp.vy -= ny * repulsion;
+            }
+            if (!rp.fixed) {
+              rp.vx += nx * repulsion;
+              rp.vy += ny * repulsion;
+            }
+          }
+        }
+
+        relationLinks.forEach((link) => {
+          const sourcePos = positions.get(link.source);
+          const targetPos = positions.get(link.target);
+          if (!sourcePos || !targetPos) return;
+          const dx = targetPos.x - sourcePos.x;
+          const dy = targetPos.y - sourcePos.y;
+          const distance = Math.max(1, Math.hypot(dx, dy));
+          const ideal = link.activeNow ? 146 : 182;
+          const spring = (distance - ideal) * 0.015;
+          const nx = dx / distance;
+          const ny = dy / distance;
+          if (!sourcePos.fixed) {
+            sourcePos.vx += nx * spring;
+            sourcePos.vy += ny * spring;
+          }
+          if (!targetPos.fixed) {
+            targetPos.vx -= nx * spring;
+            targetPos.vy -= ny * spring;
+          }
+        });
+
+        ordered.forEach((node) => {
+          const position = positions.get(node.ip);
+          if (!position || position.fixed) return;
+          const target = this.preferredGraphTarget(node, {
+            centerX,
+            centerY,
+            innerRadiusX,
+            innerRadiusY,
+            outerRadiusX,
+            outerRadiusY,
+            farRadiusX,
+            farRadiusY,
+            totalNodes,
+          });
+          position.vx += (target.x - position.x) * 0.0054;
+          position.vy += (target.y - position.y) * 0.0054;
+          position.x += position.vx;
+          position.y += position.vy;
+          position.vx *= 0.8;
+          position.vy *= 0.8;
+          position.x = Math.max(bounds.minX, Math.min(bounds.maxX, position.x));
+          position.y = Math.max(bounds.minY, Math.min(bounds.maxY, position.y));
+        });
+      }
+
+      return this.resolveNodeCollisions(
+        ordered.map((node) => {
+          const position = positions.get(node.ip) || { x: centerX, y: centerY };
+          const baseScale = node.activeNow
+            ? (totalNodes >= 18 ? 0.42 : totalNodes >= 12 ? 0.48 : totalNodes >= 8 ? 0.54 : 0.6)
+            : (totalNodes >= 18 ? 0.32 : totalNodes >= 12 ? 0.35 : totalNodes >= 8 ? 0.38 : 0.42);
+          return this.decorateGraphNode(node, position.x, position.y, baseScale, totalNodes);
+        }),
+        {
+          minDistance: totalNodes >= 18 ? 74 : totalNodes >= 12 ? 88 : 104,
+          minX: bounds.minX,
+          maxX: bounds.maxX,
+          minY: bounds.minY,
+          maxY: bounds.maxY,
+          iterations: 6,
+        }
+      );
+    },
+    preferredGraphTarget(node, context) {
+      const {
+        centerX,
+        centerY,
+        innerRadiusX,
+        innerRadiusY,
+        outerRadiusX,
+        outerRadiusY,
+        farRadiusX,
+        farRadiusY,
+      } = context;
+      const hash = stableHash(node.ip);
+      const jitter = ((hash % 1000) / 1000) - 0.5;
+      let angleDeg = 86;
+      if (node.role === "source") angleDeg = 210;
+      else if (node.role === "target") angleDeg = 334;
+      else if (node.scope === "local") angleDeg = 260;
+      else if (node.scope === "multicast" || node.scope === "reserved") angleDeg = 18;
+      const angle = (angleDeg + (jitter * (node.activeNow ? 42 : 78))) * (Math.PI / 180);
+      const radiusX = node.activeNow
+        ? innerRadiusX
+        : (node.historyAgeMs || 0) > (HISTORY_RETENTION_MS * 0.35) ? farRadiusX : outerRadiusX;
+      const radiusY = node.activeNow
+        ? innerRadiusY
+        : (node.historyAgeMs || 0) > (HISTORY_RETENTION_MS * 0.35) ? farRadiusY : outerRadiusY;
+      return {
+        x: centerX + (Math.cos(angle) * radiusX),
+        y: centerY + (Math.sin(angle) * radiusY),
+      };
+    },
     distributeActiveGraphNodes(nodes) {
       const ordered = [...nodes].sort((left, right) => right.score - left.score || left.ip.localeCompare(right.ip));
       if (!ordered.length) return [];
@@ -904,20 +1110,29 @@ export default {
         return this.decorateGraphNode(node, x, y, baseScale);
       });
     },
-    decorateGraphNode(node, x, y, baseScale = 0.58) {
-      const iconScale = Math.min(0.74, baseScale + (node.emphasis * 0.04) + (node.activeNow ? 0.02 : 0));
+    decorateGraphNode(node, x, y, baseScale = 0.58, totalNodeCount = 1) {
+      const densityFactor = totalNodeCount >= 18
+        ? 0.74
+        : totalNodeCount >= 12
+          ? 0.82
+          : totalNodeCount >= 8
+            ? 0.9
+            : 1;
+      const iconScale = Math.min(0.74, (baseScale + (node.emphasis * 0.04) + (node.activeNow ? 0.02 : 0)) * densityFactor);
+      const staleFactor = Math.max(0.3, Number(node.staleFactor || 0.34));
+      const labelY = iconScale <= 0.34 ? 12 : iconScale <= 0.42 ? 15 : iconScale <= 0.5 ? 17 : 20;
       return {
         ...node,
         x,
         y,
         iconScale,
-        haloRadius: 11.8 + (node.emphasis * 2.7),
-        ringRadius: 8.4 + (node.emphasis * 1.9),
-        labelY: 20,
-        metricY: 31,
-        nodeOpacity: 1,
-        labelOpacity: 0.98,
-        metricOpacity: 0.82,
+        haloRadius: (iconScale <= 0.4 ? 8.4 : 11.2) + (node.emphasis * 2.4),
+        ringRadius: (iconScale <= 0.4 ? 6.2 : 8.2) + (node.emphasis * 1.7),
+        labelY,
+        metricY: labelY + (iconScale <= 0.4 ? 9 : 11),
+        nodeOpacity: node.activeNow ? 1 : staleFactor,
+        labelOpacity: node.activeNow ? 0.98 : Math.max(0.5, staleFactor),
+        metricOpacity: node.activeNow ? 0.82 : Math.max(0.38, staleFactor * 0.92),
       };
     },
     resolveNodeCollisions(nodes, options = {}) {
