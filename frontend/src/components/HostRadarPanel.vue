@@ -260,7 +260,7 @@
               font-size="18px"
               font-weight="700"
             >
-              Waiting for public host conversations
+              Waiting for host conversations
             </text>
             <text
               :x="stageCenterX"
@@ -269,7 +269,7 @@
               fill="rgba(164, 193, 220, 0.82)"
               font-size="12px"
             >
-              Public hosts remain visible as history and live attack lanes animate from source to target.
+              Private and public hosts remain visible as history while live attack lanes animate from source to target.
             </text>
           </g>
         </svg>
@@ -277,7 +277,7 @@
         <div class="host-radar-overlay">
           <div class="host-radar-overlay__eyebrow">Host Graph View</div>
           <div class="host-radar-overlay__copy">
-            Public hosts stay in a live node graph while packet attacks animate from source to destination and older PCs fade into historical lanes.
+            Private and public hosts stay in the live node graph while packet attacks animate from source to destination and older nodes fade into history.
           </div>
         </div>
 
@@ -339,8 +339,8 @@ function normalizeProto(value) {
   return String(value || "unknown").trim().toLowerCase() || "unknown";
 }
 
-function isPublicHost(ip, fallbackPrivate = false) {
-  return classifyHost(ip, fallbackPrivate) === "public";
+function isRenderableHost(ip) {
+  return Boolean(normalizeIp(ip));
 }
 
 function parseIpv4Octets(value) {
@@ -571,7 +571,7 @@ export default {
         const source = normalizeIp(row && row.source);
         const target = normalizeIp(row && row.target);
         if (!source || !target) return;
-        if (!isPublicHost(source) || !isPublicHost(target)) return;
+        if (!isRenderableHost(source) || !isRenderableHost(target)) return;
         const proto = normalizeProto(row && row.proto);
         const bytes = Math.max(1, Number(row && row.value) || 1);
         const key = `${source}__${target}`;
@@ -610,12 +610,12 @@ export default {
       const seedHost = (row, fallbackPrivate = false) => {
         const ip = normalizeIp(row && (row.ip || row.id || row.label));
         if (!ip) return null;
-        if (!isPublicHost(ip, fallbackPrivate)) return null;
         if (!hosts.has(ip)) {
+          const explicitScope = String(row && row.scope ? row.scope : "").trim().toLowerCase();
           hosts.set(ip, {
             ip,
             label: ip,
-            scope: classifyHost(ip, Boolean((row && row.private) || fallbackPrivate)),
+            scope: explicitScope || classifyHost(ip, Boolean((row && row.private) || fallbackPrivate)),
             openPorts: 0,
             trafficPackets: 0,
             trafficBytes: 0,
@@ -633,7 +633,11 @@ export default {
       const publicPoints = Array.isArray(this.snapshot && this.snapshot.public_points)
         ? this.snapshot.public_points
         : [];
+      const privateHosts = Array.isArray(this.snapshot && this.snapshot.private_hosts)
+        ? this.snapshot.private_hosts
+        : [];
       publicPoints.forEach((row) => seedHost(row, false));
+      privateHosts.forEach((row) => seedHost(row, true));
       this.topHosts.forEach((row) => seedHost(row, false));
 
       this.aggregatedLinks.forEach((link) => {
@@ -1131,7 +1135,7 @@ export default {
         ? node.protocols.join(", ")
         : "no protocol sample";
       const history = node.activeNow ? "live" : "historical";
-      return `${node.ip} | public host | ${history} | ${node.trafficPackets} packets | ${node.openPorts} open ports | ${protocols}`;
+      return `${node.ip} | ${node.scope || "unknown"} host | ${history} | ${node.trafficPackets} packets | ${node.openPorts} open ports | ${protocols}`;
     },
     navigateToHost(node) {
       if (!node || !node.ip || !this.$router) return;
