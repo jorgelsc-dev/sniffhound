@@ -1,6 +1,6 @@
 site_name: SniffHound Docs
 site_description: Documentacion oficial de SniffHound
-site_author: SniffHound Authors
+site_author: JorgelSC Dev
 site_url: https://sniffhound.jorgelsc.dev/
 repo_url: https://github.com/jorgelsc-dev/sniffhound
 repo_name: SniffHound
@@ -10,6 +10,7 @@ nav:
   - Inicio: index.md
   - Empezar: getting-started.md
   - Arquitectura: architecture.md
+  - Gobernanza: governance.md
   - Ayuda:
       - Resumen: help/index.md
       - Modos: help/modes.md
