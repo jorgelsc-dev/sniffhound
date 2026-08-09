@@ -20,6 +20,16 @@ from sniffhound.store import SniffStore
 from wsbuilder import Request, Response
 
 
+def _close_app_store(module):
+    store = getattr(module, "store", None)
+    if store is None:
+        return
+    try:
+        store.close()
+    except Exception:
+        pass
+
+
 def _reload_auth_stack(require_auth: str = "1"):
     previous = os.environ.get("SNIFFHOUND_REQUIRE_AUTH")
     os.environ["SNIFFHOUND_REQUIRE_AUTH"] = require_auth
@@ -27,6 +37,7 @@ def _reload_auth_stack(require_auth: str = "1"):
         import sniffhound.auth as auth_module
         import sniffhound.app as app_module
 
+        _close_app_store(sys.modules.get("sniffhound.app"))
         auth_module = importlib.reload(auth_module)
         app_module = importlib.reload(app_module)
         return auth_module, app_module
@@ -45,6 +56,7 @@ def _reload_runtime_stack(require_auth: str = "1"):
         import sniffhound.auth as auth_module
         import sniffhound.app as app_module
 
+        _close_app_store(sys.modules.get("sniffhound.app"))
         settings_module = importlib.reload(settings_module)
         auth_module = importlib.reload(auth_module)
         app_module = importlib.reload(app_module)
@@ -504,6 +516,7 @@ class SmokeTests(unittest.TestCase):
 
     def test_runtime_api_supports_start_and_stop_actions(self):
         _auth_module, app_module = _reload_auth_stack("0")
+        self.addCleanup(app_module.store.close)
 
         with patch.object(app_module.runtime, "set_mode", return_value={"mode": "honeypot"}) as set_mode_mock, patch.object(
             app_module.runtime, "start", return_value={"mode": "honeypot", "active": {"running": True}}
@@ -539,6 +552,70 @@ class SmokeTests(unittest.TestCase):
             self.assertEqual(stop_response.status, 200)
             self.assertFalse(stop_payload["active"]["running"])
             stop_mock.assert_called_once()
+
+    def test_runtime_api_start_explicitly_starts_engine_when_auto_start_is_disabled(self):
+        previous_auto_start = os.environ.get("SNIFFHOUND_CAPTURE_AUTO_START")
+        os.environ["SNIFFHOUND_CAPTURE_AUTO_START"] = "0"
+        try:
+            _settings_module, _auth_module, app_module = _reload_runtime_stack("0")
+            self.addCleanup(app_module.store.close)
+
+            sniffer_state = {"running": False}
+
+            def fake_sniffer_snapshot():
+                return {
+                    "running": bool(sniffer_state["running"]),
+                    "capture_state": "running" if sniffer_state["running"] else "idle",
+                    "interfaces": ["eth0"],
+                    "available_interfaces": ["eth0"],
+                    "selected_interfaces": [],
+                    "selected_interface": "",
+                    "errors": {},
+                    "packets_seen": 0,
+                    "packets_total_bytes": 0,
+                    "started_at": "2026-08-09T16:05:00Z" if sniffer_state["running"] else "",
+                    "last_packet_at": "",
+                    "active_threads": 1 if sniffer_state["running"] else 0,
+                }
+
+            def fake_sniffer_start():
+                sniffer_state["running"] = True
+                return fake_sniffer_snapshot()
+
+            with patch.object(app_module.sniffer, "snapshot", side_effect=fake_sniffer_snapshot), patch.object(
+                app_module.sniffer, "start", side_effect=fake_sniffer_start
+            ) as start_mock:
+                start_request = Request(
+                    "POST",
+                    "/api/runtime/",
+                    "",
+                    {"content-type": "application/json"},
+                    json.dumps({"mode": "sniffer", "action": "start"}).encode("utf-8"),
+                    ("127.0.0.1", 0),
+                )
+                start_response = app_module.app.dispatch(start_request)
+                start_payload = json.loads(start_response.body.decode("utf-8"))
+
+            self.assertEqual(start_response.status, 200)
+            self.assertEqual(start_payload["mode"], "sniffer")
+            self.assertTrue(start_payload["active"]["running"])
+            self.assertEqual(start_payload["active"]["capture_state"], "running")
+            start_mock.assert_called_once()
+        finally:
+            if previous_auto_start is None:
+                os.environ.pop("SNIFFHOUND_CAPTURE_AUTO_START", None)
+            else:
+                os.environ["SNIFFHOUND_CAPTURE_AUTO_START"] = previous_auto_start
+
+    def test_websocket_route_enables_keepalive(self):
+        _auth_module, app_module = _reload_auth_stack("0")
+        self.addCleanup(app_module.store.close)
+
+        route = app_module.app.ws_routes["/ws/"]
+
+        self.assertGreater(route["keepalive_interval"], 0.0)
+        self.assertGreater(route["pong_timeout"], 0.0)
+        self.assertEqual(route["ping_payload"], b"sniffhound")
 
     def test_manage_candidate_ports_scan_requested_block(self):
         import sniffhound.manage as manage_module

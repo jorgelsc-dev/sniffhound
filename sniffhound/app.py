@@ -323,13 +323,28 @@ class RuntimeController:
             "honeypot": honeypot.snapshot(),
         }
 
+    def _broadcast_snapshot(self, snapshot: dict):
+        hub.broadcast(
+            {
+                "type": "runtime_mode",
+                "runtime": snapshot,
+                "generated_at": utc_now(),
+            }
+        )
+
     def start(self):
-        if CAPTURE_AUTO_START:
-            return self.current_engine().start()
-        return self.snapshot()
+        with self._lock:
+            self.current_engine().start()
+            snapshot = self.snapshot()
+        self._broadcast_snapshot(snapshot)
+        return snapshot
 
     def stop(self):
-        return self.current_engine().stop()
+        with self._lock:
+            self.current_engine().stop()
+            snapshot = self.snapshot()
+        self._broadcast_snapshot(snapshot)
+        return snapshot
 
     def set_mode(self, mode: str):
         normalized = _normalize_runtime_mode(mode)
@@ -338,21 +353,17 @@ class RuntimeController:
                 if CAPTURE_AUTO_START and not self.current_engine().snapshot().get("running"):
                     self.current_engine().start()
                 store.set_runtime_config("runtime_mode", self.mode)
-                return self.snapshot()
-            previous = self.current_engine()
-            previous.stop()
-            self.mode = normalized
-            store.set_runtime_config("runtime_mode", self.mode)
-            if CAPTURE_AUTO_START:
-                self.current_engine().start()
-            hub.broadcast(
-                {
-                    "type": "runtime_mode",
-                    "runtime": self.snapshot(),
-                    "generated_at": utc_now(),
-                }
-            )
-            return self.snapshot()
+                snapshot = self.snapshot()
+            else:
+                previous = self.current_engine()
+                previous.stop()
+                self.mode = normalized
+                store.set_runtime_config("runtime_mode", self.mode)
+                if CAPTURE_AUTO_START:
+                    self.current_engine().start()
+                snapshot = self.snapshot()
+        self._broadcast_snapshot(snapshot)
+        return snapshot
 
     def set_sniffer_interfaces(self, interfaces=None):
         selected = _normalize_interface_selection(interfaces)
@@ -382,6 +393,8 @@ class RuntimeController:
 runtime = RuntimeController()
 AUTH_SESSION_PATH = "/api/auth/session"
 WS_AUTH_CLOSE_CODE = 4401
+WS_KEEPALIVE_INTERVAL_SECONDS = 25.0
+WS_PONG_TIMEOUT_SECONDS = 10.0
 
 ENDPOINTS = [
     {"method": "GET", "path": "/", "desc": "Frontend SPA shell."},
@@ -1686,7 +1699,12 @@ def _apply_api_auth_guards():
         route.handler = guarded_handler
 
 
-@app.ws("/ws/")
+@app.ws(
+    "/ws/",
+    keepalive_interval=WS_KEEPALIVE_INTERVAL_SECONDS,
+    pong_timeout=WS_PONG_TIMEOUT_SECONDS,
+    ping_payload=b"sniffhound",
+)
 def websocket_handler(ws, request=None):
     if REQUIRE_AUTH:
         is_authenticated, _user_info = _authenticate_request(request, allow_query=True)
