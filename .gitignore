@@ -78,6 +78,10 @@ frontend/.env.*
 captures/
 certs/
 
+# AI agent local config
+CLAUDE.md
+AGENTS.md
+
 # OS / editor noise
 .DS_Store
 Thumbs.db

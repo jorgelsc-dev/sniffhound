@@ -2,8 +2,8 @@
   <div class="protocols-view">
     <ViewHeader
       overline="Protocol Atlas"
-      title="Protocolos"
-      description="Selecciona una familia soportada y revisa tablas, estadísticas y gráficos adaptados al tipo de tráfico."
+      title="Protocols"
+      description="Pick a supported family and review tables, stats, and charts tailored to that traffic type."
       :refresh-loading="loading"
       @refresh="load"
     />
@@ -346,7 +346,7 @@ const REFRESH_EVENT_TYPES = new Set(["packet", "stats_update", "runtime_mode"]);
 const PROTOCOL_PROFILES = {
   tcp: {
     label: "TCP",
-    description: "Inspecciona flujos orientados a conexión, flags, puertos y banners.",
+    description: "Inspect connection-oriented flows, flags, ports, and banners.",
     focusTitle: "Top ports",
     signalLabel: "Flags",
     icon: "mdi-ethernet",
@@ -357,7 +357,7 @@ const PROTOCOL_PROFILES = {
   },
   udp: {
     label: "UDP",
-    description: "Revisa datagramas, puertos observados y respuestas registradas.",
+    description: "Review datagrams, observed ports, and logged responses.",
     focusTitle: "Top ports",
     signalLabel: "Ports",
     icon: "mdi-lan",
@@ -368,7 +368,7 @@ const PROTOCOL_PROFILES = {
   },
   sctp: {
     label: "SCTP",
-    description: "Agrupa asociaciones de transporte, puertos y artefactos asociados.",
+    description: "Group transport associations, ports, and related artifacts.",
     focusTitle: "Top ports",
     signalLabel: "Ports",
     icon: "mdi-lan-connect",
@@ -379,7 +379,7 @@ const PROTOCOL_PROFILES = {
   },
   icmp: {
     label: "ICMP",
-    description: "Analiza tipos y códigos ICMP para eco, error y reachability.",
+    description: "Analyze ICMP types and codes for echo, error, and reachability.",
     focusTitle: "Top ICMP types",
     signalLabel: "Type / Code",
     icon: "mdi-pulse",
@@ -390,7 +390,7 @@ const PROTOCOL_PROFILES = {
   },
   icmpv6: {
     label: "ICMPv6",
-    description: "Estudia mensajes de control IPv6 y sus tipos y códigos.",
+    description: "Study IPv6 control messages and their types and codes.",
     focusTitle: "Top ICMP types",
     signalLabel: "Type / Code",
     icon: "mdi-pulse",
@@ -401,7 +401,7 @@ const PROTOCOL_PROFILES = {
   },
   arp: {
     label: "ARP",
-    description: "Consulta solicitudes y respuestas ARP con opcode, MAC e IP.",
+    description: "Check ARP requests and replies with opcode, MAC, and IP.",
     focusTitle: "Top opcodes",
     signalLabel: "Opcode",
     icon: "mdi-transit-connection-variant",
@@ -412,7 +412,7 @@ const PROTOCOL_PROFILES = {
   },
   ipv6: {
     label: "IPv6",
-    description: "Mira cabeceras IPv6, hop limits y rutas visibles.",
+    description: "Look at IPv6 headers, hop limits, and visible routes.",
     focusTitle: "Hop distribution",
     signalLabel: "Hop limit",
     icon: "mdi-ip-network",
@@ -423,7 +423,7 @@ const PROTOCOL_PROFILES = {
   },
   unknown: {
     label: "Unknown",
-    description: "Agrupa tráfico sin clasificación clara con métricas y columnas genéricas.",
+    description: "Group traffic without a clear classification using generic metrics and columns.",
     focusTitle: "Top interfaces",
     signalLabel: "Generic",
     icon: "mdi-help-circle-outline",

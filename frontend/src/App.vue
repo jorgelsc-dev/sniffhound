@@ -34,13 +34,13 @@
         <div v-else class="auth-stage">
           <v-sheet class="auth-stage-card" rounded="xl" elevation="0">
             <div class="auth-stage-kicker">Protected Console</div>
-            <h1 class="auth-stage-title">Autenticación requerida</h1>
+            <h1 class="auth-stage-title">Authentication required</h1>
             <p class="auth-stage-copy">
-              Introduce el código de seguridad mostrado en la terminal para desbloquear el
-              dashboard y reanudar HTTP y WebSocket.
+              Enter the security code shown in the terminal to unlock the dashboard and
+              resume HTTP and WebSocket access.
             </p>
             <v-btn color="primary" size="large" variant="flat" @click="openAuthPrompt">
-              Introducir código
+              Enter code
             </v-btn>
             <v-alert
               v-if="authError"
@@ -59,17 +59,17 @@
     <v-dialog :model-value="authPromptOpen" persistent max-width="520">
       <v-card class="auth-dialog-card" rounded="xl">
         <div class="auth-dialog-topline" />
-        <v-card-title class="text-h5 pt-6">Código De Seguridad</v-card-title>
+        <v-card-title class="text-h5 pt-6">Security Code</v-card-title>
         <v-card-text class="pt-4">
           <p class="auth-dialog-copy">
-            Copia el código de 8 caracteres desde la terminal de `sniffhound`. Solo vive en
-            memoria para este tab, se envía por `Authorization: Bearer` a la API y también se
-            adjunta al handshake del WebSocket.
+            Copy the 8-character code from the `sniffhound` terminal. It only lives in this
+            tab's memory, is sent as `Authorization: Bearer` to the API, and is also attached
+            to the WebSocket handshake.
           </p>
           <v-text-field
             ref="authInput"
             v-model="accessTokenInput"
-            label="Código de seguridad"
+            label="Security code"
             variant="outlined"
             density="comfortable"
             autocapitalize="off"
@@ -89,7 +89,7 @@
             :loading="authSubmitting"
             @click="submitAccessToken"
           >
-            Autenticar
+            Authenticate
           </v-btn>
         </v-card-actions>
       </v-card>

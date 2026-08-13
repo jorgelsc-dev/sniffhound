@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import logging
 import queue
+import shutil
 import socket
 import sqlite3
 import ssl
+import subprocess
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -829,7 +831,38 @@ class HoneypotEngine:
         self.stop()
         return self.start()
 
+    def _bootstrap_self_signed_cert(self):
+        if CERT_FILE.is_file() and KEY_FILE.is_file():
+            return
+        openssl_path = shutil.which("openssl")
+        if not openssl_path:
+            return
+        command = [
+            openssl_path, "req", "-x509", "-nodes",
+            "-newkey", "rsa:2048",
+            "-keyout", str(KEY_FILE),
+            "-out", str(CERT_FILE),
+            "-days", "825",
+            "-subj", "/O=SniffHound/CN=sniffhound-honeypot",
+            "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1",
+        ]
+        try:
+            subprocess.run(command, check=True, capture_output=True, timeout=15)
+        except Exception:
+            # Older OpenSSL builds may not support -addext; retry without SAN.
+            try:
+                subprocess.run(command[:-2], check=True, capture_output=True, timeout=15)
+            except Exception as error:
+                LOGGER.warning("No se pudo autogenerar el certificado TLS con OpenSSL: %s", error)
+                return
+        try:
+            KEY_FILE.chmod(0o600)
+        except Exception:
+            pass
+        LOGGER.info("Certificado TLS autogenerado con OpenSSL: %s, %s", CERT_FILE, KEY_FILE)
+
     def _create_tls_context(self):
+        self._bootstrap_self_signed_cert()
         if not CERT_FILE.is_file() or not KEY_FILE.is_file():
             raise FileNotFoundError(
                 f"No se encontraron certificados TLS: {CERT_FILE} y/o {KEY_FILE}. "

@@ -5,9 +5,7 @@ import pluginVue from "eslint-plugin-vue";
 export default [
   {
     ignores: [
-      "dist/**",
-      "dist_*/**",
-      "dist_root_old/**",
+      "dist*/**",
       "node_modules/**",
       "node_modules_legacy_vuecli/**",
       "public/**",

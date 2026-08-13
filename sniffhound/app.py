@@ -58,11 +58,25 @@ def _resolve_frontend_dist_dir() -> Path:
 FRONTEND_DIST_DIR = _resolve_frontend_dist_dir()
 SPA_ROUTES = (
     "/dashboard",
+    "/radar",
+    "/investigate",
+    "/sniffer",
+    "/honeypot",
+    "/protocols",
+    "/protocols/tcp",
+    "/protocols/udp",
+    "/protocols/sctp",
+    "/protocols/icmp",
+    "/protocols/icmpv6",
+    "/protocols/arp",
+    "/protocols/ipv6",
     "/map",
     "/charts",
     "/explorer",
     "/agents",
     "/targets",
+    "/sessions",
+    "/intel",
     "/ports",
     "/banners",
     "/tags",
@@ -475,14 +489,22 @@ def _html_response(text, status=200):
     return Response.html(text, status=status)
 
 
+class _InvalidJsonBody(ValueError):
+    pass
+
+
 def _read_json_body(request):
-    data = request.json()
+    raw = request.text() if request is not None else ""
+    stripped = str(raw or "").strip()
+    if not stripped:
+        return {}
+    try:
+        data = json.loads(stripped)
+    except Exception as exc:
+        raise _InvalidJsonBody("Request body is not valid JSON") from exc
     if isinstance(data, dict):
         return data
-    try:
-        return json.loads(request.text() or "{}")
-    except Exception:
-        return {}
+    raise _InvalidJsonBody("Request body must be a JSON object")
 
 
 def _normalize_limit(value, default=200, maximum=1000):
@@ -1536,6 +1558,8 @@ def runtime_api(request):
         return runtime.snapshot()
     payload = _read_json_body(request)
     mode = str(payload.get("mode") or payload.get("runtime") or "").strip().lower()
+    if mode and mode not in {"sniffer", "honeypot"}:
+        raise ValueError(f"Unsupported mode: {mode}")
     action = str(payload.get("action") or "").strip().lower()
     has_interface = any(key in payload for key in ("interface", "interfaces", "sniffer_interface", "sniffer_interfaces"))
     interfaces = payload.get("interfaces", payload.get("sniffer_interfaces"))
@@ -1693,7 +1717,13 @@ def _apply_api_auth_guards():
                 is_authenticated, _user_info = _authenticate_request(request)
                 if not is_authenticated:
                     return _unauthorized_response("Invalid or missing security code")
-            return _handler(request, *args, **kwargs)
+            try:
+                return _handler(request, *args, **kwargs)
+            except _InvalidJsonBody as exc:
+                return Response.json(
+                    {"status": "error", "code": "invalid_json", "message": str(exc)},
+                    status=400,
+                )
 
         guarded_handler._sniffhound_auth_wrapped = True
         route.handler = guarded_handler
