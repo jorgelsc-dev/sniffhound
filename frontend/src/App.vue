@@ -123,7 +123,7 @@ export default {
         { label: "Investigate", to: "/investigate", icon: "mdi-magnify" },
         { label: "Sniffer", to: "/sniffer", icon: "mdi-ethernet" },
         { label: "SOC", to: "/soc", icon: "mdi-shield-search" },
-        { label: "Protocolos", to: "/protocols", icon: "mdi-shuffle-variant" },
+        { label: "Protocols", to: "/protocols", icon: "mdi-shuffle-variant" },
         { label: "Honeypot", to: "/honeypot", icon: "mdi-shield-bug" },
       ],
     };

@@ -26,7 +26,7 @@
         class="d-none d-md-flex top-tabs"
         color="primary"
         density="compact"
-        align-with-title
+        center-active
       >
         <v-tab
           v-for="item in navItems"
@@ -235,6 +235,44 @@ export default {
   font-size: 0.68rem !important;
 }
 
+.top-tabs {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+/* Only fade an edge while that side still has tabs scrolled out of view
+   (Vuetify marks the scroll button --disabled once there's nothing left to reveal). */
+.top-tabs:has(.v-slide-group__prev:not(.v-slide-group__prev--disabled)) {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, transparent 76px, black 120px);
+  mask-image: linear-gradient(to right, transparent 0, transparent 76px, black 120px);
+}
+
+.top-tabs:has(.v-slide-group__next:not(.v-slide-group__next--disabled)) {
+  -webkit-mask-image: linear-gradient(to left, transparent 0, transparent 76px, black 120px);
+  mask-image: linear-gradient(to left, transparent 0, transparent 76px, black 120px);
+}
+
+.top-tabs:has(.v-slide-group__prev:not(.v-slide-group__prev--disabled)):has(.v-slide-group__next:not(.v-slide-group__next--disabled)) {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    transparent 76px,
+    black 120px,
+    black calc(100% - 120px),
+    transparent calc(100% - 76px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    transparent 76px,
+    black 120px,
+    black calc(100% - 120px),
+    transparent calc(100% - 76px),
+    transparent 100%
+  );
+}
+
 .top-tabs :deep(.v-tab) {
   min-width: 72px;
   font-weight: 650;
@@ -268,6 +306,12 @@ export default {
 @media (max-width: 959px) {
   .top-bar {
     height: auto !important;
+  }
+
+  .top-bar :deep(.v-toolbar__content) {
+    height: auto !important;
+    min-height: 74px;
+    overflow: visible;
   }
 
   .app-topbar {

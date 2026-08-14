@@ -30,13 +30,19 @@
           <div class="control-stack">
             <section class="control-box">
               <div class="d-flex align-center justify-space-between ga-3">
-                <div>
+                <div class="runtime-modes-copy">
                   <div class="text-subtitle-2 font-weight-medium">Runtime Modes</div>
                   <div class="text-caption text-medium-emphasis">
                     Both engines stay visible here. Start only what you need and keep the other one stopped.
                   </div>
                 </div>
-                <v-chip size="small" :color="runtimeChipColor" variant="tonal" prepend-icon="mdi-toggle-switch">
+                <v-chip
+                  size="small"
+                  :color="runtimeChipColor"
+                  variant="tonal"
+                  prepend-icon="mdi-toggle-switch"
+                  class="runtime-mode-chip"
+                >
                   {{ runtimeModeLabel }}
                 </v-chip>
               </div>
@@ -440,6 +446,14 @@ export default {
 
 .control-box :deep(.v-chip) {
   letter-spacing: 0.03em;
+}
+
+.runtime-modes-copy {
+  min-width: 0;
+}
+
+.runtime-mode-chip {
+  flex-shrink: 0;
 }
 
 .control-alert {
