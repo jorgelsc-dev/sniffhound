@@ -43,42 +43,52 @@
       <div class="status-rail">
         <NotificationBell />
         <v-btn
+          icon="mdi-power"
           color="error"
           variant="tonal"
           size="small"
-          prepend-icon="mdi-power"
+          density="comfortable"
           class="shutdown-btn"
           :loading="shutdownPending"
           :disabled="shutdownPending"
+          :aria-label="shutdownPending ? 'Stopping...' : 'Stop App'"
           @click="$emit('shutdown-app')"
         >
-          {{ shutdownPending ? "Stopping..." : "Stop App" }}
+          <v-tooltip activator="parent" location="bottom">
+            {{ shutdownPending ? "Stopping..." : "Stop App" }}
+          </v-tooltip>
         </v-btn>
         <v-chip
           :color="authStateColor"
           variant="tonal"
           size="small"
-          prepend-icon="mdi-shield-key-outline"
-          class="auth-chip"
+          :icon="authStateIcon"
+          class="auth-chip status-chip"
+          :aria-label="authStateLabel"
           @click="$emit('open-auth')"
         >
-          {{ authStateLabel }}
+          <v-icon :icon="authStateIcon" />
+          <v-tooltip activator="parent" location="bottom">{{ authStateLabel }}</v-tooltip>
         </v-chip>
         <v-chip
           :color="wsStateColor"
           variant="tonal"
           size="small"
-          prepend-icon="mdi-access-point"
+          class="status-chip"
+          :aria-label="wsStateLabel"
         >
-          {{ wsStateLabel }}
+          <v-icon :icon="wsStateIcon" />
+          <v-tooltip activator="parent" location="bottom">{{ wsStateLabel }}</v-tooltip>
         </v-chip>
         <v-chip
           :color="runtimeStateColor"
           variant="tonal"
           size="small"
-          prepend-icon="mdi-toggle-switch"
+          class="status-chip"
+          :aria-label="runtimeStateLabel"
         >
-          {{ runtimeStateLabel }}
+          <v-icon :icon="runtimeStateIcon" />
+          <v-tooltip activator="parent" location="bottom">{{ runtimeStateLabel }}</v-tooltip>
         </v-chip>
       </div>
     </v-container>

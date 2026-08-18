@@ -11,12 +11,15 @@
       <slot name="actions">
         <v-btn
           v-if="showRefresh"
+          icon="mdi-refresh"
           variant="outlined"
           color="primary"
-          prepend-icon="mdi-refresh"
+          density="comfortable"
+          :loading="refreshLoading"
+          :aria-label="refreshLabel"
           @click="$emit('refresh')"
         >
-          {{ refreshLabel }}
+          <v-tooltip activator="parent" location="bottom">{{ refreshLabel }}</v-tooltip>
         </v-btn>
       </slot>
     </div>
