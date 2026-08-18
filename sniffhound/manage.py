@@ -535,11 +535,17 @@ def main():
     os.environ["SNIFFHOUND_IPC_SOCKET"] = ipc_socket
     os.environ["SNIFFHOUND_IPC_TOKEN"] = ipc_token
 
+    # Import (and so construct sniffhound.app's SniffStore, as this
+    # unprivileged user) *before* spawning the privileged capture child.
+    # Both processes open the same SQLite file; whichever one creates it
+    # first owns it on disk, and a root-owned DB file/WAL is unwritable by
+    # this process afterwards. Importing first guarantees the web process
+    # wins that race regardless of how fast the capture child starts.
+    from .app import app, append_chat_message, bootstrap_capture, connect_capture_service, hub, runtime, shutdown_capture
+
     capture_process = _spawn_capture_child(ipc_socket, ipc_token)
     if capture_process is None:
         return 1
-
-    from .app import app, append_chat_message, bootstrap_capture, connect_capture_service, hub, runtime, shutdown_capture
 
     try:
         time.sleep(0.2)

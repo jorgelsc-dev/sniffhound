@@ -22,6 +22,7 @@ import shutil
 import signal
 import sys
 import time
+from pathlib import Path
 
 from .ipc import IpcEventSink, IpcServer, generate_ipc_token
 from .process_control import process_shutdown_requested, request_process_shutdown, reset_process_shutdown_request
@@ -54,6 +55,23 @@ def _print_admin_required_message() -> None:
     print("[!] sniffhound-capture requires root/administrator privileges and will not start without them.", file=sys.stderr)
     print("    Raw-socket packet capture is not possible as a regular user.", file=sys.stderr)
     print(f"    Re-run with: sudo {command}", file=sys.stderr)
+
+
+def _chown_sqlite_files(db_path, uid: int) -> None:
+    """Best-effort: if this (root) process happened to create the shared
+    SQLite database (and its WAL/SHM sidecars) before the unprivileged web
+    process got to it, hand ownership back so that process can still open
+    it for writing. The combined `sniffhound` command avoids this race by
+    construction (see manage.main()), but a split `sniffhound-web` /
+    `sniffhound-capture` deployment has no such ordering guarantee."""
+    base = str(db_path)
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        candidate = Path(f"{base}{suffix}")
+        if candidate.exists():
+            try:
+                os.chown(candidate, uid, -1)
+            except OSError:
+                pass
 
 
 def _ensure_admin_privileges() -> bool:
@@ -120,6 +138,7 @@ def main() -> int:
             server.chown_socket(owner_uid)
         except OSError as exc:
             print(f"[!] Could not chown IPC socket to uid {owner_uid}: {exc}", file=sys.stderr)
+        _chown_sqlite_files(DB_PATH, owner_uid)
 
     atexit.register(sniffer.emergency_wifi_restore)
     signal.signal(signal.SIGTERM, lambda _signum, _frame: request_process_shutdown(signum=signal.SIGINT))

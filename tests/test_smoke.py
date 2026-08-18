@@ -655,6 +655,29 @@ class SmokeTests(unittest.TestCase):
             (45678, 45670, 45671, 45672, 45673, 45674, 45675, 45676, 45677, 45679),
         )
 
+    def test_manage_main_creates_web_store_before_spawning_capture_child(self):
+        # Both processes open the same SQLite file; whichever one creates
+        # it first owns it on disk, and a root-owned DB is unwritable by
+        # the (unprivileged) web process afterwards. `from .app import ...`
+        # (which constructs sniffhound.app's SniffStore as this process's
+        # own user) must therefore run before `_spawn_capture_child()` -
+        # regression test for the exact ordering, since by the time any
+        # test runs `sniffhound.app` is already cached in sys.modules and a
+        # functional/mock-based check can't observe the real race.
+        import inspect
+
+        import sniffhound.manage as manage_module
+
+        source = inspect.getsource(manage_module.main)
+        import_index = source.index("from .app import")
+        spawn_index = source.index("_spawn_capture_child(")
+        self.assertLess(
+            import_index,
+            spawn_index,
+            "sniffhound.app must be imported (constructing its SniffStore) "
+            "before the privileged capture child is spawned",
+        )
+
     def test_manage_capture_relaunch_command_forwards_pythonpath(self):
         # The Debian package only makes `sniffhound` importable via
         # PYTHONPATH pointing at its vendored copy (scripts/deb_wrapper.sh) -
