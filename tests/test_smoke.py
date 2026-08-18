@@ -716,6 +716,47 @@ class SmokeTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertIn("requires root", output.getvalue())
 
+    def test_manage_restore_tty_attrs_undoes_raw_mode_left_by_sudo_prompt(self):
+        # sudo's password/fingerprint (PAM) prompt for the capture child
+        # commonly leaves the shared controlling terminal without ONLCR -
+        # "\n" then stops returning the cursor to column 0, so every
+        # subsequent printed line drifts further right than the last,
+        # staircasing the startup banner. Exercise the actual termios
+        # syscalls against a real pty to prove the fix undoes exactly that.
+        import pty
+        import termios as termios_module
+
+        import sniffhound.manage as manage_module
+
+        if manage_module.termios is None:
+            self.skipTest("termios is not available on this platform")
+
+        master_fd, slave_fd = pty.openpty()
+        self.addCleanup(os.close, master_fd)
+        self.addCleanup(os.close, slave_fd)
+
+        class _FakeStdin:
+            def isatty(self):
+                return True
+
+            def fileno(self):
+                return slave_fd
+
+        with patch.object(manage_module.sys, "stdin", _FakeStdin()):
+            original = manage_module._snapshot_tty_attrs()
+            self.assertIsNotNone(original)
+
+            mutated = termios_module.tcgetattr(slave_fd)
+            mutated[1] &= ~termios_module.ONLCR  # oflag: disable NL->CRNL
+            termios_module.tcsetattr(slave_fd, termios_module.TCSANOW, mutated)
+            self.assertFalse(termios_module.tcgetattr(slave_fd)[1] & termios_module.ONLCR)
+
+            manage_module._restore_tty_attrs(original)
+
+        restored = termios_module.tcgetattr(slave_fd)
+        self.assertTrue(restored[1] & termios_module.ONLCR)
+        self.assertEqual(restored, original)
+
     def test_manage_spawn_capture_child_does_not_inherit_the_terminal(self):
         # The capture child's stdout/stderr must never be the same terminal
         # this process writes its own banner/console to - two processes

@@ -23,6 +23,11 @@ try:
 except ImportError:  # pragma: no cover - platform dependent
     readline = None
 
+try:
+    import termios
+except ImportError:  # pragma: no cover - non-POSIX platforms
+    termios = None
+
 
 @dataclass(frozen=True)
 class ConsoleCommandSpec:
@@ -109,6 +114,36 @@ def _banner_rule(left: str, fill: str, right: str) -> str:
 
 def _banner_line(value: str = "", *, align: str = "left") -> str:
     return f"║{_fit_banner_text(value, align=align)}║"
+
+
+def _snapshot_tty_attrs():
+    """Save the controlling terminal's current line-discipline settings,
+    if any."""
+    if termios is None or not sys.stdin.isatty():
+        return None
+    try:
+        return termios.tcgetattr(sys.stdin.fileno())
+    except termios.error:
+        return None
+
+
+def _restore_tty_attrs(attrs) -> None:
+    """Undo whatever `sudo`'s authentication prompt for the capture child
+    did to the shared controlling terminal. A password or fingerprint-
+    reader (PAM) prompt commonly switches the tty to raw mode - notably
+    without ONLCR, so a bare "\\n" stops returning the cursor to column 0
+    and every subsequent printed line drifts further right than the last,
+    staircasing the startup banner. `sudo` keeps the same controlling
+    terminal as this process even though the capture child's stdout/
+    stderr are redirected to a log file (redirection only affects those
+    fds, not tty line discipline), so it has to be put back explicitly
+    before printing anything of our own."""
+    if termios is None or attrs is None:
+        return
+    try:
+        termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, attrs)
+    except termios.error:
+        pass
 
 
 def _print_startup_banner(host: str, port: int):
@@ -579,6 +614,7 @@ def main():
     server itself, connected over local IPC. See CLAUDE.md for why capture
     still unconditionally requires root."""
     reset_process_shutdown_request()
+    tty_attrs = _snapshot_tty_attrs()
     host = str(HOST)
     requested_port = int(PORT)
     selected_port = _select_listen_port(host, requested_port)
@@ -614,6 +650,11 @@ def main():
         if not connect_capture_service():
             print("[!] SniffHound cannot start without the capture process. See the error above.", file=sys.stderr)
             return 1
+
+        # sudo's password/fingerprint prompt for the capture child we just
+        # waited on can leave the shared controlling terminal in raw mode
+        # (see _restore_tty_attrs) - put it back before printing anything.
+        _restore_tty_attrs(tty_attrs)
 
         if selected_port != requested_port:
             _print_port_fallback_notice(requested_port, selected_port)
