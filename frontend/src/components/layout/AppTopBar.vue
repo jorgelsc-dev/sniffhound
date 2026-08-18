@@ -41,6 +41,7 @@
       <v-spacer />
 
       <div class="status-rail">
+        <NotificationBell />
         <v-btn
           color="error"
           variant="tonal"
@@ -86,12 +87,14 @@
 
 <script>
 import BrandMark from "../brand/BrandMark.vue";
+import NotificationBell from "./NotificationBell.vue";
 import store from "../../state/appStore";
 
 export default {
   name: "AppTopBar",
   components: {
     BrandMark,
+    NotificationBell,
   },
   props: {
     navItems: {

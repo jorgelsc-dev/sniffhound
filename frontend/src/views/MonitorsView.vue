@@ -141,8 +141,17 @@
       </div>
     </div>
 
-    <v-expansion-panels variant="accordion" class="monitor-traffic-panels mb-6">
-      <v-expansion-panel v-for="monitor in monitors" :key="monitor.id">
+    <v-expansion-panels
+      v-model="expandedMonitorPanel"
+      variant="accordion"
+      class="monitor-traffic-panels mb-6"
+    >
+      <v-expansion-panel
+        v-for="monitor in monitors"
+        :id="`monitor-row-${monitor.id}`"
+        :key="monitor.id"
+        :value="monitor.id"
+      >
         <v-expansion-panel-title>
           <div class="d-flex align-center flex-wrap ga-2">
             <span class="font-weight-medium">{{ monitor.name }}</span>
@@ -509,6 +518,7 @@ export default {
       liveRefreshEnabled: true,
       wsRefreshTimer: null,
       stopTableRefreshSubscription: null,
+      expandedMonitorPanel: null,
     };
   },
   computed: {
@@ -558,11 +568,18 @@ export default {
     },
   },
   mounted() {
-    this.load();
+    this.load().then(() => this.focusMonitorFromQuery());
     this.loadDomains();
     this.loadPaths();
     this.loadIps();
     this.stopTableRefreshSubscription = this.store.subscribeTableRefresh(this.handleWsRefresh);
+  },
+  watch: {
+    // Clicking a notification while already on /monitors changes the query
+    // string without remounting this view, so mounted() alone won't catch it.
+    "$route.query.monitor"(next) {
+      if (next) this.focusMonitorFromQuery();
+    },
   },
   beforeUnmount() {
     if (this.wsRefreshTimer) {
@@ -852,6 +869,19 @@ export default {
         .finally(() => {
           this.formSubmitting = false;
         });
+    },
+    focusMonitorFromQuery() {
+      const target = String((this.$route.query && this.$route.query.monitor) || "").trim();
+      if (!target) return;
+      const monitor = this.monitors.find((item) => item.id === target || item.name === target);
+      if (!monitor) return;
+      this.expandedMonitorPanel = monitor.id;
+      this.$nextTick(() => {
+        const el = document.getElementById(`monitor-row-${monitor.id}`);
+        if (el && typeof el.scrollIntoView === "function") {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      });
     },
     load(options = {}) {
       if (!options.silent) this.loading = true;

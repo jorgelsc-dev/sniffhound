@@ -18,13 +18,18 @@
         v-for="item in items"
         :key="item.id"
         class="notification-card"
-        :class="`severity-${item.severity}`"
+        :class="[`severity-${item.severity}`, { 'is-actionable': item.href }]"
         role="status"
-        @click="dismiss(item.id)"
+        @click="handleCardClick(item)"
       >
         <v-icon class="notification-icon" :icon="iconFor(item)" size="18" />
         <div class="notification-body">
-          <div class="notification-title">{{ item.title }}</div>
+          <div class="notification-title-row">
+            <span class="notification-title">{{ item.title }}</span>
+            <v-chip v-if="item.count > 1" size="x-small" variant="flat" color="primary" class="notification-count">
+              ×{{ item.count }}
+            </v-chip>
+          </div>
           <div v-if="item.message" class="notification-message">{{ item.message }}</div>
         </div>
         <button
@@ -73,7 +78,7 @@ export default {
   },
   computed: {
     items() {
-      return this.store.state.notifications.slice(0, MAX_VISIBLE);
+      return this.store.state.notifications.filter((item) => !item.toastDismissed).slice(0, MAX_VISIBLE);
     },
     soundEnabled() {
       return Boolean(this.store.state.notifySoundEnabled);
@@ -105,10 +110,16 @@ export default {
       return ICONS_BY_KIND[item.kind] || "mdi-bell-ring";
     },
     dismiss(id) {
-      this.store.dismissNotification(id);
+      this.store.dismissToast(id);
+    },
+    handleCardClick(item) {
+      if (item.href) {
+        this.$router.push(item.href);
+      }
+      this.dismiss(item.id);
     },
     clearAll() {
-      this.store.clearNotifications();
+      this.store.dismissAllToasts();
     },
     toggleSound() {
       this.store.setNotifySoundEnabled(!this.soundEnabled);
@@ -197,6 +208,11 @@ export default {
   border-color: rgba(75, 143, 255, 0.4);
 }
 
+.notification-card.is-actionable:hover {
+  border-color: rgba(52, 230, 255, 0.55);
+  box-shadow: 0 14px 30px rgba(2, 7, 14, 0.4), 0 0 0 1px rgba(52, 230, 255, 0.2);
+}
+
 .notification-icon {
   margin-top: 2px;
   flex: 0 0 auto;
@@ -221,12 +237,23 @@ export default {
   min-width: 0;
 }
 
+.notification-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .notification-title {
   font-size: 0.84rem;
   font-weight: 700;
   color: rgba(233, 241, 250, 0.96);
   line-height: 1.3;
   word-break: break-word;
+}
+
+.notification-count {
+  flex: 0 0 auto;
+  font-weight: 700;
 }
 
 .notification-message {

@@ -21,11 +21,6 @@ const WS_REFRESH_EVENT_TYPES = new Set([
 // available in the regular views (Monitors/SOC/etc.) without interrupting.
 const NOTIFY_MONITOR_SEVERITIES = new Set(["high", "critical"]);
 const NOTIFICATION_HISTORY_LIMIT = 30;
-const NOTIFICATION_DEDUPE_COOLDOWN_MS = 4000;
-// A flapping connection can cycle through open/close every WS_RECONNECT_DELAY_MS
-// (1.8s) - without a longer, dedicated cooldown here, each cycle would push a
-// fresh "lost"/"restored" pair and flood the notification stack.
-const CONNECTION_NOTIFICATION_COOLDOWN_MS = 10000;
 
 const state = reactive({
   apiBase: "",
@@ -47,7 +42,6 @@ const state = reactive({
 
 const tableRefreshSubscribers = new Set();
 const mapSnapshotSubscribers = new Set();
-const notificationDedupeAt = new Map();
 
 let inMemoryAuthToken = "";
 let wsClient = null;
@@ -629,17 +623,38 @@ function pushNotification({
   severity = "info",
   title = "",
   message = "",
-  dedupeKey = "",
-  dedupeCooldownMs = NOTIFICATION_DEDUPE_COOLDOWN_MS,
+  groupKey = "",
+  href = "",
 } = {}) {
   const cleanTitle = String(title || "").trim();
   if (!cleanTitle) return null;
   const normalizedSeverity = String(severity || "info").trim().toLowerCase();
+  const normalizedHref = String(href || "").trim();
   const now = Date.now();
-  if (dedupeKey) {
-    const last = notificationDedupeAt.get(dedupeKey) || 0;
-    if (now - last < dedupeCooldownMs) return null;
-    notificationDedupeAt.set(dedupeKey, now);
+  // Every notification belongs to a group (defaulting to kind+title); a
+  // second hit for the same group never adds a second entry - it bumps the
+  // existing one's counter and moves it back to the top instead. This is
+  // what keeps a noisy, repeatedly-firing monitor (or a flapping
+  // connection) from flooding the list with near-duplicates.
+  const key = groupKey || `${kind}:${cleanTitle}`;
+  const existingIndex = state.notifications.findIndex((item) => item.groupKey === key);
+  if (existingIndex >= 0) {
+    const existing = state.notifications[existingIndex];
+    existing.count += 1;
+    existing.severity = normalizedSeverity;
+    existing.title = cleanTitle;
+    existing.message = String(message || "").trim();
+    existing.href = normalizedHref || existing.href;
+    existing.createdAt = now;
+    // A repeat occurrence is new information even if the entry itself
+    // isn't - bring it back as a popup if the toast had already faded.
+    existing.toastDismissed = false;
+    if (existingIndex !== 0) {
+      state.notifications.splice(existingIndex, 1);
+      state.notifications.unshift(existing);
+    }
+    playNotificationSound(normalizedSeverity);
+    return existing;
   }
   const item = {
     id: `notif-${++notificationIdSeq}-${now}`,
@@ -647,7 +662,11 @@ function pushNotification({
     severity: normalizedSeverity,
     title: cleanTitle,
     message: String(message || "").trim(),
+    href: normalizedHref,
+    groupKey: key,
+    count: 1,
     createdAt: now,
+    toastDismissed: false,
   };
   state.notifications.unshift(item);
   if (state.notifications.length > NOTIFICATION_HISTORY_LIMIT) {
@@ -657,6 +676,26 @@ function pushNotification({
   return item;
 }
 
+// Hides a notification from the popup toast stack only - it stays in the
+// bell/notification-center history. Used by the toast's own auto-dismiss
+// timer and its close button, neither of which should erase history the
+// user might still want to review.
+function dismissToast(id) {
+  const item = state.notifications.find((entry) => entry.id === id);
+  if (item) {
+    item.toastDismissed = true;
+  }
+}
+
+// Toast stack's own "Clear all" - hides currently-popped-up toasts without
+// wiping the bell's history (that's what the bell's own "Clear all" is for).
+function dismissAllToasts() {
+  state.notifications.forEach((item) => {
+    item.toastDismissed = true;
+  });
+}
+
+// Fully removes a notification from history (bell "x" / "Clear all").
 function dismissNotification(id) {
   const index = state.notifications.findIndex((item) => item.id === id);
   if (index >= 0) {
@@ -681,26 +720,51 @@ function parsePacketTags(packet) {
   }
 }
 
+function extractMonitorHitsFromTags(tags) {
+  // sniffhound.sniffer._build_packet_tags emits a "monitor" tag immediately
+  // followed by that same hit's "monitor_id" (and "detail") tags, in that
+  // fixed order - see sniffhound/sniffer.py. Group consecutive entries back
+  // into one hit per monitor instead of relying on a shared index.
+  const hits = [];
+  let current = null;
+  tags.forEach((tag) => {
+    if (!tag) return;
+    if (tag.key === "monitor") {
+      const label = String(tag.value || "").trim();
+      if (!label) {
+        current = null;
+        return;
+      }
+      current = { label, severity: String(tag.severity || "info").trim().toLowerCase(), monitorId: "" };
+      hits.push(current);
+    } else if (tag.key === "monitor_id" && current) {
+      current.monitorId = String(tag.value || "").trim();
+    }
+  });
+  return hits;
+}
+
 function notifyForPacketEvent(payload) {
   const packet = payload && payload.packet;
   const tags = parsePacketTags(packet);
   if (!tags.length) return;
+  const hits = extractMonitorHitsFromTags(tags).filter((hit) => NOTIFY_MONITOR_SEVERITIES.has(hit.severity));
+  if (!hits.length) return;
   const srcIp = String((packet && packet.src_ip) || "").trim();
   const dstIp = String((packet && packet.dst_ip) || "").trim();
   const dstPort = (packet && packet.dst_port) || "";
   const route = srcIp && dstIp ? `${srcIp} → ${dstIp}${dstPort ? `:${dstPort}` : ""}` : "";
-  tags.forEach((tag) => {
-    if (!tag || tag.key !== "monitor") return;
-    const severity = String(tag.severity || "").trim().toLowerCase();
-    if (!NOTIFY_MONITOR_SEVERITIES.has(severity)) return;
-    const label = String(tag.value || "").trim();
-    if (!label) return;
+  hits.forEach((hit) => {
     pushNotification({
       kind: "monitor",
-      severity,
-      title: label,
+      severity: hit.severity,
+      title: hit.label,
       message: route,
-      dedupeKey: `monitor:${label}:${srcIp}`,
+      // Grouped by monitor alone (not monitor+source) - "solo una por
+      // monitor maximo": every hit for the same monitor bumps one counter
+      // instead of piling up a separate entry per source IP.
+      groupKey: `monitor:${hit.monitorId || hit.label}`,
+      href: `/monitors?monitor=${encodeURIComponent(hit.monitorId || hit.label)}`,
     });
   });
 }
@@ -719,6 +783,7 @@ function notifyForRuntimeChange(payload) {
       severity: "medium",
       title: "Runtime mode changed",
       message: `Switched to ${mode} mode`,
+      groupKey: "runtime:mode",
     });
     return;
   }
@@ -728,6 +793,7 @@ function notifyForRuntimeChange(payload) {
       severity: running ? "low" : "medium",
       title: running ? "Capture started" : "Capture stopped",
       message: `${mode} engine is now ${running ? "running" : "stopped"}`,
+      groupKey: "runtime:running",
     });
   }
 }
@@ -742,6 +808,7 @@ function notifyForChatMessage(payload) {
     severity: "info",
     title: `Note from ${author}`,
     message: content,
+    groupKey: `broadcast:${content}`,
   });
 }
 
@@ -752,8 +819,7 @@ function notifyForConnectionChange(kind) {
       severity: "low",
       title: "Realtime connection restored",
       message: "Live packet/stats stream reconnected.",
-      dedupeKey: "connection:restored",
-      dedupeCooldownMs: CONNECTION_NOTIFICATION_COOLDOWN_MS,
+      groupKey: "connection:restored",
     });
   } else if (kind === "lost") {
     pushNotification({
@@ -761,8 +827,7 @@ function notifyForConnectionChange(kind) {
       severity: "medium",
       title: "Realtime connection lost",
       message: "Reconnecting to the live packet/stats stream...",
-      dedupeKey: "connection:lost",
-      dedupeCooldownMs: CONNECTION_NOTIFICATION_COOLDOWN_MS,
+      groupKey: "connection:lost",
     });
   }
 }
@@ -1053,5 +1118,7 @@ export default {
   initNotifySound,
   setNotifySoundEnabled,
   dismissNotification,
+  dismissToast,
+  dismissAllToasts,
   clearNotifications,
 };
