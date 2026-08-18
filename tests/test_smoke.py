@@ -716,6 +716,32 @@ class SmokeTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertIn("requires root", output.getvalue())
 
+    def test_manage_spawn_capture_child_does_not_inherit_the_terminal(self):
+        # The capture child's stdout/stderr must never be the same terminal
+        # this process writes its own banner/console to - two processes
+        # line-buffer-flushing to the same tty concurrently interleaves
+        # their output into a garbled/staircased mess.
+        import sniffhound.manage as manage_module
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            ipc_socket = str(Path(tmp_dir) / "run" / "capture-45678.sock")
+            captured_kwargs = {}
+
+            def _fake_popen(command, **kwargs):
+                captured_kwargs.update(kwargs)
+                return _FakeCaptureProcess()
+
+            with patch.object(manage_module.shutil, "which", return_value="/usr/bin/sudo"), patch.object(
+                manage_module.subprocess, "Popen", side_effect=_fake_popen
+            ):
+                result = manage_module._spawn_capture_child(ipc_socket, "test-token")
+
+            self.assertIsNotNone(result)
+            self.assertIsNot(captured_kwargs.get("stdout"), None)
+            self.assertIsNot(captured_kwargs.get("stderr"), None)
+            self.assertTrue(manage_module._capture_log_path(ipc_socket).parent.is_dir())
+            self.assertTrue(manage_module._capture_log_path(ipc_socket).exists())
+
     def test_manage_stop_capture_child_survives_normal_termination(self):
         import sniffhound.manage as manage_module
 

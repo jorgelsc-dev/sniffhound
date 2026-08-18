@@ -12,6 +12,7 @@ import time
 import unicodedata
 import webbrowser
 from dataclasses import dataclass
+from pathlib import Path
 
 from .ipc import generate_ipc_token
 from .process_control import request_process_shutdown, reset_process_shutdown_request
@@ -230,16 +231,49 @@ def _print_capture_elevation_error() -> None:
     print("    with SNIFFHOUND_IPC_SOCKET / SNIFFHOUND_IPC_TOKEN.", file=sys.stderr)
 
 
+def _capture_log_path(ipc_socket: str) -> Path:
+    return Path(ipc_socket).with_suffix(".log")
+
+
+def _open_capture_log(ipc_socket: str):
+    log_path = _capture_log_path(ipc_socket)
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        return open(log_path, "ab", buffering=0)
+    except OSError:
+        return None
+
+
 def _spawn_capture_child(ipc_socket: str, ipc_token: str):
     if shutil.which("sudo") is None:
         _print_capture_elevation_error()
         return None
     command = _build_capture_relaunch_command(ipc_socket, ipc_token, os.getuid())
+
+    # The capture child (and the `sudo`/PAM prompt in front of it) must not
+    # inherit this process's stdout/stderr: both processes would then write
+    # to the same terminal concurrently and, since each does its own
+    # line-buffered flushing, their output interleaves unpredictably -
+    # producing exactly the garbled/staircased banner this fixes. `sudo`
+    # still shows its password/fingerprint prompt fine either way, since it
+    # talks to /dev/tty directly rather than through stdout/stderr.
+    log_file = _open_capture_log(ipc_socket)
     try:
-        return subprocess.Popen(command)
+        process = subprocess.Popen(
+            command,
+            stdout=log_file if log_file is not None else subprocess.DEVNULL,
+            stderr=log_file if log_file is not None else subprocess.DEVNULL,
+        )
     except OSError as exc:
         print(f"[!] Unable to launch the capture process: {exc}", file=sys.stderr)
         return None
+    finally:
+        if log_file is not None:
+            log_file.close()
+
+    if log_file is not None:
+        print(f"[i] Capture process output is logged to {_capture_log_path(ipc_socket)}", file=sys.stderr)
+    return process
 
 
 def _wait_for_process(process, timeout: float) -> bool:
