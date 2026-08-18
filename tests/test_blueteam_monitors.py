@@ -84,6 +84,32 @@ class TestSensitiveDataMonitors(unittest.TestCase):
     def test_postgres_connstring_with_credentials(self):
         self.assertIn("sensitive-db-connstring", self._tags("postgresql://user:hunter2@10.0.0.9:5432/app"))
 
+    def test_bitcoin_wallet_address(self):
+        self.assertIn("sensitive-crypto-wallet", self._tags("send payment to bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"))
+
+    def test_ethereum_wallet_address(self):
+        # 40 hex chars after 0x, as a real ETH address requires.
+        self.assertIn("sensitive-crypto-wallet", self._tags("wallet: 0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"))
+
+    def test_google_api_key(self):
+        self.assertIn("sensitive-cloud-api-key", self._tags("key=AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY"))
+
+    def test_stripe_live_key(self):
+        # GitHub's Stripe-key scanner matches on shape alone (prefix +
+        # length/charset), so even an obviously-fake wordy suffix still
+        # trips it if it's a contiguous literal in the diff. Build the
+        # string at runtime instead - it only needs to satisfy this
+        # project's own (much looser) detection regex once joined, and
+        # never appears as a matchable token in the source text itself.
+        fake_stripe_key = "sk_live_" + "0" * 24
+        self.assertIn("sensitive-cloud-api-key", self._tags(fake_stripe_key))
+
+    def test_ntlm_auth_header(self):
+        self.assertIn("sensitive-ntlm-auth", self._tags("WWW-Authenticate: NTLM TlRMTVNTUAAB"))
+
+    def test_negotiate_auth_header(self):
+        self.assertIn("sensitive-ntlm-auth", self._tags("Authorization: Negotiate YIIFxAYGKwYBBQUC"))
+
     def test_benign_text_matches_nothing(self):
         tags = self._tags("normal chat message, nothing sensitive here at all")
         self.assertEqual(tags, set())
@@ -165,10 +191,188 @@ class TestWebAttackMonitors(unittest.TestCase):
     def test_shellshock(self):
         self.assertIn("shellshock", self._tags("() { :; }; /bin/bash -c 'echo vulnerable'"))
 
+    def test_xxe_injection(self):
+        text = '<?xml version="1.0"?><!DOCTYPE r [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><r>&xxe;</r>'
+        self.assertIn("xxe-injection", self._tags(text))
+
+    def test_ssrf_file_scheme(self):
+        self.assertIn("ssrf-attempt", self._tags("url=file:///etc/shadow"))
+
+    def test_ssrf_cloud_metadata(self):
+        self.assertIn("ssrf-attempt", self._tags("GET http://169.254.169.254/latest/meta-data/ HTTP/1.1"))
+
+    def test_ssti_double_curly(self):
+        self.assertIn("ssti-attempt", self._tags("name={{7*7}}"))
+
+    def test_ssti_dollar_curly(self):
+        self.assertIn("ssti-attempt", self._tags("name=${7*7}"))
+
+    def test_java_deserialization_magic_bytes(self):
+        self.assertIn("insecure-deserialization", self._tags("rO0ABXNyABpqYXZhLnV0aWwuSGFzaE1hcA=="))
+
+    def test_php_deserialization_object(self):
+        self.assertIn("insecure-deserialization", self._tags('O:8:"stdClass":1:{s:4:"user";s:5:"admin";}'))
+
+    def test_webshell_reference(self):
+        self.assertIn("webshell-reference", self._tags("GET /uploads/c99shell.php HTTP/1.1"))
+
+    def test_nosql_injection(self):
+        self.assertIn("nosql-injection", self._tags('{"username": {"$ne": null}, "password": {"$ne": null}}'))
+
+    def test_crlf_injection(self):
+        self.assertIn("crlf-injection", self._tags("GET /redirect?url=%0d%0aSet-Cookie:%20admin=1 HTTP/1.1"))
+
+    def test_ldap_injection(self):
+        self.assertIn("ldap-injection", self._tags("(|(uid=*)(|(userPassword=*)))"))
+
+    def test_struts2_ognl_injection(self):
+        text = "Content-Type: %{(#nike='multipart/form-data').(#dm=@ognl.OgnlContext@DEFAULT_MEMBER_ACCESS).(#a=@java.lang.Runtime@getRuntime().exec('id'))}"
+        self.assertIn("struts2-ognl-injection", self._tags(text))
+
+    def test_spring4shell_attempt(self):
+        text = "class.module.classLoader.resources.context.parent.pipeline.first.pattern=%25%7Bc2%7Di"
+        self.assertIn("spring4shell-attempt", self._tags(text))
+
     def test_ordinary_request_matches_no_web_attack_tags(self):
         tags = self._tags("GET /products?id=42&sort=price HTTP/1.1")
-        attack_tags = tags & {"path-traversal", "command-injection", "log4shell", "shellshock"}
+        attack_tags = tags & {
+            "path-traversal",
+            "command-injection",
+            "log4shell",
+            "shellshock",
+            "xxe-injection",
+            "ssrf-attempt",
+            "ssti-attempt",
+            "insecure-deserialization",
+            "webshell-reference",
+            "nosql-injection",
+            "crlf-injection",
+            "ldap-injection",
+            "struts2-ognl-injection",
+            "spring4shell-attempt",
+        }
         self.assertEqual(attack_tags, set())
+
+
+class TestMalwareAndC2Monitors(unittest.TestCase):
+    def setUp(self):
+        self.monitors = [normalize_monitor(item, allow_source=True) for item in DEFAULT_MONITORS]
+
+    def _tags(self, text: str, **overrides) -> set[str]:
+        packet = _packet(payload_text=text, summary=text, **overrides)
+        return {hit["tag"] for hit in evaluate_packet(packet, self.monitors)}
+
+    def test_eicar_test_string(self):
+        text = r"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+        self.assertIn("eicar-test-string", self._tags(text))
+
+    def test_iot_default_credentials_over_telnet(self):
+        tags = self._tags("login: admin:admin", dst_port=23)
+        self.assertIn("iot-default-credentials", tags)
+
+    def test_iot_default_credentials_ignored_off_telnet_port(self):
+        tags = self._tags("login: admin:admin", dst_port=8080)
+        self.assertNotIn("iot-default-credentials", tags)
+
+    def test_ransomware_note_language(self):
+        text = "All your files have been encrypted. To decrypt them send 1 bitcoin to the address below."
+        self.assertIn("ransomware-note-language", self._tags(text))
+
+    def test_crypto_mining_pool_domain(self):
+        self.assertIn("crypto-mining-pool-domain", self._tags("Host: pool.minexmr.com"))
+
+    def test_benign_text_matches_nothing(self):
+        tags = self._tags("just browsing the news today, nothing unusual")
+        self.assertEqual(tags, set())
+
+
+class TestPhishingMonitors(unittest.TestCase):
+    def setUp(self):
+        self.monitors = [normalize_monitor(item, allow_source=True) for item in DEFAULT_MONITORS]
+
+    def _tags(self, text: str) -> set[str]:
+        packet = _packet(payload_text=text, summary=text)
+        return {hit["tag"] for hit in evaluate_packet(packet, self.monitors)}
+
+    def test_urgency_language(self):
+        text = "Please verify your account immediately or it will be suspended"
+        self.assertIn("phishing-urgency-language", self._tags(text))
+
+    def test_punycode_domain(self):
+        self.assertIn("punycode-domain", self._tags("Host: xn--pypal-4ve.com"))
+
+    def test_ordinary_domain_is_not_punycode(self):
+        self.assertNotIn("punycode-domain", self._tags("Host: paypal.com"))
+
+
+class TestDnsTunnelingMonitors(unittest.TestCase):
+    def setUp(self):
+        self.monitors = [normalize_monitor(item, allow_source=True) for item in DEFAULT_MONITORS]
+
+    def _tags(self, text: str) -> set[str]:
+        packet = _packet(payload_text=text, summary=text, dst_port=53)
+        return {hit["tag"] for hit in evaluate_packet(packet, self.monitors)}
+
+    def test_hex_encoded_subdomain(self):
+        text = "Host: " + ("a1b2c3d4" * 6) + ".exfil.example"
+        self.assertIn("dns-hex-subdomain", self._tags(text))
+
+    def test_ordinary_hostname_is_not_flagged(self):
+        self.assertNotIn("dns-hex-subdomain", self._tags("Host: www.example.com"))
+
+
+class TestRestrictedContentMonitors(unittest.TestCase):
+    """Acceptable-use / content-policy category detection - distinct from
+    the security-threat monitors above. Detection is shape/keyword/label
+    based only (the same technique real DNS/URL content filters use), so
+    these tests exercise the regex the same way, without any explicit or
+    instructional content."""
+
+    def setUp(self):
+        self.monitors = [normalize_monitor(item, allow_source=True) for item in DEFAULT_MONITORS]
+
+    def _tags(self, text: str) -> set[str]:
+        packet = _packet(payload_text=text, summary=text)
+        return {hit["tag"] for hit in evaluate_packet(packet, self.monitors)}
+
+    def test_rta_adult_content_label(self):
+        text = '<meta name="rating" content="RTA-5042-1996-1400-1577-RTA">'
+        self.assertIn("policy-adult-content", self._tags(text))
+
+    def test_adult_content_domain_heuristic(self):
+        self.assertIn("policy-adult-content", self._tags("Host: totally-legit-porn-site.com"))
+
+    def test_ordinary_domain_is_not_flagged_as_adult_content(self):
+        self.assertNotIn("policy-adult-content", self._tags("Host: example.com"))
+
+    def test_weapons_marketplace_language(self):
+        self.assertIn("policy-weapons-content", self._tags("buy handguns online, ship worldwide no license needed"))
+
+    def test_ordinary_shopping_is_not_flagged_as_weapons(self):
+        self.assertNotIn("policy-weapons-content", self._tags("buy groceries online, ship same day"))
+
+    def test_drugs_marketplace_language(self):
+        self.assertIn("policy-drugs-content", self._tags("cocaine 1kg for sale, stealth shipping worldwide"))
+
+    def test_ordinary_text_is_not_flagged_as_drugs(self):
+        self.assertNotIn("policy-drugs-content", self._tags("coca cola 1kg for sale at the store"))
+
+    def test_carding_marketplace_language(self):
+        self.assertIn("policy-fraud-content", self._tags("fresh cvv2 for sale $5 each, instant delivery"))
+
+    def test_unlicensed_gambling_language(self):
+        self.assertIn("policy-gambling-content", self._tags("Join our casino now! deposit bonus, no verification needed"))
+
+    def test_benign_text_matches_no_restricted_content_tags(self):
+        tags = self._tags("Weekly newsletter: new products, shipping updates, and customer support hours.")
+        restricted_tags = tags & {
+            "policy-adult-content",
+            "policy-weapons-content",
+            "policy-drugs-content",
+            "policy-fraud-content",
+            "policy-gambling-content",
+        }
+        self.assertEqual(restricted_tags, set())
 
 
 class TestPolicyMonitors(unittest.TestCase):
@@ -246,18 +450,15 @@ class TestNewMonitorsAreStatelessExceptPortScan(unittest.TestCase):
             normalized = normalize_monitor(item, allow_source=True)
             self.assertEqual(normalized["source"], "builtin")
 
-    def test_port_scan_is_the_only_new_stateful_monitor_besides_prior_four(self):
+    def test_every_stateful_monitor_has_a_registered_anomaly_detector(self):
+        # Every "mode": "stateful" builtin monitor must have a matching
+        # detector wired into AnomalyEngine._detectors (by id) - a stateful
+        # monitor with no detector would sit in the UI forever without ever
+        # producing a hit, and a detector with no monitor entry could never
+        # be toggled or surfaced.
         stateful_ids = {item["id"] for item in DEFAULT_MONITORS if item.get("mode") == "stateful"}
-        self.assertEqual(
-            stateful_ids,
-            {
-                "builtin-arp-spoof",
-                "builtin-icmp-flood",
-                "builtin-wifi-deauth-flood",
-                "builtin-wifi-rogue-ap",
-                "builtin-port-scan",
-            },
-        )
+        detector_ids = set(AnomalyEngine()._detectors.keys())
+        self.assertEqual(stateful_ids, detector_ids)
 
 
 if __name__ == "__main__":

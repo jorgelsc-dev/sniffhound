@@ -8,7 +8,10 @@ from unittest.mock import MagicMock
 from sniffhound.anomaly import (
     AnomalyEngine,
     ArpSpoofDetector,
+    BruteForceLoginDetector,
+    DnsQueryFloodDetector,
     IcmpFloodDetector,
+    SynFloodDetector,
     WifiDeauthFloodDetector,
     WifiRogueApDetector,
 )
@@ -70,6 +73,64 @@ class TestWifiDeauthFloodDetector(unittest.TestCase):
     def test_ignores_beacons(self):
         detector = WifiDeauthFloodDetector()
         self.assertIsNone(detector.evaluate({"proto": "wifi-mgmt", "wifi_subtype": "beacon"}))
+
+
+class TestSynFloodDetector(unittest.TestCase):
+    def test_fires_once_threshold_crossed(self):
+        detector = SynFloodDetector()
+        detector._threshold = 5
+        pkt = {"proto": "tcp", "tcp_flags": "SYN", "src_ip": "9.9.9.9"}
+        hits = [detector.evaluate(pkt) for _ in range(5)]
+        self.assertTrue(any(hits))
+        self.assertEqual(sum(1 for hit in hits if hit), 1)
+
+    def test_ignores_syn_ack(self):
+        detector = SynFloodDetector()
+        detector._threshold = 2
+        pkt = {"proto": "tcp", "tcp_flags": "SYN,ACK", "src_ip": "9.9.9.9"}
+        self.assertIsNone(detector.evaluate(pkt))
+        self.assertIsNone(detector.evaluate(pkt))
+
+    def test_ignores_non_tcp(self):
+        detector = SynFloodDetector()
+        self.assertIsNone(detector.evaluate({"proto": "udp", "tcp_flags": "SYN", "src_ip": "9.9.9.9"}))
+
+
+class TestBruteForceLoginDetector(unittest.TestCase):
+    def test_fires_once_threshold_crossed_on_login_port(self):
+        detector = BruteForceLoginDetector()
+        detector._threshold = 4
+        pkt = {"proto": "tcp", "tcp_flags": "SYN", "src_ip": "10.0.0.5", "dst_ip": "10.0.0.1", "dst_port": 22}
+        hits = [detector.evaluate(pkt) for _ in range(4)]
+        self.assertTrue(any(hits))
+        self.assertIn("10.0.0.5", hits[-1]["detail"])
+
+    def test_ignores_non_login_port(self):
+        detector = BruteForceLoginDetector()
+        detector._threshold = 2
+        pkt = {"proto": "tcp", "tcp_flags": "SYN", "src_ip": "10.0.0.5", "dst_ip": "10.0.0.1", "dst_port": 8080}
+        self.assertIsNone(detector.evaluate(pkt))
+        self.assertIsNone(detector.evaluate(pkt))
+
+    def test_ignores_established_connections(self):
+        detector = BruteForceLoginDetector()
+        detector._threshold = 2
+        pkt = {"proto": "tcp", "tcp_flags": "ACK", "src_ip": "10.0.0.5", "dst_ip": "10.0.0.1", "dst_port": 22}
+        self.assertIsNone(detector.evaluate(pkt))
+        self.assertIsNone(detector.evaluate(pkt))
+
+
+class TestDnsQueryFloodDetector(unittest.TestCase):
+    def test_fires_once_threshold_crossed(self):
+        detector = DnsQueryFloodDetector()
+        detector._threshold = 5
+        pkt = {"proto": "udp", "dst_port": 53, "src_ip": "10.0.0.5"}
+        hits = [detector.evaluate(pkt) for _ in range(5)]
+        self.assertTrue(any(hits))
+
+    def test_ignores_non_dns_port(self):
+        detector = DnsQueryFloodDetector()
+        self.assertIsNone(detector.evaluate({"proto": "udp", "dst_port": 123, "src_ip": "10.0.0.5"}))
 
 
 class TestWifiRogueApDetector(unittest.TestCase):

@@ -145,6 +145,98 @@ class PortScanDetector:
         }
 
 
+class SynFloodDetector(_SlidingWindowFloodDetector):
+    """Flags a source sending an unusually high rate of bare TCP SYN
+    (connection-initiation, no ACK) packets within a short window — the
+    classic SYN-flood DoS signature (Suricata's DOS category)."""
+
+    def __init__(self):
+        super().__init__(settings.SYN_FLOOD_WINDOW_SECONDS, settings.SYN_FLOOD_THRESHOLD)
+
+    def evaluate(self, packet: dict) -> dict | None:
+        if packet.get("proto") != "tcp":
+            return None
+        flags = str(packet.get("tcp_flags") or "")
+        if "SYN" not in flags or "ACK" in flags:
+            return None
+        key = str(packet.get("src_ip") or "").strip()
+        if not key:
+            return None
+        if self._record(key):
+            return {
+                "detail": f"{key} sent {self._threshold}+ bare TCP SYN packets within {self._window_seconds}s"
+            }
+        return None
+
+
+class BruteForceLoginDetector:
+    """Flags a source repeatedly opening connections to a
+    credential-bearing service (SSH/RDP/FTP/Telnet/DB ports) on the same
+    destination within a short window — a login brute-force signature."""
+
+    LOGIN_PORTS = (21, 22, 23, 25, 110, 143, 993, 995, 1433, 3306, 3389, 5432, 5900)
+
+    def __init__(self):
+        self._window_seconds = settings.BRUTE_FORCE_WINDOW_SECONDS
+        self._threshold = settings.BRUTE_FORCE_THRESHOLD
+        self._events: dict[str, collections.deque] = collections.defaultdict(collections.deque)
+        self._last_alert: dict[str, float] = {}
+
+    def evaluate(self, packet: dict) -> dict | None:
+        if packet.get("proto") != "tcp":
+            return None
+        flags = str(packet.get("tcp_flags") or "")
+        if "SYN" not in flags or "ACK" in flags:
+            return None
+        dst_port = packet.get("dst_port")
+        if dst_port not in self.LOGIN_PORTS:
+            return None
+        src_ip = str(packet.get("src_ip") or "").strip()
+        dst_ip = str(packet.get("dst_ip") or "").strip()
+        if not src_ip or not dst_ip:
+            return None
+        key = f"{src_ip}->{dst_ip}:{dst_port}"
+        now = time.monotonic()
+        events = self._events[key]
+        events.append(now)
+        cutoff = now - self._window_seconds
+        while events and events[0] < cutoff:
+            events.popleft()
+        if len(events) < self._threshold:
+            return None
+        last = self._last_alert.get(key, 0.0)
+        if now - last < self._window_seconds:
+            return None
+        self._last_alert[key] = now
+        return {
+            "detail": (
+                f"{src_ip} attempted {len(events)}+ connections to {dst_ip}:{dst_port} "
+                f"within {self._window_seconds}s"
+            )
+        }
+
+
+class DnsQueryFloodDetector(_SlidingWindowFloodDetector):
+    """Flags a source sending an unusually high rate of DNS queries within
+    a short window — bulk lookups are a common signature of DGA-based
+    malware beaconing or a misbehaving/compromised host."""
+
+    def __init__(self):
+        super().__init__(settings.DNS_QUERY_FLOOD_WINDOW_SECONDS, settings.DNS_QUERY_FLOOD_THRESHOLD)
+
+    def evaluate(self, packet: dict) -> dict | None:
+        if packet.get("proto") not in ("tcp", "udp") or packet.get("dst_port") != 53:
+            return None
+        key = str(packet.get("src_ip") or "").strip()
+        if not key:
+            return None
+        if self._record(key):
+            return {
+                "detail": f"{key} sent {self._threshold}+ DNS queries within {self._window_seconds}s"
+            }
+        return None
+
+
 class WifiRogueApDetector:
     """Flags an SSID broadcast from more than one BSSID."""
 
@@ -181,6 +273,9 @@ class AnomalyEngine:
             "builtin-wifi-deauth-flood": WifiDeauthFloodDetector(),
             "builtin-wifi-rogue-ap": WifiRogueApDetector(),
             "builtin-port-scan": PortScanDetector(),
+            "builtin-syn-flood": SynFloodDetector(),
+            "builtin-brute-force-login": BruteForceLoginDetector(),
+            "builtin-dns-query-flood": DnsQueryFloodDetector(),
         }
 
     def evaluate(self, packet: dict, monitors: list[dict]) -> list[dict]:
