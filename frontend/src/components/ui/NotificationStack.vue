@@ -58,6 +58,11 @@ const ICONS_BY_KIND = {
   connection: "mdi-lan-connect",
 };
 
+// Only the most recent MAX_VISIBLE notifications are ever shown at once -
+// older ones stay in history (for "Clear all") but drop out of view rather
+// than piling the stack up indefinitely.
+const MAX_VISIBLE = 3;
+
 export default {
   name: "NotificationStack",
   data() {
@@ -68,7 +73,7 @@ export default {
   },
   computed: {
     items() {
-      return this.store.state.notifications;
+      return this.store.state.notifications.slice(0, MAX_VISIBLE);
     },
     soundEnabled() {
       return Boolean(this.store.state.notifySoundEnabled);

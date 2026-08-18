@@ -405,6 +405,7 @@ ENDPOINTS = [
     {"method": "POST", "path": "/api/monitors/", "desc": "Create a custom monitor."},
     {"method": "PUT", "path": "/api/monitors/", "desc": "Update a custom monitor."},
     {"method": "DELETE", "path": "/api/monitors/", "desc": "Delete a custom monitor."},
+    {"method": "POST", "path": "/api/monitors/toggle", "desc": "Enable/disable any monitor, including builtins, without editing or deleting it."},
     {"method": "GET", "path": "/api/monitors/config", "desc": "Read the monitor persistence-filter toggle."},
     {"method": "POST", "path": "/api/monitors/config", "desc": "Toggle whether only detected traffic is persisted."},
     {"method": "GET", "path": "/api/domains/", "desc": "Searchable catalog of domains seen in DNS/HTTP/TLS traffic."},
@@ -1680,6 +1681,18 @@ def monitors_collection(request):
         store.delete_monitor(monitor_id)
         return {"status": "ok"}
     raise ValueError("Unsupported method")
+
+
+@app.api("/api/monitors/toggle", methods=("POST",))
+def monitors_toggle(request):
+    payload = _read_json_body(request)
+    monitor_id = str(payload.get("id") or "").strip()
+    if not monitor_id:
+        raise ValueError("id is required")
+    if "enabled" not in payload:
+        raise ValueError("enabled is required")
+    enabled = bool(payload.get("enabled"))
+    return _monitor_row(store.set_monitor_enabled(monitor_id, enabled))
 
 
 @app.api("/api/monitors/config", methods=("GET", "POST"))

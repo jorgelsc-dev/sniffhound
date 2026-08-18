@@ -59,7 +59,7 @@
 
     <EntityTablePanel
       title="Detection monitors"
-      subtitle="Built-in monitors are read-only. Custom monitors can be edited or removed. Each monitor's own traffic table is below, under Monitor Traffic."
+      subtitle="Built-in monitors can be enabled/disabled but not edited or removed. Custom monitors can be edited or removed. Each monitor's own traffic table is below, under Monitor Traffic."
       v-model:live-enabled="liveRefreshEnabled"
       :live-refresh="true"
       :rows="monitors"
@@ -95,7 +95,7 @@
       <template #cell-enabled="{ item }">
         <v-switch
           :model-value="item.enabled"
-          :disabled="item.source === 'builtin' || isBusy(item.id)"
+          :disabled="isBusy(item.id)"
           color="primary"
           density="compact"
           hide-details
@@ -538,7 +538,7 @@ export default {
           key: "builtin",
           label: "Built-in",
           value: builtin,
-          caption: "Curated defaults, read-only",
+          caption: "Curated defaults, toggle only",
           icon: "mdi-shield-star-outline",
           colorClass: "text-info",
         },
@@ -723,10 +723,13 @@ export default {
         });
     },
     toggleEnabled(item, value) {
-      if (item.source === "builtin") return;
+      // Uses the dedicated toggle endpoint (not saveMonitor) so this works
+      // for builtin monitors too - they stay read-only for everything
+      // else (name/match/action can't be edited or deleted), but flipping
+      // enabled doesn't change what the rule does, only whether it runs.
       this.setBusy(item.id, true);
       this.store
-        .saveMonitor({ ...this.toPayload(item), id: item.id, enabled: Boolean(value) })
+        .toggleMonitorEnabled(item.id, Boolean(value))
         .then(() => this.load())
         .catch((err) => {
           this.error = (err && err.message) || "Failed to update monitor";

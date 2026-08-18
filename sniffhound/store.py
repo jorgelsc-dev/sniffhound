@@ -1321,6 +1321,23 @@ class SniffStore:
         self._execute("DELETE FROM monitors WHERE id = ?", (str(monitor_id),), commit=True)
         return True
 
+    def set_monitor_enabled(self, monitor_id: str, enabled: bool):
+        """Flip a monitor's `enabled` flag only - unlike `save_monitor`,
+        this is allowed for builtin monitors too. Builtins stay read-only
+        for their definition (name/match/action can't be edited, and they
+        can't be deleted), but toggling one off is just "stop applying this
+        rule", not a change to what the rule does."""
+        existing = self.get_monitor(monitor_id)
+        if not existing:
+            raise ValueError(f"Unknown monitor id: {monitor_id}")
+        now = utc_now()
+        self._execute(
+            "UPDATE monitors SET enabled = ?, updated_at = ? WHERE id = ?",
+            (1 if enabled else 0, now, str(monitor_id)),
+            commit=True,
+        )
+        return self.get_monitor(monitor_id)
+
     def get_monitor_filter_enabled(self) -> bool:
         default = "1" if MONITOR_FILTER_DEFAULT else "0"
         value = self.get_runtime_config("monitor_filter_enabled", default)

@@ -22,6 +22,10 @@ const WS_REFRESH_EVENT_TYPES = new Set([
 const NOTIFY_MONITOR_SEVERITIES = new Set(["high", "critical"]);
 const NOTIFICATION_HISTORY_LIMIT = 30;
 const NOTIFICATION_DEDUPE_COOLDOWN_MS = 4000;
+// A flapping connection can cycle through open/close every WS_RECONNECT_DELAY_MS
+// (1.8s) - without a longer, dedicated cooldown here, each cycle would push a
+// fresh "lost"/"restored" pair and flood the notification stack.
+const CONNECTION_NOTIFICATION_COOLDOWN_MS = 10000;
 
 const state = reactive({
   apiBase: "",
@@ -244,6 +248,13 @@ function deleteMonitor(id) {
   return fetchJsonPromise("/api/monitors/", {
     method: "DELETE",
     body: JSON.stringify({ id }),
+  });
+}
+
+function toggleMonitorEnabled(id, enabled) {
+  return fetchJsonPromise("/api/monitors/toggle", {
+    method: "POST",
+    body: JSON.stringify({ id, enabled: Boolean(enabled) }),
   });
 }
 
@@ -613,14 +624,21 @@ function playNotificationSound(severity) {
   }
 }
 
-function pushNotification({ kind = "info", severity = "info", title = "", message = "", dedupeKey = "" } = {}) {
+function pushNotification({
+  kind = "info",
+  severity = "info",
+  title = "",
+  message = "",
+  dedupeKey = "",
+  dedupeCooldownMs = NOTIFICATION_DEDUPE_COOLDOWN_MS,
+} = {}) {
   const cleanTitle = String(title || "").trim();
   if (!cleanTitle) return null;
   const normalizedSeverity = String(severity || "info").trim().toLowerCase();
   const now = Date.now();
   if (dedupeKey) {
     const last = notificationDedupeAt.get(dedupeKey) || 0;
-    if (now - last < NOTIFICATION_DEDUPE_COOLDOWN_MS) return null;
+    if (now - last < dedupeCooldownMs) return null;
     notificationDedupeAt.set(dedupeKey, now);
   }
   const item = {
@@ -734,6 +752,8 @@ function notifyForConnectionChange(kind) {
       severity: "low",
       title: "Realtime connection restored",
       message: "Live packet/stats stream reconnected.",
+      dedupeKey: "connection:restored",
+      dedupeCooldownMs: CONNECTION_NOTIFICATION_COOLDOWN_MS,
     });
   } else if (kind === "lost") {
     pushNotification({
@@ -741,6 +761,8 @@ function notifyForConnectionChange(kind) {
       severity: "medium",
       title: "Realtime connection lost",
       message: "Reconnecting to the live packet/stats stream...",
+      dedupeKey: "connection:lost",
+      dedupeCooldownMs: CONNECTION_NOTIFICATION_COOLDOWN_MS,
     });
   }
 }
@@ -1013,6 +1035,7 @@ export default {
   listMonitors,
   saveMonitor,
   deleteMonitor,
+  toggleMonitorEnabled,
   getMonitorConfig,
   setMonitorConfig,
   listDomains,

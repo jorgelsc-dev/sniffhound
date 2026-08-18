@@ -210,6 +210,27 @@ class TestStoreMonitors(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.delete_monitor("builtin-credentials")
 
+    def test_builtin_monitor_can_be_toggled_but_not_otherwise_changed(self):
+        # set_monitor_enabled is the one exception to "builtins are
+        # read-only" - flipping enabled doesn't change what the rule does,
+        # only whether it's currently applied.
+        updated = self.store.set_monitor_enabled("builtin-credentials", False)
+        self.assertFalse(updated["enabled"])
+        self.assertEqual(updated["name"], "Cleartext credentials")
+
+        updated = self.store.set_monitor_enabled("builtin-credentials", True)
+        self.assertTrue(updated["enabled"])
+
+        # Still can't edit its definition or delete it.
+        with self.assertRaises(ValueError):
+            self.store.save_monitor({"id": "builtin-credentials", "name": "Hacked"})
+        with self.assertRaises(ValueError):
+            self.store.delete_monitor("builtin-credentials")
+
+    def test_set_monitor_enabled_rejects_unknown_id(self):
+        with self.assertRaises(ValueError):
+            self.store.set_monitor_enabled("does-not-exist", False)
+
     def test_monitor_filter_toggle_defaults_and_persists(self):
         self.assertTrue(self.store.get_monitor_filter_enabled())
         self.store.set_monitor_filter_enabled(False)

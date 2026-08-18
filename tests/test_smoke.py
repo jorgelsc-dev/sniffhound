@@ -548,6 +548,53 @@ class SmokeTests(unittest.TestCase):
             self.assertEqual(post_payload["sniffer"]["selected_interface"], "")
             self.assertEqual(post_payload["sniffer"]["selected_interfaces"], ["wlan0", "eth0"])
 
+    def test_monitors_toggle_endpoint_disables_a_builtin_monitor(self):
+        _auth_module, app_module = _reload_auth_stack("0")
+        self.addCleanup(app_module.store.close)
+
+        request = Request(
+            "POST",
+            "/api/monitors/toggle",
+            "",
+            {"content-type": "application/json"},
+            json.dumps({"id": "builtin-credentials", "enabled": False}).encode("utf-8"),
+            ("127.0.0.1", 0),
+        )
+        response = app_module.app.dispatch(request)
+        payload = json.loads(response.body.decode("utf-8"))
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(payload["id"], "builtin-credentials")
+        self.assertFalse(payload["enabled"])
+
+    def test_monitors_toggle_endpoint_requires_id_and_enabled(self):
+        # Matches this app's existing convention: a plain `raise
+        # ValueError(...)` from a route handler isn't caught by the
+        # `_InvalidJsonBody`-only auth guard, so wsbuilder's dispatch()
+        # turns it into a 500 (see other handlers' "id is required" checks).
+        _auth_module, app_module = _reload_auth_stack("0")
+        self.addCleanup(app_module.store.close)
+
+        missing_id = Request(
+            "POST",
+            "/api/monitors/toggle",
+            "",
+            {"content-type": "application/json"},
+            json.dumps({"enabled": True}).encode("utf-8"),
+            ("127.0.0.1", 0),
+        )
+        self.assertEqual(app_module.app.dispatch(missing_id).status, 500)
+
+        missing_enabled = Request(
+            "POST",
+            "/api/monitors/toggle",
+            "",
+            {"content-type": "application/json"},
+            json.dumps({"id": "builtin-credentials"}).encode("utf-8"),
+            ("127.0.0.1", 0),
+        )
+        self.assertEqual(app_module.app.dispatch(missing_enabled).status, 500)
+
     def test_runtime_api_supports_start_and_stop_actions(self):
         _auth_module, app_module = _reload_auth_stack("0")
         self.addCleanup(app_module.store.close)
