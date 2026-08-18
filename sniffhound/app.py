@@ -1843,23 +1843,30 @@ def bootstrap_capture():
 
 
 def shutdown_capture():
+    # Every step below is bounded (IPC calls time out on their own) and
+    # must always run to completion so the process can exit cleanly - a
+    # stray Ctrl+C while one of them is waiting (e.g. the capture process
+    # is still mid-sudo-prompt and hasn't answered yet) must not abort the
+    # rest of the shutdown with an uncaught KeyboardInterrupt, which isn't
+    # an Exception subclass and would otherwise skip closing the store/hub
+    # and leave the privileged capture child un-signaled.
     try:
         runtime.stop()
-    except Exception:
+    except (Exception, KeyboardInterrupt):
         pass
     try:
         ipc_client.call("shutdown")
-    except Exception:
+    except (Exception, KeyboardInterrupt):
         pass
     try:
         ipc_client.close()
-    except Exception:
+    except (Exception, KeyboardInterrupt):
         pass
     try:
         hub.close()
-    except Exception:
+    except (Exception, KeyboardInterrupt):
         pass
     try:
         store.close()
-    except Exception:
+    except (Exception, KeyboardInterrupt):
         pass

@@ -242,20 +242,45 @@ def _spawn_capture_child(ipc_socket: str, ipc_token: str):
         return None
 
 
+def _wait_for_process(process, timeout: float) -> bool:
+    """`Popen.wait()`, but a KeyboardInterrupt while waiting (the user
+    getting impatient - e.g. `sudo` is still blocked on a fingerprint/
+    password prompt for the capture child) is treated as "not done yet"
+    instead of propagating and aborting the rest of shutdown."""
+    try:
+        process.wait(timeout=timeout)
+        return True
+    except subprocess.TimeoutExpired:
+        return False
+    except KeyboardInterrupt:
+        print(
+            "\n[i] Still stopping the capture process (it may be waiting on a "
+            "sudo prompt) - hang on...",
+            file=sys.stderr,
+        )
+        return False
+
+
 def _stop_capture_child(process, *, timeout: float = 5.0) -> None:
     if process is None or process.poll() is not None:
         return
+    print("[i] Stopping the capture process...", file=sys.stderr)
     try:
         process.terminate()
-        process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        try:
-            process.wait(timeout=2.0)
-        except subprocess.TimeoutExpired:
-            pass
     except Exception:
         pass
+
+    if _wait_for_process(process, timeout):
+        return
+
+    # Graceful shutdown didn't finish in time (or got interrupted again) -
+    # SIGKILL is unblockable, so this is guaranteed to actually end the
+    # privileged child rather than leaving it orphaned.
+    try:
+        process.kill()
+    except Exception:
+        pass
+    _wait_for_process(process, 2.0)
 
 
 def _print_console_help() -> None:

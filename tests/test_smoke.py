@@ -88,21 +88,28 @@ class _FakeCaptureProcess:
     for the spawned capture child, so tests can exercise the surrounding
     orchestration without actually spawning/sudo-elevating a process."""
 
-    def __init__(self):
+    def __init__(self, wait_effects=None):
         self.returncode = None
         self.terminate_calls = 0
+        self.kill_calls = 0
+        self._wait_effects = list(wait_effects or [])
 
     def poll(self):
         return self.returncode
 
     def terminate(self):
         self.terminate_calls += 1
-        self.returncode = 0
 
     def wait(self, timeout=None):
+        if self._wait_effects:
+            effect = self._wait_effects.pop(0)
+            if isinstance(effect, BaseException):
+                raise effect
+        self.returncode = 0
         return self.returncode
 
     def kill(self):
+        self.kill_calls += 1
         self.returncode = -9
 
 
@@ -708,6 +715,42 @@ class SmokeTests(unittest.TestCase):
 
         self.assertIsNone(result)
         self.assertIn("requires root", output.getvalue())
+
+    def test_manage_stop_capture_child_survives_normal_termination(self):
+        import sniffhound.manage as manage_module
+
+        process = _FakeCaptureProcess()
+        manage_module._stop_capture_child(process)
+
+        self.assertEqual(process.terminate_calls, 1)
+        self.assertEqual(process.kill_calls, 0)
+
+    def test_manage_stop_capture_child_escalates_to_kill_on_timeout(self):
+        import sniffhound.manage as manage_module
+
+        process = _FakeCaptureProcess(wait_effects=[subprocess.TimeoutExpired(cmd="sudo", timeout=5)])
+        manage_module._stop_capture_child(process)
+
+        self.assertEqual(process.terminate_calls, 1)
+        self.assertEqual(process.kill_calls, 1)
+
+    def test_manage_stop_capture_child_survives_repeated_ctrl_c_and_still_kills(self):
+        # Real-world trigger: `sudo` is blocked on a fingerprint/password
+        # prompt for the capture child, and the user hits Ctrl+C again
+        # while manage.py is waiting for it to exit during shutdown. A
+        # second KeyboardInterrupt here must not escape as an uncaught
+        # traceback, and the child must still end up killed rather than
+        # left running as an orphaned privileged process.
+        process = _FakeCaptureProcess(wait_effects=[KeyboardInterrupt(), KeyboardInterrupt()])
+        import sniffhound.manage as manage_module
+
+        output = io.StringIO()
+        with redirect_stderr(output):
+            manage_module._stop_capture_child(process)  # must not raise
+
+        self.assertEqual(process.terminate_calls, 1)
+        self.assertEqual(process.kill_calls, 1)
+        self.assertIn("Still stopping", output.getvalue())
 
     def test_manage_console_autocomplete_and_aliases(self):
         import sniffhound.manage as manage_module
