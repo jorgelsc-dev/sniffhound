@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from sniffhound.anomaly import AnomalyEngine, PortScanDetector
 from sniffhound.monitors import DEFAULT_MONITORS, evaluate_packet, normalize_monitor
@@ -427,6 +428,21 @@ class TestPortScanDetector(unittest.TestCase):
     def test_ignores_non_tcp_udp(self):
         detector = PortScanDetector()
         self.assertIsNone(detector.evaluate({"proto": "icmp", "src_ip": "10.0.0.5", "dst_port": 0}))
+
+    def test_first_alert_fires_even_on_a_freshly_booted_monotonic_clock(self):
+        # Regression test: `time.monotonic()` is relative to an arbitrary
+        # reference point (often process/system start on Linux), not
+        # guaranteed to already exceed PORT_SCAN_WINDOW_SECONDS on a
+        # short-lived CI runner. Comparing against a `0.0` sentinel for
+        # "never alerted" used to suppress the very first, legitimate alert.
+        with patch("sniffhound.anomaly.time.monotonic", return_value=2.5):
+            detector = PortScanDetector()
+            detector._threshold = 5
+            hits = [
+                detector.evaluate({"proto": "tcp", "src_ip": "10.0.0.99", "dst_port": port})
+                for port in range(1, 6)
+            ]
+        self.assertTrue(any(hits))
 
     def test_engine_reports_port_scan_with_correct_shape(self):
         engine = AnomalyEngine()

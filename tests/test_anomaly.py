@@ -3,7 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from sniffhound.anomaly import (
     AnomalyEngine,
@@ -47,6 +47,19 @@ class TestArpSpoofDetector(unittest.TestCase):
         pkt = {"proto": "arp", "arp_opcode": 2, "src_ip": "10.0.0.5", "eth_src": "aa:aa:aa:aa:aa:aa"}
         detector.evaluate(pkt)
         self.assertIsNone(detector.evaluate(pkt))
+
+    def test_first_alert_fires_even_on_a_freshly_booted_monotonic_clock(self):
+        # Regression test: `time.monotonic()` is relative to an arbitrary
+        # reference point (often process/system start on Linux), not
+        # guaranteed to already exceed the cooldown window - a short-lived
+        # CI runner can have it return a value smaller than
+        # ARP_SPOOF_COOLDOWN_SECONDS. Comparing against a `0.0` sentinel for
+        # "never alerted" used to suppress the very first, legitimate alert.
+        with patch("sniffhound.anomaly.time.monotonic", return_value=2.5):
+            detector = ArpSpoofDetector()
+            detector.evaluate({"proto": "arp", "arp_opcode": 2, "src_ip": "10.0.0.5", "eth_src": "aa:aa:aa:aa:aa:aa"})
+            hit = detector.evaluate({"proto": "arp", "arp_opcode": 2, "src_ip": "10.0.0.5", "eth_src": "bb:bb:bb:bb:bb:bb"})
+        self.assertIsNotNone(hit)
 
 
 class TestIcmpFloodDetector(unittest.TestCase):
@@ -119,6 +132,15 @@ class TestBruteForceLoginDetector(unittest.TestCase):
         self.assertIsNone(detector.evaluate(pkt))
         self.assertIsNone(detector.evaluate(pkt))
 
+    def test_first_alert_fires_even_on_a_freshly_booted_monotonic_clock(self):
+        # See the matching regression test on TestArpSpoofDetector for why.
+        with patch("sniffhound.anomaly.time.monotonic", return_value=2.5):
+            detector = BruteForceLoginDetector()
+            detector._threshold = 3
+            pkt = {"proto": "tcp", "tcp_flags": "SYN", "src_ip": "10.0.0.5", "dst_ip": "10.0.0.1", "dst_port": 22}
+            hits = [detector.evaluate(pkt) for _ in range(3)]
+        self.assertTrue(any(hits))
+
 
 class TestDnsQueryFloodDetector(unittest.TestCase):
     def test_fires_once_threshold_crossed(self):
@@ -146,6 +168,21 @@ class TestWifiRogueApDetector(unittest.TestCase):
         hit = detector.evaluate({"proto": "wifi-mgmt", "wifi_subtype": "beacon", "wifi_ssid": "FreeWifi", "wifi_bssid": "22:22:22:22:22:22"})
         self.assertIsNotNone(hit)
         self.assertIn("FreeWifi", hit["detail"])
+
+    def test_second_bssid_flags_even_on_a_freshly_booted_monotonic_clock(self):
+        # Direct regression test for the CI failure this was caught by:
+        # `time.monotonic()` is relative to an arbitrary reference point
+        # (often process/system start on Linux) - on a short-lived CI
+        # runner it can return a value smaller than
+        # ROGUE_AP_COOLDOWN_SECONDS (default 60s). Comparing that against a
+        # `0.0` sentinel for "never alerted" used to suppress the very
+        # first, legitimate alert whenever `time.monotonic()` was still
+        # under the cooldown value.
+        with patch("sniffhound.anomaly.time.monotonic", return_value=2.5):
+            detector = WifiRogueApDetector()
+            detector.evaluate({"proto": "wifi-mgmt", "wifi_subtype": "beacon", "wifi_ssid": "FreeWifi", "wifi_bssid": "11:11:11:11:11:11"})
+            hit = detector.evaluate({"proto": "wifi-mgmt", "wifi_subtype": "beacon", "wifi_ssid": "FreeWifi", "wifi_bssid": "22:22:22:22:22:22"})
+        self.assertIsNotNone(hit)
 
 
 class TestAnomalyEngine(unittest.TestCase):

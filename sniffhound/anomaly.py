@@ -46,9 +46,14 @@ class ArpSpoofDetector:
         if known == mac:
             return None
         now = time.monotonic()
-        last = self._last_alert.get(ip, 0.0)
+        last = self._last_alert.get(ip)
         self._bindings[ip] = mac
-        if now - last < settings.ARP_SPOOF_COOLDOWN_SECONDS:
+        # `time.monotonic()` is relative to an arbitrary reference point (on
+        # Linux, often process/system start) - it is NOT guaranteed to
+        # already exceed the cooldown window, especially on a short-lived CI
+        # runner. A `None` sentinel (never alerted before) must always fire,
+        # not be compared against as if it were "a long time ago".
+        if last is not None and now - last < settings.ARP_SPOOF_COOLDOWN_SECONDS:
             return None
         self._last_alert[ip] = now
         return {"detail": f"{ip} now claimed by {mac}, previously {known}"}
@@ -136,8 +141,8 @@ class PortScanDetector:
         distinct_ports = {port for _, port in events}
         if len(distinct_ports) < self._threshold:
             return None
-        last = self._last_alert.get(src_ip, 0.0)
-        if now - last < self._window_seconds:
+        last = self._last_alert.get(src_ip)
+        if last is not None and now - last < self._window_seconds:
             return None
         self._last_alert[src_ip] = now
         return {
@@ -204,8 +209,8 @@ class BruteForceLoginDetector:
             events.popleft()
         if len(events) < self._threshold:
             return None
-        last = self._last_alert.get(key, 0.0)
-        if now - last < self._window_seconds:
+        last = self._last_alert.get(key)
+        if last is not None and now - last < self._window_seconds:
             return None
         self._last_alert[key] = now
         return {
@@ -256,8 +261,8 @@ class WifiRogueApDetector:
         if len(bssids) <= 1:
             return None
         now = time.monotonic()
-        last = self._last_alert.get(ssid, 0.0)
-        if now - last < settings.ROGUE_AP_COOLDOWN_SECONDS:
+        last = self._last_alert.get(ssid)
+        if last is not None and now - last < settings.ROGUE_AP_COOLDOWN_SECONDS:
             return None
         self._last_alert[ssid] = now
         return {
