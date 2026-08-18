@@ -36,6 +36,7 @@ const vuetify = createVuetify({
 });
 
 store.initApiBase();
+store.initNotifySound();
 store.bootstrap();
 
 createApp(App).use(vuetify).use(router).mount("#app");

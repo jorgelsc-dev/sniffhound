@@ -5,6 +5,7 @@ const AUTH_SESSION_PATH = "/api/auth/session";
 const STORAGE_KEY_API = "sniffhound.apiBase";
 const STORAGE_KEY_AUTH = "sniffhound.securityCode";
 const LEGACY_STORAGE_KEY_AUTH = "sniffhound.sessionToken";
+const STORAGE_KEY_NOTIFY_SOUND = "sniffhound.notifySoundEnabled";
 const WS_RECONNECT_DELAY_MS = 1800;
 const WS_REFRESH_THROTTLE_MS = 10000;
 const WS_AUTH_CLOSE_CODE = 4401;
@@ -16,6 +17,11 @@ const WS_REFRESH_EVENT_TYPES = new Set([
   "runtime_mode",
   "chat_message",
 ]);
+// What counts as "important enough for a popup" - everything else stays
+// available in the regular views (Monitors/SOC/etc.) without interrupting.
+const NOTIFY_MONITOR_SEVERITIES = new Set(["high", "critical"]);
+const NOTIFICATION_HISTORY_LIMIT = 30;
+const NOTIFICATION_DEDUPE_COOLDOWN_MS = 4000;
 
 const state = reactive({
   apiBase: "",
@@ -31,16 +37,24 @@ const state = reactive({
   authError: "",
   authPromptOpen: false,
   shutdownPending: false,
+  notifications: [],
+  notifySoundEnabled: true,
 });
 
 const tableRefreshSubscribers = new Set();
 const mapSnapshotSubscribers = new Set();
+const notificationDedupeAt = new Map();
 
 let inMemoryAuthToken = "";
 let wsClient = null;
 let wsReconnectTimer = null;
 let wsRefreshTimer = null;
 let wsPendingRefreshPayload = null;
+let notificationIdSeq = 0;
+let audioContext = null;
+let lastRuntimeForNotify = null;
+let hasEverConnectedRealtime = false;
+let isRealtimeCurrentlyOnline = false;
 
 function suggestApiBaseFromLocation(locationLike = null) {
   const locationRef =
@@ -532,6 +546,215 @@ function requestRealtimeMapSnapshot(limit = 300) {
   }
 }
 
+function initNotifySound() {
+  if (typeof window === "undefined" || !window.localStorage) {
+    state.notifySoundEnabled = true;
+    return;
+  }
+  const stored = window.localStorage.getItem(STORAGE_KEY_NOTIFY_SOUND);
+  state.notifySoundEnabled = stored === null ? true : stored === "1";
+}
+
+function setNotifySoundEnabled(enabled) {
+  state.notifySoundEnabled = Boolean(enabled);
+  if (typeof window !== "undefined" && window.localStorage) {
+    window.localStorage.setItem(STORAGE_KEY_NOTIFY_SOUND, state.notifySoundEnabled ? "1" : "0");
+  }
+}
+
+function ensureAudioContext() {
+  if (typeof window === "undefined") return null;
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return null;
+  if (!audioContext) {
+    try {
+      audioContext = new AudioContextClass();
+    } catch {
+      return null;
+    }
+  }
+  if (audioContext.state === "suspended" && typeof audioContext.resume === "function") {
+    audioContext.resume().catch(() => {});
+  }
+  return audioContext;
+}
+
+function playTone(ctx, { frequency, startTime, duration, gain = 0.07 }) {
+  const oscillator = ctx.createOscillator();
+  const gainNode = ctx.createGain();
+  oscillator.type = "sine";
+  oscillator.frequency.setValueAtTime(frequency, startTime);
+  gainNode.gain.setValueAtTime(0, startTime);
+  gainNode.gain.linearRampToValueAtTime(gain, startTime + 0.015);
+  gainNode.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+  oscillator.connect(gainNode);
+  gainNode.connect(ctx.destination);
+  oscillator.start(startTime);
+  oscillator.stop(startTime + duration + 0.03);
+}
+
+function playNotificationSound(severity) {
+  if (!state.notifySoundEnabled) return;
+  const ctx = ensureAudioContext();
+  if (!ctx) return;
+  try {
+    const now = ctx.currentTime;
+    if (severity === "critical" || severity === "high") {
+      // Two-tone rising chirp - more urgent, harder to miss.
+      playTone(ctx, { frequency: 880, startTime: now, duration: 0.11, gain: 0.09 });
+      playTone(ctx, { frequency: 1108, startTime: now + 0.12, duration: 0.14, gain: 0.09 });
+    } else {
+      // Single soft ping for everything else.
+      playTone(ctx, { frequency: 660, startTime: now, duration: 0.15, gain: 0.055 });
+    }
+  } catch {
+    // Best-effort only - autoplay restrictions or a missing AudioContext
+    // must never break the notification itself.
+  }
+}
+
+function pushNotification({ kind = "info", severity = "info", title = "", message = "", dedupeKey = "" } = {}) {
+  const cleanTitle = String(title || "").trim();
+  if (!cleanTitle) return null;
+  const normalizedSeverity = String(severity || "info").trim().toLowerCase();
+  const now = Date.now();
+  if (dedupeKey) {
+    const last = notificationDedupeAt.get(dedupeKey) || 0;
+    if (now - last < NOTIFICATION_DEDUPE_COOLDOWN_MS) return null;
+    notificationDedupeAt.set(dedupeKey, now);
+  }
+  const item = {
+    id: `notif-${++notificationIdSeq}-${now}`,
+    kind: String(kind || "info"),
+    severity: normalizedSeverity,
+    title: cleanTitle,
+    message: String(message || "").trim(),
+    createdAt: now,
+  };
+  state.notifications.unshift(item);
+  if (state.notifications.length > NOTIFICATION_HISTORY_LIMIT) {
+    state.notifications.length = NOTIFICATION_HISTORY_LIMIT;
+  }
+  playNotificationSound(normalizedSeverity);
+  return item;
+}
+
+function dismissNotification(id) {
+  const index = state.notifications.findIndex((item) => item.id === id);
+  if (index >= 0) {
+    state.notifications.splice(index, 1);
+  }
+}
+
+function clearNotifications() {
+  state.notifications = [];
+}
+
+function parsePacketTags(packet) {
+  if (!packet) return [];
+  if (Array.isArray(packet.tags)) return packet.tags;
+  const raw = packet.tags_json;
+  if (typeof raw !== "string" || !raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function notifyForPacketEvent(payload) {
+  const packet = payload && payload.packet;
+  const tags = parsePacketTags(packet);
+  if (!tags.length) return;
+  const srcIp = String((packet && packet.src_ip) || "").trim();
+  const dstIp = String((packet && packet.dst_ip) || "").trim();
+  const dstPort = (packet && packet.dst_port) || "";
+  const route = srcIp && dstIp ? `${srcIp} → ${dstIp}${dstPort ? `:${dstPort}` : ""}` : "";
+  tags.forEach((tag) => {
+    if (!tag || tag.key !== "monitor") return;
+    const severity = String(tag.severity || "").trim().toLowerCase();
+    if (!NOTIFY_MONITOR_SEVERITIES.has(severity)) return;
+    const label = String(tag.value || "").trim();
+    if (!label) return;
+    pushNotification({
+      kind: "monitor",
+      severity,
+      title: label,
+      message: route,
+      dedupeKey: `monitor:${label}:${srcIp}`,
+    });
+  });
+}
+
+function notifyForRuntimeChange(payload) {
+  const runtime = (payload && (payload.runtime || payload)) || {};
+  const mode = String(runtime.mode || "").trim().toLowerCase();
+  const active = runtime.active && typeof runtime.active === "object" ? runtime.active : {};
+  const running = Boolean(active.running);
+  const previous = lastRuntimeForNotify;
+  lastRuntimeForNotify = { mode, running };
+  if (!mode || !previous) return; // skip the very first snapshot after (re)connecting
+  if (previous.mode !== mode) {
+    pushNotification({
+      kind: "runtime",
+      severity: "medium",
+      title: "Runtime mode changed",
+      message: `Switched to ${mode} mode`,
+    });
+    return;
+  }
+  if (previous.running !== running) {
+    pushNotification({
+      kind: "runtime",
+      severity: running ? "low" : "medium",
+      title: running ? "Capture started" : "Capture stopped",
+      message: `${mode} engine is now ${running ? "running" : "stopped"}`,
+    });
+  }
+}
+
+function notifyForChatMessage(payload) {
+  const message = payload && payload.message;
+  const content = message && String(message.content || "").trim();
+  if (!content) return;
+  const author = String((message && message.author) || "operator").trim() || "operator";
+  pushNotification({
+    kind: "broadcast",
+    severity: "info",
+    title: `Note from ${author}`,
+    message: content,
+  });
+}
+
+function notifyForConnectionChange(kind) {
+  if (kind === "restored") {
+    pushNotification({
+      kind: "connection",
+      severity: "low",
+      title: "Realtime connection restored",
+      message: "Live packet/stats stream reconnected.",
+    });
+  } else if (kind === "lost") {
+    pushNotification({
+      kind: "connection",
+      severity: "medium",
+      title: "Realtime connection lost",
+      message: "Reconnecting to the live packet/stats stream...",
+    });
+  }
+}
+
+function evaluateNotificationsForMessage(type, payload) {
+  if (type === "packet") {
+    notifyForPacketEvent(payload);
+  } else if (type === "runtime_mode") {
+    notifyForRuntimeChange(payload);
+  } else if (type === "chat_message") {
+    notifyForChatMessage(payload);
+  }
+}
+
 function scheduleTableRefresh(payload) {
   wsPendingRefreshPayload = payload;
   if (wsRefreshTimer) return;
@@ -644,10 +867,16 @@ function connectRealtime() {
   socket.addEventListener("open", () => {
     if (wsClient !== socket) return;
     clearReconnectTimer();
+    const isReconnect = hasEverConnectedRealtime;
     state.wsStatus = "online";
     if (!requestRealtimeMapSnapshot(300)) {
       state.wsStatus = "error";
     }
+    isRealtimeCurrentlyOnline = true;
+    if (isReconnect) {
+      notifyForConnectionChange("restored");
+    }
+    hasEverConnectedRealtime = true;
   });
 
   socket.addEventListener("message", (event) => {
@@ -674,6 +903,7 @@ function connectRealtime() {
         receivedAt: Date.now(),
       });
     }
+    evaluateNotificationsForMessage(type, payload);
     if (!WS_REFRESH_EVENT_TYPES.has(type)) return;
     scheduleTableRefresh({
       type,
@@ -694,6 +924,10 @@ function connectRealtime() {
       handleUnauthorized("Session expired. Re-enter the security code.");
       return;
     }
+    if (isRealtimeCurrentlyOnline) {
+      notifyForConnectionChange("lost");
+    }
+    isRealtimeCurrentlyOnline = false;
     state.wsStatus = "offline";
     scheduleReconnect();
   });
@@ -793,4 +1027,8 @@ export default {
   requestRealtimeMapSnapshot,
   openAuthPrompt,
   authenticateSessionToken,
+  initNotifySound,
+  setNotifySoundEnabled,
+  dismissNotification,
+  clearNotifications,
 };

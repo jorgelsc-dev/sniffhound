@@ -94,6 +94,8 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <NotificationStack />
   </v-app>
 </template>
 
@@ -103,6 +105,7 @@ import store from "./state/appStore";
 import AppSidebar from "./components/layout/AppSidebar.vue";
 import AppTopBar from "./components/layout/AppTopBar.vue";
 import AppHero from "./components/layout/AppHero.vue";
+import NotificationStack from "./components/ui/NotificationStack.vue";
 
 export default {
   name: "App",
@@ -110,6 +113,7 @@ export default {
     AppSidebar,
     AppTopBar,
     AppHero,
+    NotificationStack,
   },
   data() {
     return {

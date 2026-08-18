@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -289,6 +290,20 @@ class TestSnifferGatedPersistence(unittest.TestCase):
         self.sniffer._store_packet(self._base_packet(dst_port=3389))
         types = [call.args[0]["type"] for call in self.sniffer.hub.broadcast.call_args_list]
         self.assertEqual(types, ["packet", "stats_update"])
+
+    def test_detected_packet_broadcast_includes_severity_on_monitor_tag(self):
+        # Frontend notifications decide what's "important" from this field -
+        # it has to ride along on the WS "packet" event, not just live in
+        # the monitor definition server-side.
+        self.sniffer._store_packet(self._base_packet(dst_port=3389))
+        packet_call = next(
+            call for call in self.sniffer.hub.broadcast.call_args_list if call.args[0]["type"] == "packet"
+        )
+        broadcast_packet = packet_call.args[0]["packet"]
+        tags = json.loads(broadcast_packet["tags_json"])
+        monitor_tags = [tag for tag in tags if tag.get("key") == "monitor"]
+        self.assertTrue(monitor_tags)
+        self.assertEqual(monitor_tags[0]["severity"], "medium")
 
     def test_detected_packet_is_queryable_by_monitor_id(self):
         self.sniffer._store_packet(self._base_packet(dst_port=3389))

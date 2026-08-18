@@ -893,17 +893,22 @@ class Sniffer:
         for match in matches:
             label = str(match.get("label") or match.get("tag") or match.get("rule_name") or "").strip()
             if label:
-                tags.append({"key": "rule", "value": label})
+                tags.append({"key": "rule", "value": label, "severity": str(match.get("severity") or "info")})
         for hit in monitor_hits or []:
+            severity = str(hit.get("severity") or "info")
             label = str(hit.get("label") or hit.get("tag") or hit.get("monitor_name") or "").strip()
             if label:
-                tags.append({"key": "monitor", "value": label})
+                # `severity` rides along on the "monitor" tag entry itself
+                # (rather than only on "detail"/"monitor_id") so clients can
+                # decide what's worth surfacing (e.g. a notification) without
+                # needing a second lookup back to the monitor definition.
+                tags.append({"key": "monitor", "value": label, "severity": severity})
             monitor_id = str(hit.get("monitor_id") or "").strip()
             if monitor_id:
-                tags.append({"key": "monitor_id", "value": monitor_id})
+                tags.append({"key": "monitor_id", "value": monitor_id, "severity": severity})
             detail = str(hit.get("detail") or "").strip()
             if detail:
-                tags.append({"key": "detail", "value": detail})
+                tags.append({"key": "detail", "value": detail, "severity": severity})
         return tags
 
     def parse_packet(self, data: bytes, *, interface: str = "") -> dict | None:
