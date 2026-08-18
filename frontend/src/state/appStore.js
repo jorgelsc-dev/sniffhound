@@ -82,25 +82,36 @@ function setApiBase(value) {
 }
 
 function readStoredAuthToken() {
-  clearStoredAuthTokenArtifacts();
-  return String(inMemoryAuthToken || "").trim();
+  clearLegacyAuthTokenArtifacts();
+  if (typeof window === "undefined" || !window.localStorage) {
+    return String(inMemoryAuthToken || "").trim();
+  }
+  const stored = window.localStorage.getItem(STORAGE_KEY_AUTH);
+  inMemoryAuthToken = String(stored || "").trim();
+  return inMemoryAuthToken;
 }
 
 function persistAuthToken(token) {
-  inMemoryAuthToken = String(token || "").trim();
-  clearStoredAuthTokenArtifacts();
+  const cleaned = String(token || "").trim();
+  inMemoryAuthToken = cleaned;
+  if (typeof window === "undefined" || !window.localStorage) {
+    return;
+  }
+  if (cleaned) {
+    window.localStorage.setItem(STORAGE_KEY_AUTH, cleaned);
+  } else {
+    window.localStorage.removeItem(STORAGE_KEY_AUTH);
+  }
 }
 
-function clearStoredAuthTokenArtifacts() {
+function clearLegacyAuthTokenArtifacts() {
   if (typeof window === "undefined") {
     return;
   }
   if (window.sessionStorage) {
-    window.sessionStorage.removeItem(STORAGE_KEY_AUTH);
     window.sessionStorage.removeItem(LEGACY_STORAGE_KEY_AUTH);
   }
   if (window.localStorage) {
-    window.localStorage.removeItem(STORAGE_KEY_AUTH);
     window.localStorage.removeItem(LEGACY_STORAGE_KEY_AUTH);
   }
 }
@@ -188,6 +199,80 @@ function setSnifferInterfaces(interfaceNames) {
     applyRuntimeSnapshot(payload);
     return payload;
   });
+}
+
+function setWifiMonitor(enabled, interfaceName) {
+  return fetchJsonPromise("/api/wifi/monitor", {
+    method: "POST",
+    body: JSON.stringify({
+      enabled: Boolean(enabled),
+      interface: String(interfaceName || "").trim(),
+    }),
+  }).then((payload) => {
+    applyRuntimeSnapshot(payload);
+    return payload;
+  });
+}
+
+function listMonitors() {
+  return fetchJsonPromise("/api/monitors/");
+}
+
+function saveMonitor(payload) {
+  const method = payload && payload.id ? "PUT" : "POST";
+  return fetchJsonPromise("/api/monitors/", {
+    method,
+    body: JSON.stringify(payload || {}),
+  });
+}
+
+function deleteMonitor(id) {
+  return fetchJsonPromise("/api/monitors/", {
+    method: "DELETE",
+    body: JSON.stringify({ id }),
+  });
+}
+
+function getMonitorConfig() {
+  return fetchJsonPromise("/api/monitors/config");
+}
+
+function setMonitorConfig(payload) {
+  return fetchJsonPromise("/api/monitors/config", {
+    method: "POST",
+    body: JSON.stringify(payload || {}),
+  });
+}
+
+function buildIntelQuery({ search = "", limit = 200, offset = 0 } = {}) {
+  const params = new URLSearchParams();
+  if (search) params.set("search", search);
+  if (limit) params.set("limit", String(limit));
+  if (offset) params.set("offset", String(offset));
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+function listDomains(options) {
+  return fetchJsonPromise(`/api/domains/${buildIntelQuery(options)}`);
+}
+
+function listPaths(options) {
+  return fetchJsonPromise(`/api/paths/${buildIntelQuery(options)}`);
+}
+
+function listIpCatalog(options) {
+  return fetchJsonPromise(`/api/intel/ips/${buildIntelQuery(options)}`);
+}
+
+function listMonitorPackets(monitorId, options) {
+  const params = new URLSearchParams();
+  params.set("monitor_id", monitorId);
+  const search = (options && options.search) || "";
+  const limit = (options && options.limit) || 200;
+  if (search) params.set("search", search);
+  if (limit) params.set("limit", String(limit));
+  return fetchJsonPromise(`/api/monitors/packets/?${params.toString()}`);
 }
 
 function apiUrl(path) {
@@ -690,6 +775,16 @@ export default {
   shutdownApplication,
   setSnifferInterface,
   setSnifferInterfaces,
+  setWifiMonitor,
+  listMonitors,
+  saveMonitor,
+  deleteMonitor,
+  getMonitorConfig,
+  setMonitorConfig,
+  listDomains,
+  listPaths,
+  listIpCatalog,
+  listMonitorPackets,
   reconnectRealtime,
   destroyRealtime,
   subscribeTableRefresh,

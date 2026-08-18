@@ -17,16 +17,6 @@
         <v-chip v-if="lastUpdated" size="small" variant="outlined" color="info">
           {{ lastUpdated }}
         </v-chip>
-        <LiveRefreshControl
-          v-if="showRefresh || liveRefresh"
-          :loading="loading"
-          :show-manual="showRefresh"
-          :show-live="liveRefresh"
-          :live-enabled="liveEnabled"
-          :refresh-label="refreshLabel"
-          @update:liveEnabled="$emit('update:liveEnabled', $event)"
-          @refresh="$emit('refresh')"
-        />
       </div>
     </div>
 
@@ -60,13 +50,11 @@
 
 <script>
 import BrandMark from "../brand/BrandMark.vue";
-import LiveRefreshControl from "./LiveRefreshControl.vue";
 
 export default {
   name: "DataPanel",
   components: {
     BrandMark,
-    LiveRefreshControl,
   },
   props: {
     title: {
@@ -97,32 +85,15 @@ export default {
       type: String,
       default: "",
     },
-    showRefresh: {
-      type: Boolean,
-      default: false,
-    },
-    liveRefresh: {
-      type: Boolean,
-      default: false,
-    },
-    liveEnabled: {
-      type: Boolean,
-      default: false,
-    },
     showHeader: {
       type: Boolean,
       default: true,
-    },
-    refreshLabel: {
-      type: String,
-      default: "Refresh",
     },
     variant: {
       type: String,
       default: "outlined",
     },
   },
-  emits: ["refresh", "update:liveEnabled"],
 };
 </script>
 

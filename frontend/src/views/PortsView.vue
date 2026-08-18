@@ -242,7 +242,7 @@ export default {
       loading: false,
       error: "",
       lastUpdated: "",
-      liveRefreshEnabled: false,
+      liveRefreshEnabled: true,
       tab: "tcp",
       protocols: [],
       portsByProto: {},
@@ -583,7 +583,7 @@ export default {
       const now = Date.now();
       const shouldSyncProtocols = now - this.lastProtocolsSyncAt >= 30000;
       if (shouldSyncProtocols) {
-        return this.load().catch(() => {
+        return this.load({ silent: true }).catch(() => {
           // keep stale table on transient refresh errors
         });
       }
@@ -604,8 +604,8 @@ export default {
           // keep stale table on transient refresh errors
         });
     },
-    load() {
-      this.loading = true;
+    load(options = {}) {
+      if (!options.silent) this.loading = true;
       this.error = "";
       return Promise.allSettled([this.loadProtocols()])
         .then(([protocolsRes]) => {

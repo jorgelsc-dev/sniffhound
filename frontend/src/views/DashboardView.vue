@@ -236,7 +236,7 @@ export default {
       loading: false,
       error: "",
       lastUpdated: "",
-      liveRefreshEnabled: false,
+      liveRefreshEnabled: true,
       dashboard: {},
       analytics: {},
       packets: [],
@@ -492,13 +492,13 @@ export default {
       if (this.wsRefreshTimer) return;
       this.wsRefreshTimer = setTimeout(() => {
         this.wsRefreshTimer = null;
-        this.load().catch(() => {
+        this.load({ silent: true }).catch(() => {
           // preserve current dashboard on transient realtime failures
         });
       }, 10000);
     },
-    load() {
-      this.loading = true;
+    load(options = {}) {
+      if (!options.silent) this.loading = true;
       this.error = "";
       return Promise.allSettled([
         this.store.fetchJsonPromise("/api/dashboard/"),

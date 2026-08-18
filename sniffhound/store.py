@@ -10,7 +10,9 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from .runtime_paths import ensure_data_dir, resolve_data_file
+from .monitors import describe_match, load_builtin_monitors, normalize_monitor
 from .rulesets import load_builtin_rulesets, normalize_ruleset
+from .settings import MONITOR_FILTER_DEFAULT
 from .utils import (
     bytes_to_hex_preview,
     bytes_to_text_preview,
@@ -31,6 +33,8 @@ PACKET_TABLE_LIMIT = 2000
 PAYLOAD_TABLE_LIMIT = 2000
 FLOW_TABLE_LIMIT = 2000
 TAG_TABLE_LIMIT = 4000
+DOMAIN_TABLE_LIMIT = 5000
+PATH_TABLE_LIMIT = 5000
 _GEOIP_COUNTRY_DB_PATHS = (
     Path("/usr/share/GeoIP/GeoIP.dat"),
     Path("/usr/local/share/GeoIP/GeoIP.dat"),
@@ -396,6 +400,11 @@ class SniffStore:
                 payload_text TEXT NOT NULL DEFAULT '',
                 payload_hex TEXT NOT NULL DEFAULT '',
                 banner_text TEXT NOT NULL DEFAULT '',
+                domain TEXT NOT NULL DEFAULT '',
+                domain_source TEXT NOT NULL DEFAULT '',
+                http_method TEXT NOT NULL DEFAULT '',
+                http_path TEXT NOT NULL DEFAULT '',
+                http_host TEXT NOT NULL DEFAULT '',
                 tags_json TEXT NOT NULL DEFAULT '[]',
                 rule_hits_json TEXT NOT NULL DEFAULT '[]',
                 raw_packet BLOB,
@@ -456,11 +465,72 @@ class SniffStore:
                 updated_at TEXT NOT NULL
             )
             """,
+            """
+            CREATE TABLE IF NOT EXISTS domains (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                source TEXT NOT NULL DEFAULT '',
+                ip TEXT NOT NULL DEFAULT '',
+                port INTEGER NOT NULL DEFAULT 0,
+                proto TEXT NOT NULL DEFAULT '',
+                hit_count INTEGER NOT NULL DEFAULT 1,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS paths (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path TEXT NOT NULL,
+                method TEXT NOT NULL DEFAULT 'GET',
+                host TEXT NOT NULL DEFAULT '',
+                ip TEXT NOT NULL DEFAULT '',
+                port INTEGER NOT NULL DEFAULT 0,
+                hit_count INTEGER NOT NULL DEFAULT 1,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(method, path, host)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS monitors (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                priority INTEGER NOT NULL DEFAULT 100,
+                source TEXT NOT NULL DEFAULT 'custom',
+                mode TEXT NOT NULL DEFAULT 'rule',
+                match_json TEXT NOT NULL DEFAULT '{}',
+                action_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """,
         ]
         with self._lock:
             for statement in schema:
                 self._conn.execute(statement)
             self._conn.commit()
+            self._migrate_packets_columns()
+
+    def _migrate_packets_columns(self):
+        existing = {row["name"] for row in self._conn.execute("PRAGMA table_info(packets)")}
+        additions = {
+            "domain": "TEXT NOT NULL DEFAULT ''",
+            "domain_source": "TEXT NOT NULL DEFAULT ''",
+            "http_method": "TEXT NOT NULL DEFAULT ''",
+            "http_path": "TEXT NOT NULL DEFAULT ''",
+            "http_host": "TEXT NOT NULL DEFAULT ''",
+        }
+        for column, definition in additions.items():
+            if column not in existing:
+                self._conn.execute(f"ALTER TABLE packets ADD COLUMN {column} {definition}")
+        self._conn.commit()
 
     def _seed_baseline(self):
         with self._lock:
@@ -490,7 +560,78 @@ class SniffStore:
                     )
                 self._conn.commit()
 
+            cursor = self._conn.execute("SELECT COUNT(*) AS count FROM monitors")
+            count = int(cursor.fetchone()["count"] or 0)
+            if count == 0:
+                now = utc_now()
+                for monitor in load_builtin_monitors():
+                    self._conn.execute(
+                        """
+                        INSERT OR REPLACE INTO monitors
+                        (id, name, description, enabled, priority, source, mode, match_json, action_json, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            str(monitor.get("id") or monitor.get("name")),
+                            str(monitor.get("name") or monitor.get("id")),
+                            str(monitor.get("description") or ""),
+                            1 if monitor.get("enabled", True) else 0,
+                            safe_int(monitor.get("priority", 100), 100),
+                            str(monitor.get("source") or "builtin"),
+                            str(monitor.get("mode") or "rule"),
+                            json_dumps(monitor.get("match") or {}),
+                            json_dumps(monitor.get("action") or {}),
+                            now,
+                            now,
+                        ),
+                    )
+                self._conn.commit()
+
+            self._seed_new_builtin_monitors()
+
         self._seed_file_catalogs()
+
+    def _seed_new_builtin_monitors(self):
+        """Additive migration: insert any DEFAULT_MONITORS id that isn't
+        already in the table, by id, without touching any existing row.
+
+        Unlike the `count == 0` seeding above (which only runs on a brand new
+        DB), this runs on every startup so monitors added to DEFAULT_MONITORS
+        in later releases reach already-populated databases too — without
+        ever overwriting a builtin the user has since customized, or any of
+        the user's own custom monitors.
+        """
+        cursor = self._conn.execute("SELECT id FROM monitors")
+        existing_ids = {str(row["id"]) for row in cursor.fetchall()}
+        now = utc_now()
+        inserted = False
+        for monitor in load_builtin_monitors():
+            monitor_id = str(monitor.get("id") or "").strip()
+            if not monitor_id or monitor_id in existing_ids:
+                continue
+            self._conn.execute(
+                """
+                INSERT OR IGNORE INTO monitors
+                (id, name, description, enabled, priority, source, mode, match_json, action_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    monitor_id,
+                    str(monitor.get("name") or monitor_id),
+                    str(monitor.get("description") or ""),
+                    1 if monitor.get("enabled", True) else 0,
+                    safe_int(monitor.get("priority", 100), 100),
+                    str(monitor.get("source") or "builtin"),
+                    str(monitor.get("mode") or "rule"),
+                    json_dumps(monitor.get("match") or {}),
+                    json_dumps(monitor.get("action") or {}),
+                    now,
+                    now,
+                ),
+            )
+            inserted = True
+        if inserted:
+            self._conn.commit()
 
     def _seed_file_catalogs(self):
         catalogs = {
@@ -813,6 +954,41 @@ class SniffStore:
             tuple(params),
         )
 
+    def list_packets_by_monitor(self, monitor_id: str, *, search="", limit=200, offset=0):
+        clauses = ["tags.key = 'monitor_id'", "tags.value = ?"]
+        params = [str(monitor_id)]
+        if search:
+            needle = f"%{str(search).strip().lower()}%"
+            clauses.append(
+                "("
+                "LOWER(packets.src_ip) LIKE ? OR LOWER(packets.dst_ip) LIKE ? OR LOWER(packets.summary) LIKE ? OR "
+                "LOWER(packets.payload_text) LIKE ? OR LOWER(packets.banner_text) LIKE ? OR "
+                "CAST(packets.src_port AS TEXT) LIKE ? OR CAST(packets.dst_port AS TEXT) LIKE ?"
+                ")"
+            )
+            params.extend([needle] * 7)
+        where = f"WHERE {' AND '.join(clauses)}"
+        params.extend([int(limit), int(offset)])
+        rows = self._fetchall(
+            f"""
+            SELECT DISTINCT packets.*
+            FROM packets
+            JOIN tags ON tags.packet_id = packets.id
+            {where}
+            ORDER BY packets.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            tuple(params),
+        )
+        monitor = self.get_monitor(monitor_id)
+        if monitor:
+            for row in rows:
+                row["matched_value"] = describe_match(monitor, row)
+        else:
+            for row in rows:
+                row["matched_value"] = ""
+        return rows
+
     def list_flows(self, *, proto="", search="", limit=250, offset=0):
         clauses = []
         params = []
@@ -910,6 +1086,117 @@ class SniffStore:
             tuple(params),
         )
 
+    def record_domain(self, *, name: str, source: str = "", ip: str = "", port: int = 0, proto: str = ""):
+        name = str(name or "").strip().lower()
+        if not name:
+            return None
+        now = utc_now()
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO domains (name, source, ip, port, proto, hit_count, first_seen, last_seen, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                  source = excluded.source,
+                  ip = excluded.ip,
+                  port = excluded.port,
+                  proto = excluded.proto,
+                  hit_count = hit_count + 1,
+                  last_seen = excluded.last_seen,
+                  updated_at = excluded.updated_at
+                """,
+                (name, str(source or ""), str(ip or ""), safe_int(port, 0), normalize_protocol_name(proto), now, now, now, now),
+            )
+            self._conn.commit()
+        return self._fetchone("SELECT * FROM domains WHERE name = ?", (name,))
+
+    def list_domains(self, *, search="", limit=200, offset=0):
+        clauses = []
+        params = []
+        if search:
+            needle = f"%{str(search).strip().lower()}%"
+            clauses.append("(LOWER(name) LIKE ? OR LOWER(source) LIKE ? OR LOWER(ip) LIKE ?)")
+            params.extend([needle] * 3)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.extend([int(limit), int(offset)])
+        return self._fetchall(
+            f"SELECT * FROM domains {where} ORDER BY last_seen DESC LIMIT ? OFFSET ?",
+            tuple(params),
+        )
+
+    def record_path(self, *, path: str, method: str = "GET", host: str = "", ip: str = "", port: int = 0):
+        path = str(path or "").strip()
+        if not path:
+            return None
+        method = str(method or "GET").strip().upper() or "GET"
+        host = str(host or "").strip().lower()
+        now = utc_now()
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO paths (path, method, host, ip, port, hit_count, first_seen, last_seen, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+                ON CONFLICT(method, path, host) DO UPDATE SET
+                  ip = excluded.ip,
+                  port = excluded.port,
+                  hit_count = hit_count + 1,
+                  last_seen = excluded.last_seen,
+                  updated_at = excluded.updated_at
+                """,
+                (path, method, host, str(ip or ""), safe_int(port, 0), now, now, now, now),
+            )
+            self._conn.commit()
+        return self._fetchone(
+            "SELECT * FROM paths WHERE method = ? AND path = ? AND host = ?",
+            (method, path, host),
+        )
+
+    def list_paths(self, *, search="", limit=200, offset=0):
+        clauses = []
+        params = []
+        if search:
+            needle = f"%{str(search).strip().lower()}%"
+            clauses.append("(LOWER(path) LIKE ? OR LOWER(host) LIKE ? OR LOWER(method) LIKE ? OR LOWER(ip) LIKE ?)")
+            params.extend([needle] * 4)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.extend([int(limit), int(offset)])
+        return self._fetchall(
+            f"SELECT * FROM paths {where} ORDER BY last_seen DESC LIMIT ? OFFSET ?",
+            tuple(params),
+        )
+
+    def list_ip_catalog(self, *, search="", limit=200, offset=0):
+        needle = f"%{str(search).strip().lower()}%" if search else ""
+        where = "WHERE LOWER(ip) LIKE ?" if needle else ""
+        params = [needle] if needle else []
+        params.extend([int(limit), int(offset)])
+        rows = self._fetchall(
+            f"""
+            SELECT
+              ip,
+              COUNT(*) AS hit_count,
+              MIN(created_at) AS first_seen,
+              MAX(created_at) AS last_seen
+            FROM (
+              SELECT src_ip AS ip, created_at FROM packets WHERE src_ip != ''
+              UNION ALL
+              SELECT dst_ip AS ip, created_at FROM packets WHERE dst_ip != ''
+            )
+            {where}
+            GROUP BY ip
+            ORDER BY last_seen DESC
+            LIMIT ? OFFSET ?
+            """,
+            tuple(params),
+        )
+        for row in rows:
+            ip = str(row.get("ip") or "")
+            try:
+                row["private"] = ipaddress.ip_address(ip).is_private
+            except Exception:
+                row["private"] = False
+        return rows
+
     def list_rulesets(self):
         rows = self._fetchall("SELECT * FROM rulesets ORDER BY priority ASC, name ASC")
         for row in rows:
@@ -970,6 +1257,78 @@ class SniffStore:
             raise ValueError("Builtin rulesets are read-only")
         self._execute("DELETE FROM rulesets WHERE id = ?", (str(rule_id),), commit=True)
         return True
+
+    def list_monitors(self):
+        rows = self._fetchall("SELECT * FROM monitors ORDER BY priority ASC, name ASC")
+        for row in rows:
+            row["match"] = _coerce_json(row.get("match_json"), {}) or {}
+            row["action"] = _coerce_json(row.get("action_json"), {}) or {}
+            row["enabled"] = bool(row.get("enabled"))
+        return rows
+
+    def get_monitor(self, monitor_id: str):
+        row = self._fetchone("SELECT * FROM monitors WHERE id = ?", (str(monitor_id),))
+        if not row:
+            return None
+        row["match"] = _coerce_json(row.get("match_json"), {}) or {}
+        row["action"] = _coerce_json(row.get("action_json"), {}) or {}
+        row["enabled"] = bool(row.get("enabled"))
+        return row
+
+    def save_monitor(self, data: dict):
+        normalized = normalize_monitor(data, allow_source=True)
+        monitor_id = normalized["id"]
+        existing = self.get_monitor(monitor_id)
+        if existing and existing.get("source") == "builtin":
+            raise ValueError("Builtin monitors are read-only")
+        now = utc_now()
+        self._execute(
+            """
+            INSERT INTO monitors (id, name, description, enabled, priority, source, mode, match_json, action_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              name = excluded.name,
+              description = excluded.description,
+              enabled = excluded.enabled,
+              priority = excluded.priority,
+              source = excluded.source,
+              mode = excluded.mode,
+              match_json = excluded.match_json,
+              action_json = excluded.action_json,
+              updated_at = excluded.updated_at
+            """,
+            (
+                monitor_id,
+                normalized["name"],
+                normalized.get("description", ""),
+                1 if normalized.get("enabled", True) else 0,
+                int(normalized.get("priority", 100)),
+                str(normalized.get("source") or "custom"),
+                str(normalized.get("mode") or "rule"),
+                json_dumps(normalized.get("match") or {}),
+                json_dumps(normalized.get("action") or {}),
+                now,
+                now,
+            ),
+            commit=True,
+        )
+        return self.get_monitor(monitor_id)
+
+    def delete_monitor(self, monitor_id: str):
+        existing = self.get_monitor(monitor_id)
+        if existing and existing.get("source") == "builtin":
+            raise ValueError("Builtin monitors are read-only")
+        self._execute("DELETE FROM monitors WHERE id = ?", (str(monitor_id),), commit=True)
+        return True
+
+    def get_monitor_filter_enabled(self) -> bool:
+        default = "1" if MONITOR_FILTER_DEFAULT else "0"
+        value = self.get_runtime_config("monitor_filter_enabled", default)
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+    def set_monitor_filter_enabled(self, value: bool):
+        self.set_runtime_config("monitor_filter_enabled", "1" if value else "0")
+        return self.get_monitor_filter_enabled()
 
     def list_count(self, table: str) -> int:
         row = self._fetchone(f"SELECT COUNT(*) AS count FROM {table}")
@@ -1114,6 +1473,9 @@ class SniffStore:
             "count_banners": self.list_count("payloads"),
             "count_tags": self.list_count("tags"),
             "count_rulesets": self.list_count("rulesets"),
+            "count_monitors": self.list_count("monitors"),
+            "count_domains": self.list_count("domains"),
+            "count_paths": self.list_count("paths"),
         }
         return {
             "generated_at": utc_now(),
@@ -2156,6 +2518,11 @@ class SniffStore:
             payload_text,
             payload_hex,
             banner_text,
+            str(packet.get("domain") or "").strip().lower(),
+            str(packet.get("domain_source") or "").strip(),
+            str(packet.get("http_method") or "").strip().upper(),
+            str(packet.get("http_path") or "").strip(),
+            str(packet.get("http_host") or "").strip().lower(),
             json_dumps(tags),
             json_dumps(rule_hits),
             packet.get("raw_packet"),
@@ -2170,9 +2537,10 @@ class SniffStore:
                 (session_id, flow_key, interface, direction, eth_src, eth_dst, eth_type, ip_version,
                  src_ip, dst_ip, proto, src_port, dst_port, ttl, hop_limit, length, payload_len,
                  state, scan_state, tcp_flags, icmp_type, icmp_code, arp_opcode, summary,
-                 payload_text, payload_hex, banner_text, tags_json, rule_hits_json, raw_packet,
+                 payload_text, payload_hex, banner_text, domain, domain_source, http_method,
+                 http_path, http_host, tags_json, rule_hits_json, raw_packet,
                  created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (session_id, *packet_row),
             )
@@ -2308,6 +2676,8 @@ class SniffStore:
         self._trim_table("payloads", PAYLOAD_TABLE_LIMIT)
         self._trim_table("flows", FLOW_TABLE_LIMIT)
         self._trim_table("tags", TAG_TABLE_LIMIT)
+        self._trim_table("domains", DOMAIN_TABLE_LIMIT)
+        self._trim_table("paths", PATH_TABLE_LIMIT)
 
     def _trim_table(self, table: str, limit: int):
         with self._lock:

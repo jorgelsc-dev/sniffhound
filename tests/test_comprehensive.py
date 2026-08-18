@@ -311,12 +311,15 @@ class TestSnifferParsing(unittest.TestCase):
         self.assertTrue(packet["flow_key"].startswith("stp|"))
 
     def test_parse_unknown_ipv4_protocol_as_unknown(self):
+        # Protocol 253 is IANA-reserved "for experimentation" and will never
+        # get a dedicated parser, unlike protocol 47 (GRE) which sniffer.py
+        # now parses explicitly — see test_new_protocols.py for that coverage.
         packet = self.sniffer.parse_packet(
             self._build_raw_ipv4_packet(
-                proto=47,
+                proto=253,
                 src_ip="10.10.10.10",
                 dst_ip="8.8.8.8",
-                body=b"GRE?",
+                body=b"???",
             ),
             interface="eth0",
         )
@@ -325,7 +328,7 @@ class TestSnifferParsing(unittest.TestCase):
         self.assertEqual(packet["proto"], "unknown")
         self.assertEqual(packet["src_ip"], "10.10.10.10")
         self.assertEqual(packet["dst_ip"], "8.8.8.8")
-        self.assertIn("IPv4 protocol 47", packet["summary"])
+        self.assertIn("IPv4 protocol 253", packet["summary"])
 
     def test_parse_sctp_packet(self):
         body = (
@@ -372,7 +375,11 @@ class TestSnifferParsing(unittest.TestCase):
         packet = self.sniffer.parse_packet(bytes(header) + hop_by_hop + udp, interface="eth0")
 
         self.assertIsNotNone(packet)
-        self.assertEqual(packet["proto"], "udp")
+        # Port 5353 now gets its own "mdns" proto tag (sniffer.py parses it
+        # via the shared DNS-message parser) rather than the generic "udp" —
+        # what this test actually exercises, the hop-by-hop extension header
+        # unwrap reaching the inner UDP payload, still works correctly.
+        self.assertEqual(packet["proto"], "mdns")
         self.assertEqual(packet["ip_version"], 6)
         self.assertEqual(packet["src_port"], 5353)
         self.assertEqual(packet["dst_port"], 5353)
@@ -596,13 +603,6 @@ class TestConcurrency(unittest.TestCase):
 
 class TestSettings(unittest.TestCase):
     """Test settings and environment configuration."""
-
-    def test_capture_demo_mode_setting(self):
-        """CAPTURE_DEMO_MODE should be configurable."""
-        from sniffhound.settings import CAPTURE_DEMO_MODE
-
-        # Default should be False (demo disabled)
-        self.assertFalse(CAPTURE_DEMO_MODE)
 
     def test_db_path_configuration(self):
         """DB_PATH should use environment variable."""

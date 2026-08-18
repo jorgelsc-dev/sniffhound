@@ -1,0 +1,216 @@
+"""Stateful, multi-packet anomaly detection.
+
+The declarative rule/monitor engine in `rulesets.py`/`monitors.py` is a pure,
+memoryless function of a single packet — it cannot express "N events from the
+same source within T seconds" or "this IP has claimed two different MACs"
+conditions. This module fills that gap with a small set of purpose-built,
+in-process detectors (state lives in memory only, not persisted across
+restarts — acceptable for this scope since these are live-traffic signals).
+
+`AnomalyEngine.evaluate()` is called unconditionally from
+`Sniffer._store_packet()` for every captured packet (independent of the
+"store only detected traffic" toggle, since a detector that only saw already
+-matched traffic could never build a useful baseline) and returns hits shaped
+identically to `monitors.evaluate_packet()`'s output, so they merge into the
+exact same tagging/persistence pipeline with no schema changes.
+"""
+
+from __future__ import annotations
+
+import collections
+import time
+
+from . import settings
+
+
+class ArpSpoofDetector:
+    """Flags an IP address whose ARP-announced MAC address changes."""
+
+    def __init__(self):
+        self._bindings: dict[str, str] = {}
+        self._last_alert: dict[str, float] = {}
+
+    def evaluate(self, packet: dict) -> dict | None:
+        if packet.get("proto") != "arp" or packet.get("arp_opcode") != 2:
+            return None
+        ip = str(packet.get("src_ip") or "").strip()
+        mac = str(packet.get("eth_src") or "").strip().lower()
+        if not ip or not mac or ip == "0.0.0.0":
+            return None
+        if mac in ("ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00"):
+            return None
+        known = self._bindings.get(ip)
+        if known is None:
+            self._bindings[ip] = mac
+            return None
+        if known == mac:
+            return None
+        now = time.monotonic()
+        last = self._last_alert.get(ip, 0.0)
+        self._bindings[ip] = mac
+        if now - last < settings.ARP_SPOOF_COOLDOWN_SECONDS:
+            return None
+        self._last_alert[ip] = now
+        return {"detail": f"{ip} now claimed by {mac}, previously {known}"}
+
+
+class _SlidingWindowFloodDetector:
+    """Shared "N events per source within T seconds" bookkeeping."""
+
+    def __init__(self, window_seconds: int, threshold: int):
+        self._window_seconds = window_seconds
+        self._threshold = threshold
+        self._events: dict[str, collections.deque] = collections.defaultdict(collections.deque)
+
+    def _record(self, key: str) -> bool:
+        now = time.monotonic()
+        events = self._events[key]
+        events.append(now)
+        cutoff = now - self._window_seconds
+        while events and events[0] < cutoff:
+            events.popleft()
+        if len(events) >= self._threshold:
+            events.clear()  # re-arm so a sustained flood doesn't tag every single packet
+            return True
+        return False
+
+
+class IcmpFloodDetector(_SlidingWindowFloodDetector):
+    def __init__(self):
+        super().__init__(settings.ICMP_FLOOD_WINDOW_SECONDS, settings.ICMP_FLOOD_THRESHOLD)
+
+    def evaluate(self, packet: dict) -> dict | None:
+        if packet.get("proto") not in ("icmp", "icmpv6"):
+            return None
+        key = str(packet.get("src_ip") or "").strip()
+        if not key:
+            return None
+        if self._record(key):
+            return {
+                "detail": f"{key} sent {self._threshold}+ ICMP packets within {self._window_seconds}s"
+            }
+        return None
+
+
+class WifiDeauthFloodDetector(_SlidingWindowFloodDetector):
+    def __init__(self):
+        super().__init__(settings.WIFI_DEAUTH_WINDOW_SECONDS, settings.WIFI_DEAUTH_THRESHOLD)
+
+    def evaluate(self, packet: dict) -> dict | None:
+        if packet.get("proto") != "wifi-mgmt" or packet.get("wifi_subtype") not in ("deauth", "disassoc"):
+            return None
+        key = str(packet.get("wifi_bssid") or packet.get("eth_dst") or "").strip()
+        if not key:
+            return None
+        if self._record(key):
+            return {
+                "detail": f"{key} sent {self._threshold}+ deauth/disassoc frames within {self._window_seconds}s"
+            }
+        return None
+
+
+class PortScanDetector:
+    """Flags a source that touches many distinct destination ports within a
+    short window — classic TCP/UDP port-scan/reconnaissance behavior
+    (Suricata's SCAN category)."""
+
+    def __init__(self):
+        self._window_seconds = settings.PORT_SCAN_WINDOW_SECONDS
+        self._threshold = settings.PORT_SCAN_DISTINCT_PORTS_THRESHOLD
+        self._events: dict[str, collections.deque] = collections.defaultdict(collections.deque)
+        self._last_alert: dict[str, float] = {}
+
+    def evaluate(self, packet: dict) -> dict | None:
+        if packet.get("proto") not in ("tcp", "udp"):
+            return None
+        src_ip = str(packet.get("src_ip") or "").strip()
+        dst_port = packet.get("dst_port")
+        if not src_ip or not dst_port:
+            return None
+        now = time.monotonic()
+        events = self._events[src_ip]
+        events.append((now, dst_port))
+        cutoff = now - self._window_seconds
+        while events and events[0][0] < cutoff:
+            events.popleft()
+        distinct_ports = {port for _, port in events}
+        if len(distinct_ports) < self._threshold:
+            return None
+        last = self._last_alert.get(src_ip, 0.0)
+        if now - last < self._window_seconds:
+            return None
+        self._last_alert[src_ip] = now
+        return {
+            "detail": f"{src_ip} touched {len(distinct_ports)} distinct ports within {self._window_seconds}s"
+        }
+
+
+class WifiRogueApDetector:
+    """Flags an SSID broadcast from more than one BSSID."""
+
+    def __init__(self):
+        self._ssid_bssids: dict[str, set[str]] = collections.defaultdict(set)
+        self._last_alert: dict[str, float] = {}
+
+    def evaluate(self, packet: dict) -> dict | None:
+        if packet.get("proto") != "wifi-mgmt" or packet.get("wifi_subtype") not in ("beacon", "probe-resp"):
+            return None
+        ssid = str(packet.get("wifi_ssid") or "").strip()
+        bssid = str(packet.get("wifi_bssid") or "").strip().lower()
+        if not ssid or not bssid:
+            return None
+        bssids = self._ssid_bssids[ssid]
+        bssids.add(bssid)
+        if len(bssids) <= 1:
+            return None
+        now = time.monotonic()
+        last = self._last_alert.get(ssid, 0.0)
+        if now - last < settings.ROGUE_AP_COOLDOWN_SECONDS:
+            return None
+        self._last_alert[ssid] = now
+        return {
+            "detail": f"SSID '{ssid}' seen from {len(bssids)} different BSSIDs: {', '.join(sorted(bssids))}"
+        }
+
+
+class AnomalyEngine:
+    def __init__(self):
+        self._detectors = {
+            "builtin-arp-spoof": ArpSpoofDetector(),
+            "builtin-icmp-flood": IcmpFloodDetector(),
+            "builtin-wifi-deauth-flood": WifiDeauthFloodDetector(),
+            "builtin-wifi-rogue-ap": WifiRogueApDetector(),
+            "builtin-port-scan": PortScanDetector(),
+        }
+
+    def evaluate(self, packet: dict, monitors: list[dict]) -> list[dict]:
+        if not monitors:
+            return []
+        by_id = {
+            str(monitor.get("id") or ""): monitor
+            for monitor in monitors
+            if str(monitor.get("mode") or "").strip().lower() == "stateful"
+        }
+        hits = []
+        for monitor_id, detector in self._detectors.items():
+            monitor = by_id.get(monitor_id)
+            if not monitor or not monitor.get("enabled", True):
+                continue
+            try:
+                hit = detector.evaluate(packet)
+            except Exception:
+                hit = None
+            if not hit:
+                continue
+            action = monitor.get("action") if isinstance(monitor.get("action"), dict) else {}
+            hits.append(
+                {
+                    "monitor_id": monitor_id,
+                    "monitor_name": monitor.get("name"),
+                    "tag": action.get("tag") or monitor_id,
+                    "label": action.get("label") or monitor.get("name"),
+                    "severity": action.get("severity") or "info",
+                    "detail": hit.get("detail", ""),
+                }
+            )
+        return hits

@@ -3,6 +3,7 @@ from __future__ import annotations
 import errno
 import json
 import mimetypes
+import sys
 from functools import wraps
 from os import getenv
 import threading
@@ -18,19 +19,19 @@ from wsbuilder import App, Response, parse_close_payload
 
 from . import __version__
 from .auth import authenticate_request, extract_token_from_header, REQUIRE_AUTH
+from .ipc import IpcClient
 from .settings import (
     CAPTURE_AUTO_START,
-    CAPTURE_INTERFACES,
     DB_PATH,
     DEFAULT_DOCS_DESCRIPTION,
     DEFAULT_DOCS_TITLE,
     HOST,
     PORT,
-    RUNTIME_MODE,
+    resolve_ipc_connect_timeout,
+    resolve_ipc_socket,
+    resolve_ipc_token,
 )
-from .honeypot import HoneypotEngine
 from .process_control import process_shutdown_requested, request_process_shutdown
-from .sniffer import Sniffer
 from .store import SniffStore
 from .utils import bytes_to_hex_preview, clamp_int, json_dumps, normalize_protocol_name, normalize_text, safe_float, safe_int, utc_now
 
@@ -82,6 +83,7 @@ SPA_ROUTES = (
     "/tags",
     "/catalog",
     "/soc",
+    "/monitors",
     "/api",
 )
 
@@ -257,154 +259,80 @@ class WebSocketHub:
 
 
 hub = WebSocketHub()
-sniffer = Sniffer(
-    store,
-    hub,
-    interfaces=CAPTURE_INTERFACES,
-)
-honeypot = HoneypotEngine(store, hub)
 
 
-def _normalize_runtime_mode(value: str) -> str:
-    mode = str(value or "").strip().lower()
-    if mode not in {"sniffer", "honeypot"}:
-        return "sniffer"
-    return mode
+class RuntimeControllerClient:
+    """Web-process proxy for the real `RuntimeController`, which lives in
+    the privileged capture process (see `capture_service.py`). Same public
+    method names as that class so none of the HTTP routes below need to
+    know capture moved to a different process."""
 
+    def __init__(self, ipc_client: IpcClient):
+        self._ipc_client = ipc_client
+        self.mode = "sniffer"
 
-def _normalize_interface_selection(raw) -> list[str]:
-    if raw is None:
-        return []
-    if isinstance(raw, str):
-        raw_items = [raw]
-    elif isinstance(raw, (list, tuple, set)):
-        raw_items = list(raw)
-    else:
-        raw_items = [raw]
-
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for item in raw_items:
-        value = str(item or "").strip()
-        if not value or value in seen:
-            continue
-        normalized.append(value)
-        seen.add(value)
-    return normalized
-
-
-def _read_stored_sniffer_interfaces() -> list[str]:
-    stored = str(store.get_runtime_config("sniffer_interfaces", "") or "").strip()
-    if stored:
-        try:
-            parsed = json.loads(stored)
-        except Exception:
-            parsed = [item for item in stored.split(",")]
-        normalized = _normalize_interface_selection(parsed)
-        if normalized or stored in {"[]", ""}:
-            return normalized
-
-    legacy = str(store.get_runtime_config("sniffer_interface", "") or "").strip()
-    return _normalize_interface_selection(legacy)
-
-
-def _configured_runtime_mode() -> str:
-    return _normalize_runtime_mode(RUNTIME_MODE)
-
-
-class RuntimeController:
-    def __init__(self):
-        self._lock = threading.RLock()
-        self.mode = _configured_runtime_mode()
-        store.set_runtime_config("runtime_mode", self.mode)
-        try:
-            sniffer.set_interfaces(_read_stored_sniffer_interfaces())
-        except ValueError:
-            store.set_runtime_config("sniffer_interfaces", "[]")
-            store.set_runtime_config("sniffer_interface", "")
-
-    def current_engine(self):
-        return honeypot if self.mode == "honeypot" else sniffer
+    def _remember_mode(self, snapshot):
+        if isinstance(snapshot, dict) and snapshot.get("mode"):
+            self.mode = str(snapshot["mode"])
+        return snapshot
 
     def snapshot(self):
-        active = self.current_engine().snapshot()
-        return {
-            "mode": self.mode,
-            "supported_modes": ["sniffer", "honeypot"],
-            "auto_start": bool(CAPTURE_AUTO_START),
-            "active": active,
-            "sniffer": sniffer.snapshot(),
-            "honeypot": honeypot.snapshot(),
-        }
-
-    def _broadcast_snapshot(self, snapshot: dict):
-        hub.broadcast(
-            {
-                "type": "runtime_mode",
-                "runtime": snapshot,
-                "generated_at": utc_now(),
-            }
-        )
+        return self._remember_mode(self._ipc_client.call("snapshot"))
 
     def start(self):
-        with self._lock:
-            self.current_engine().start()
-            snapshot = self.snapshot()
-        self._broadcast_snapshot(snapshot)
-        return snapshot
+        return self._remember_mode(self._ipc_client.call("start"))
 
     def stop(self):
-        with self._lock:
-            self.current_engine().stop()
-            snapshot = self.snapshot()
-        self._broadcast_snapshot(snapshot)
-        return snapshot
+        return self._remember_mode(self._ipc_client.call("stop"))
 
     def set_mode(self, mode: str):
-        normalized = _normalize_runtime_mode(mode)
-        with self._lock:
-            if normalized == self.mode:
-                if CAPTURE_AUTO_START and not self.current_engine().snapshot().get("running"):
-                    self.current_engine().start()
-                store.set_runtime_config("runtime_mode", self.mode)
-                snapshot = self.snapshot()
-            else:
-                previous = self.current_engine()
-                previous.stop()
-                self.mode = normalized
-                store.set_runtime_config("runtime_mode", self.mode)
-                if CAPTURE_AUTO_START:
-                    self.current_engine().start()
-                snapshot = self.snapshot()
-        self._broadcast_snapshot(snapshot)
-        return snapshot
+        return self._remember_mode(self._ipc_client.call("set_mode", mode=mode))
 
     def set_sniffer_interfaces(self, interfaces=None):
-        selected = _normalize_interface_selection(interfaces)
-        with self._lock:
-            previous_interfaces = tuple(sniffer.snapshot().get("selected_interfaces") or ())
-            was_running = bool(sniffer.snapshot().get("running"))
-            sniffer.set_interfaces(selected)
-            store.set_runtime_config("sniffer_interfaces", json.dumps(selected))
-            store.set_runtime_config("sniffer_interface", selected[0] if len(selected) == 1 else "")
-            if self.mode == "sniffer" and was_running and tuple(selected) != previous_interfaces:
-                sniffer.restart()
-            snapshot = self.snapshot()
-            hub.broadcast(
-                {
-                    "type": "runtime_mode",
-                    "runtime": snapshot,
-                    "generated_at": utc_now(),
-                }
-            )
-            return snapshot
+        return self._remember_mode(self._ipc_client.call("set_sniffer_interfaces", interfaces=interfaces))
 
     def set_sniffer_interface(self, interface: str = ""):
-        selected = str(interface or "").strip()
-        return self.set_sniffer_interfaces([selected] if selected else [])
+        return self._remember_mode(self._ipc_client.call("set_sniffer_interface", interface=interface))
+
+    def set_wifi_monitor(self, enabled: bool, interface: str = ""):
+        return self._remember_mode(self._ipc_client.call("set_wifi_monitor", enabled=enabled, interface=interface))
+
+    def wifi_snapshot(self):
+        return self._ipc_client.call("wifi_snapshot")
 
 
-runtime = RuntimeController()
+def _on_capture_event(payload: dict) -> None:
+    hub.broadcast(payload)
+    if payload.get("type") == "runtime_mode":
+        mode = (payload.get("runtime") or {}).get("mode")
+        if mode:
+            runtime.mode = str(mode)
+
+
+ipc_client = IpcClient(
+    resolve_ipc_socket(PORT),
+    resolve_ipc_token(),
+    on_event=_on_capture_event,
+    connect_timeout=resolve_ipc_connect_timeout(),
+)
+runtime = RuntimeControllerClient(ipc_client)
+
+
+def connect_capture_service() -> bool:
+    """Connect to the privileged capture process. Must be called once
+    before serving requests - `bootstrap_capture()`/the runtime endpoints
+    would otherwise block/fail on the first real call instead of failing
+    fast with a clear error."""
+    try:
+        ipc_client.connect()
+    except Exception as exc:
+        print(f"[!] Could not connect to the capture service: {exc}", file=sys.stderr)
+        return False
+    try:
+        runtime.snapshot()
+    except Exception:
+        pass
+    return True
 AUTH_SESSION_PATH = "/api/auth/session"
 WS_AUTH_CLOSE_CODE = 4401
 WS_KEEPALIVE_INTERVAL_SECONDS = 25.0
@@ -446,6 +374,8 @@ ENDPOINTS = [
     {"method": "GET", "path": "/api/soc/analysis/", "desc": "Iterative SOC triage analysis."},
     {"method": "GET", "path": "/api/runtime/", "desc": "Runtime mode and engine snapshot."},
     {"method": "POST", "path": "/api/runtime/", "desc": "Switch runtime mode or update the sniffer interface."},
+    {"method": "GET", "path": "/api/wifi/monitor", "desc": "WiFi 802.11 monitor-mode capture status."},
+    {"method": "POST", "path": "/api/wifi/monitor", "desc": "Toggle WiFi 802.11 monitor-mode capture on an interface."},
     {"method": "GET", "path": "/api/ws/clients", "desc": "Connected WebSocket clients."},
     {"method": "POST", "path": "/api/ws/broadcast", "desc": "Broadcast a WebSocket payload."},
     {"method": "POST", "path": "/api/ws/ping", "desc": "Ping all WebSocket clients."},
@@ -471,6 +401,16 @@ ENDPOINTS = [
     {"method": "POST", "path": "/api/catalog/ip-presets/", "desc": "Create capture preset."},
     {"method": "PUT", "path": "/api/catalog/ip-presets/", "desc": "Update capture preset."},
     {"method": "DELETE", "path": "/api/catalog/ip-presets/", "desc": "Delete capture preset."},
+    {"method": "GET", "path": "/api/monitors/", "desc": "List detection monitors."},
+    {"method": "POST", "path": "/api/monitors/", "desc": "Create a custom monitor."},
+    {"method": "PUT", "path": "/api/monitors/", "desc": "Update a custom monitor."},
+    {"method": "DELETE", "path": "/api/monitors/", "desc": "Delete a custom monitor."},
+    {"method": "GET", "path": "/api/monitors/config", "desc": "Read the monitor persistence-filter toggle."},
+    {"method": "POST", "path": "/api/monitors/config", "desc": "Toggle whether only detected traffic is persisted."},
+    {"method": "GET", "path": "/api/domains/", "desc": "Searchable catalog of domains seen in DNS/HTTP/TLS traffic."},
+    {"method": "GET", "path": "/api/paths/", "desc": "Searchable catalog of HTTP request paths."},
+    {"method": "GET", "path": "/api/intel/ips/", "desc": "Searchable catalog of IPs seen in stored traffic."},
+    {"method": "GET", "path": "/api/monitors/packets/", "desc": "Packets that matched a given monitor."},
 ]
 
 _STATIC_ROUTES_REGISTERED = False
@@ -769,6 +709,22 @@ def _ruleset_row(row: dict) -> dict:
         "enabled": bool(row.get("enabled")),
         "priority": row.get("priority") or 0,
         "source": row.get("source") or "custom",
+        "match": row.get("match") or {},
+        "action": row.get("action") or {},
+        "created_at": row.get("created_at") or utc_now(),
+        "updated_at": row.get("updated_at") or row.get("created_at") or utc_now(),
+    }
+
+
+def _monitor_row(row: dict) -> dict:
+    return {
+        "id": row.get("id"),
+        "name": row.get("name") or "",
+        "description": row.get("description") or "",
+        "enabled": bool(row.get("enabled")),
+        "priority": row.get("priority") or 0,
+        "source": row.get("source") or "custom",
+        "mode": row.get("mode") or "rule",
         "match": row.get("match") or {},
         "action": row.get("action") or {},
         "created_at": row.get("created_at") or utc_now(),
@@ -1583,6 +1539,16 @@ def runtime_api(request):
     return snapshot
 
 
+@app.api("/api/wifi/monitor", methods=("GET", "POST"))
+def wifi_monitor_api(request):
+    if request.method.upper() == "GET":
+        return runtime.wifi_snapshot()
+    payload = _read_json_body(request)
+    enabled = bool(payload.get("enabled"))
+    interface = str(payload.get("interface") or "").strip()
+    return runtime.set_wifi_monitor(enabled, interface)
+
+
 @app.api("/api/catalog/file/banner-rules", methods=("GET", "POST"))
 def file_banner_rules(request):
     filename = "banner_regex_rules.json"
@@ -1698,6 +1664,68 @@ def catalog_presets(request):
         store.write_catalog_file(filename, rows)
         return {"status": "ok"}
     raise ValueError("Unsupported method")
+
+
+@app.api("/api/monitors/", methods=("GET", "POST", "PUT", "DELETE"))
+def monitors_collection(request):
+    if request.method.upper() == "GET":
+        return [_monitor_row(row) for row in store.list_monitors()]
+    payload = _read_json_body(request)
+    if request.method.upper() in {"POST", "PUT"}:
+        return _monitor_row(store.save_monitor(payload))
+    if request.method.upper() == "DELETE":
+        monitor_id = str(payload.get("id") or "").strip()
+        if not monitor_id:
+            raise ValueError("id is required")
+        store.delete_monitor(monitor_id)
+        return {"status": "ok"}
+    raise ValueError("Unsupported method")
+
+
+@app.api("/api/monitors/config", methods=("GET", "POST"))
+def monitors_config(request):
+    if request.method.upper() == "GET":
+        return {"filter_enabled": store.get_monitor_filter_enabled()}
+    payload = _read_json_body(request)
+    if "filter_enabled" not in payload:
+        raise ValueError("filter_enabled is required")
+    enabled = bool(payload.get("filter_enabled"))
+    return {"filter_enabled": store.set_monitor_filter_enabled(enabled)}
+
+
+@app.api("/api/domains/", methods=("GET",))
+def domains_collection(request):
+    search = str(request.query.get("search") or "").strip()
+    limit = _normalize_limit(request.query.get("limit"), default=200)
+    offset = _normalize_offset(request.query.get("offset"))
+    return store.list_domains(search=search, limit=limit, offset=offset)
+
+
+@app.api("/api/paths/", methods=("GET",))
+def paths_collection(request):
+    search = str(request.query.get("search") or "").strip()
+    limit = _normalize_limit(request.query.get("limit"), default=200)
+    offset = _normalize_offset(request.query.get("offset"))
+    return store.list_paths(search=search, limit=limit, offset=offset)
+
+
+@app.api("/api/intel/ips/", methods=("GET",))
+def ip_catalog_collection(request):
+    search = str(request.query.get("search") or "").strip()
+    limit = _normalize_limit(request.query.get("limit"), default=200)
+    offset = _normalize_offset(request.query.get("offset"))
+    return store.list_ip_catalog(search=search, limit=limit, offset=offset)
+
+
+@app.api("/api/monitors/packets/", methods=("GET",))
+def monitor_matched_packets(request):
+    monitor_id = str(request.query.get("monitor_id") or "").strip()
+    if not monitor_id:
+        raise ValueError("monitor_id is required")
+    search = str(request.query.get("search") or "").strip()
+    limit = _normalize_limit(request.query.get("limit"), default=200)
+    offset = _normalize_offset(request.query.get("offset"))
+    return store.list_packets_by_monitor(monitor_id, search=search, limit=limit, offset=offset)
 
 
 def _apply_api_auth_guards():
@@ -1820,11 +1848,11 @@ def shutdown_capture():
     except Exception:
         pass
     try:
-        sniffer.stop()
+        ipc_client.call("shutdown")
     except Exception:
         pass
     try:
-        honeypot.stop()
+        ipc_client.close()
     except Exception:
         pass
     try:

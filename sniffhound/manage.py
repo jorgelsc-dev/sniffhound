@@ -5,14 +5,17 @@ import os
 import shlex
 import socket
 import shutil
+import subprocess
 import sys
 import threading
+import time
 import unicodedata
 import webbrowser
 from dataclasses import dataclass
 
+from .ipc import generate_ipc_token
 from .process_control import request_process_shutdown, reset_process_shutdown_request
-from .settings import CAPTURE_AUTO_START, CAPTURE_DEMO_MODE, HOST, PORT
+from .settings import HOST, PORT, resolve_ipc_socket, resolve_ipc_token
 
 try:
     import readline
@@ -188,53 +191,71 @@ def _print_address_in_use_error(host: str, preferred_port: int) -> None:
     )
 
 
-def _admin_relaunch_required() -> bool:
-    override = os.getenv("SNIFFHOUND_REQUIRE_ADMIN")
-    if override is not None:
-        return override.strip().lower() in {"1", "true", "yes", "on", "y"}
-    return bool(CAPTURE_AUTO_START and not CAPTURE_DEMO_MODE)
+# Policy: capture (raw-socket sniffing, honeypot low-port binds, WiFi
+# monitor mode) always requires root — a demo/no-capture mode that silently
+# runs unprivileged is more confusing than useful, and there is no env var
+# to bypass this. This process (the web server) never elevates itself
+# anymore; it spawns `sniffhound-capture` as a privileged child and talks
+# to it over the local IPC socket (see sniffhound/ipc.py,
+# sniffhound/capture_service.py). If elevation of the child fails, this
+# process refuses to start rather than silently serving without capture.
 
 
-def _is_running_as_admin() -> bool:
-    geteuid = getattr(os, "geteuid", None)
-    if callable(geteuid):
-        try:
-            return int(geteuid()) == 0
-        except Exception:
-            return False
-    return False
-
-
-def _build_admin_relaunch_command() -> list[str]:
+def _build_capture_relaunch_command(ipc_socket: str, ipc_token: str, owner_uid: int) -> list[str]:
     command = ["sudo", "env"]
     for key in sorted(os.environ):
         if key.startswith("SNIFFHOUND_"):
             command.append(f"{key}={os.environ[key]}")
-    command.extend([sys.executable, "-m", "sniffhound.manage", *sys.argv[1:]])
+    # The Debian package doesn't install `sniffhound` into system
+    # site-packages - it's only importable via PYTHONPATH pointing at the
+    # vendored copy under /usr/lib/sniffhound/vendor (see
+    # scripts/deb_wrapper.sh). `sudo env ...` does not inherit our
+    # PYTHONPATH on its own (sudo resets the environment by default), so it
+    # has to be forwarded explicitly or the privileged child can't import
+    # the package at all.
+    pythonpath = os.environ.get("PYTHONPATH")
+    if pythonpath:
+        command.append(f"PYTHONPATH={pythonpath}")
+    command.append(f"SNIFFHOUND_IPC_SOCKET={ipc_socket}")
+    command.append(f"SNIFFHOUND_IPC_TOKEN={ipc_token}")
+    command.append(f"SNIFFHOUND_IPC_OWNER_UID={owner_uid}")
+    command.extend([sys.executable, "-m", "sniffhound.capture_service"])
     return command
 
 
-def _print_admin_required_message() -> None:
-    command = shlex.join([sys.executable, "-m", "sniffhound.manage", *sys.argv[1:]])
-    print("[!] SniffHound needs administrator privileges for packet capture.", file=sys.stderr)
-    print(f"    Re-run with: sudo {command}", file=sys.stderr)
+def _print_capture_elevation_error() -> None:
+    print("[!] The capture process requires root/administrator privileges and will not start without them.", file=sys.stderr)
+    print("    Raw-socket packet capture is not possible as a regular user.", file=sys.stderr)
+    print("    Install sudo, or run `sniffhound-capture` yourself as root and point this process at it", file=sys.stderr)
+    print("    with SNIFFHOUND_IPC_SOCKET / SNIFFHOUND_IPC_TOKEN.", file=sys.stderr)
 
 
-def _ensure_admin_privileges() -> bool:
-    if not _admin_relaunch_required() or _is_running_as_admin():
-        return True
-
+def _spawn_capture_child(ipc_socket: str, ipc_token: str):
     if shutil.which("sudo") is None:
-        _print_admin_required_message()
-        return False
-
+        _print_capture_elevation_error()
+        return None
+    command = _build_capture_relaunch_command(ipc_socket, ipc_token, os.getuid())
     try:
-        os.execvp("sudo", _build_admin_relaunch_command())
+        return subprocess.Popen(command)
     except OSError as exc:
-        print(f"[!] Unable to elevate SniffHound automatically: {exc}", file=sys.stderr)
-        _print_admin_required_message()
-        return False
-    return True
+        print(f"[!] Unable to launch the capture process: {exc}", file=sys.stderr)
+        return None
+
+
+def _stop_capture_child(process, *, timeout: float = 5.0) -> None:
+    if process is None or process.poll() is not None:
+        return
+    try:
+        process.terminate()
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        try:
+            process.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            pass
+    except Exception:
+        pass
 
 
 def _print_console_help() -> None:
@@ -494,6 +515,74 @@ def _stop_interactive_console(
 
 
 def main():
+    """Combined single-command entry point (`sniffhound`). Spawns a
+    privileged `sniffhound-capture` child and runs the unprivileged web
+    server itself, connected over local IPC. See CLAUDE.md for why capture
+    still unconditionally requires root."""
+    reset_process_shutdown_request()
+    host = str(HOST)
+    requested_port = int(PORT)
+    selected_port = _select_listen_port(host, requested_port)
+    console_thread = None
+    capture_process = None
+
+    if selected_port is None:
+        _print_address_in_use_error(host, requested_port)
+        return 1
+
+    ipc_socket = resolve_ipc_socket(selected_port)
+    ipc_token = resolve_ipc_token() or generate_ipc_token()
+    os.environ["SNIFFHOUND_IPC_SOCKET"] = ipc_socket
+    os.environ["SNIFFHOUND_IPC_TOKEN"] = ipc_token
+
+    capture_process = _spawn_capture_child(ipc_socket, ipc_token)
+    if capture_process is None:
+        return 1
+
+    from .app import app, append_chat_message, bootstrap_capture, connect_capture_service, hub, runtime, shutdown_capture
+
+    try:
+        time.sleep(0.2)
+        if capture_process.poll() is not None:
+            print(f"[!] Capture process exited immediately (code {capture_process.returncode}).", file=sys.stderr)
+            return 1
+        if not connect_capture_service():
+            print("[!] SniffHound cannot start without the capture process. See the error above.", file=sys.stderr)
+            return 1
+
+        if selected_port != requested_port:
+            _print_port_fallback_notice(requested_port, selected_port)
+        _print_startup_banner(host, selected_port)
+        console_thread = _start_interactive_console(
+            host=host,
+            port=selected_port,
+            runtime=runtime,
+            hub=hub,
+            append_chat_message=append_chat_message,
+        )
+        bootstrap_capture()
+        app.run(host, selected_port)
+    except OSError as exc:
+        if exc.errno == errno.EADDRINUSE:
+            _print_address_in_use_error(host, requested_port)
+            return 1
+        raise
+    except KeyboardInterrupt:
+        print("\n\n🛑 Shutting down gracefully...\n")
+    finally:
+        _stop_interactive_console(console_thread)
+        shutdown_capture()
+        _stop_capture_child(capture_process)
+        reset_process_shutdown_request()
+    return 0
+
+
+def main_web():
+    """Standalone entry point for the unprivileged web process
+    (`sniffhound-web`). Never elevates privileges and never spawns a
+    capture child - expects SNIFFHOUND_IPC_SOCKET/SNIFFHOUND_IPC_TOKEN to
+    already point at a `sniffhound-capture` process started separately
+    (its own systemd unit, a different user, a different host, ...)."""
     reset_process_shutdown_request()
     host = str(HOST)
     requested_port = int(PORT)
@@ -504,12 +593,13 @@ def main():
         _print_address_in_use_error(host, requested_port)
         return 1
 
-    if not _ensure_admin_privileges():
-        return 1
-
-    from .app import app, append_chat_message, bootstrap_capture, hub, runtime, shutdown_capture
+    from .app import app, append_chat_message, bootstrap_capture, connect_capture_service, hub, runtime, shutdown_capture
 
     try:
+        if not connect_capture_service():
+            print("[!] sniffhound-web cannot start without a reachable capture process.", file=sys.stderr)
+            return 1
+
         if selected_port != requested_port:
             _print_port_fallback_notice(requested_port, selected_port)
         _print_startup_banner(host, selected_port)

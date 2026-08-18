@@ -62,9 +62,9 @@
         <v-card-title class="text-h5 pt-6">Security Code</v-card-title>
         <v-card-text class="pt-4">
           <p class="auth-dialog-copy">
-            Copy the 8-character code from the `sniffhound` terminal. It only lives in this
-            tab's memory, is sent as `Authorization: Bearer` to the API, and is also attached
-            to the WebSocket handshake.
+            Copy the 8-character code from the `sniffhound` terminal. It's saved in this
+            browser's local storage so it survives refreshes, is sent as `Authorization: Bearer`
+            to the API, and is also attached to the WebSocket handshake.
           </p>
           <v-text-field
             ref="authInput"
@@ -120,11 +120,9 @@ export default {
       navItems: [
         { label: "Dashboard", to: "/", icon: "mdi-view-dashboard" },
         { label: "Radar", to: "/radar", icon: "mdi-radar" },
-        { label: "Investigate", to: "/investigate", icon: "mdi-magnify" },
         { label: "Sniffer", to: "/sniffer", icon: "mdi-ethernet" },
-        { label: "SOC", to: "/soc", icon: "mdi-shield-search" },
-        { label: "Protocols", to: "/protocols", icon: "mdi-shuffle-variant" },
         { label: "Honeypot", to: "/honeypot", icon: "mdi-shield-bug" },
+        { label: "Monitors", to: "/monitors", icon: "mdi-target-account" },
       ],
     };
   },

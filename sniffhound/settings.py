@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from os import getenv
+from pathlib import Path
 
 
 def _env(key: str, default: str = "") -> str:
@@ -35,7 +36,6 @@ DEBUG = _as_bool(_env("SNIFFHOUND_DEBUG", "1"), default=True)
 RUNTIME_MODE = str(_env("SNIFFHOUND_RUNTIME_MODE", _env("SNIFFHOUND_MODE", "sniffer"))).strip().lower() or "sniffer"
 
 CAPTURE_AUTO_START = _as_bool(_env("SNIFFHOUND_CAPTURE_AUTO_START", "0"), default=False)
-CAPTURE_DEMO_MODE = _as_bool(_env("SNIFFHOUND_CAPTURE_DEMO_MODE", "0"), default=False)
 CAPTURE_INTERFACES = tuple(
     item.strip()
     for item in str(_env("SNIFFHOUND_CAPTURE_INTERFACES", "")).split(",")
@@ -46,7 +46,18 @@ CAPTURE_SNAPLEN = max(64, _as_int(_env("SNIFFHOUND_SNAPLEN", "65535"), 65535))
 CAPTURE_POLL_TIMEOUT = max(0.05, _as_float(_env("SNIFFHOUND_POLL_TIMEOUT", "0.5"), 0.5))
 CAPTURE_BUFFER_BYTES = max(65536, _as_int(_env("SNIFFHOUND_CAPTURE_BUFFER_BYTES", "524288"), 524288))
 
+WIFI_INTERFACE = str(_env("SNIFFHOUND_WIFI_INTERFACE", "")).strip()
+ICMP_FLOOD_WINDOW_SECONDS = max(1, _as_int(_env("SNIFFHOUND_ICMP_FLOOD_WINDOW_SECONDS", "5"), 5))
+ICMP_FLOOD_THRESHOLD = max(1, _as_int(_env("SNIFFHOUND_ICMP_FLOOD_THRESHOLD", "30"), 30))
+WIFI_DEAUTH_WINDOW_SECONDS = max(1, _as_int(_env("SNIFFHOUND_WIFI_DEAUTH_WINDOW_SECONDS", "10"), 10))
+WIFI_DEAUTH_THRESHOLD = max(1, _as_int(_env("SNIFFHOUND_WIFI_DEAUTH_THRESHOLD", "10"), 10))
+ARP_SPOOF_COOLDOWN_SECONDS = max(1, _as_int(_env("SNIFFHOUND_ARP_SPOOF_COOLDOWN_SECONDS", "30"), 30))
+ROGUE_AP_COOLDOWN_SECONDS = max(1, _as_int(_env("SNIFFHOUND_ROGUE_AP_COOLDOWN_SECONDS", "60"), 60))
+PORT_SCAN_WINDOW_SECONDS = max(1, _as_int(_env("SNIFFHOUND_PORT_SCAN_WINDOW_SECONDS", "10"), 10))
+PORT_SCAN_DISTINCT_PORTS_THRESHOLD = max(1, _as_int(_env("SNIFFHOUND_PORT_SCAN_DISTINCT_PORTS_THRESHOLD", "15"), 15))
+
 DEFAULT_RULESET_FILE = str(_env("SNIFFHOUND_RULESET_FILE", "default_rulesets.json")).strip()
+MONITOR_FILTER_DEFAULT = _as_bool(_env("SNIFFHOUND_MONITOR_FILTER_DEFAULT", "1"), default=True)
 DEFAULT_DOCS_TITLE = str(_env("SNIFFHOUND_DOCS_TITLE", "SniffHound")).strip() or "SniffHound"
 DEFAULT_DOCS_DESCRIPTION = str(
     _env(
@@ -54,3 +65,36 @@ DEFAULT_DOCS_DESCRIPTION = str(
         "Native packet sniffer with SQLite persistence, live stats, an optional honeypot mode, and a wsbuilder frontend.",
     )
 ).strip()
+
+# IPC between the unprivileged web process and the privileged capture process
+# (see sniffhound/ipc.py, sniffhound/capture_service.py). Read lazily via
+# functions rather than cached at import time: `manage.py` generates the
+# socket path/token and injects them into os.environ for its own subsequent
+# `from .app import ...`, which happens after `sniffhound.settings` has
+# already been imported once - module-level constants would freeze the
+# pre-injection (empty) values.
+
+
+def default_ipc_socket_path(port: int | None = None) -> str:
+    runtime_dir = str(_env("XDG_RUNTIME_DIR", "")).strip()
+    base = runtime_dir or "/tmp"
+    effective_port = int(port) if port is not None else PORT
+    return str(Path(base) / "sniffhound" / f"capture-{effective_port}.sock")
+
+
+def resolve_ipc_socket(port: int | None = None) -> str:
+    override = str(_env("SNIFFHOUND_IPC_SOCKET", "")).strip()
+    return override or default_ipc_socket_path(port)
+
+
+def resolve_ipc_token() -> str:
+    return str(_env("SNIFFHOUND_IPC_TOKEN", "")).strip()
+
+
+def resolve_ipc_owner_uid() -> int | None:
+    raw = str(_env("SNIFFHOUND_IPC_OWNER_UID", "")).strip()
+    return int(raw) if raw.isdigit() else None
+
+
+def resolve_ipc_connect_timeout() -> float:
+    return max(1.0, _as_float(_env("SNIFFHOUND_IPC_CONNECT_TIMEOUT", "20"), 20.0))

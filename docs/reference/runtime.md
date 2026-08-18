@@ -11,14 +11,17 @@
 | `SNIFFHOUND_MODE` | `sniffer` | Alias legado de `SNIFFHOUND_RUNTIME_MODE`. |
 | `SNIFFHOUND_DEBUG` | `1` | Activa el modo debug de la app. |
 | `SNIFFHOUND_CAPTURE_AUTO_START` | `1` | Arranque automatico del motor. |
-| `SNIFFHOUND_CAPTURE_DEMO_MODE` | `0` | Relaja el relanzado con privilegios. |
 | `SNIFFHOUND_CAPTURE_INTERFACES` | vacio | Interfaces activas para `sniffer`. |
 | `SNIFFHOUND_PROMISCUOUS` | `1` | Modo promiscuo en captura raw. |
 | `SNIFFHOUND_SNAPLEN` | `65535` | Tamano maximo del paquete capturado. |
 | `SNIFFHOUND_POLL_TIMEOUT` | `0.5` | Espera de polling en captura. |
 | `SNIFFHOUND_CAPTURE_BUFFER_BYTES` | `524288` | Buffer de captura. |
-| `SNIFFHOUND_REQUIRE_ADMIN` | auto | Fuerza o desactiva el relanzado con `sudo`. |
 | `SNIFFHOUND_FRONTEND_DIST` | auto | Sobrescribe el directorio compilado de la UI. |
+
+SniffHound siempre requiere root para arrancar (captura de paquetes raw). No
+existe ninguna variable de entorno para saltarse esto: si no corre como root,
+intenta relanzarse con `sudo` y, si no puede, termina sin arrancar el
+servidor e imprime el motivo por stderr.
 
 ## API de runtime
 

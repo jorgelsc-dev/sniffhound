@@ -576,7 +576,7 @@ export default {
       loading: false,
       error: "",
       lastUpdated: "",
-      liveRefreshEnabled: false,
+      liveRefreshEnabled: true,
       protocolCatalog: [],
       analytics: {},
       packetRows: [],
@@ -1084,13 +1084,13 @@ export default {
       if (this.wsRefreshTimer) return;
       this.wsRefreshTimer = setTimeout(() => {
         this.wsRefreshTimer = null;
-        this.load().catch(() => {
+        this.load({ silent: true }).catch(() => {
           // Keep current slice on transient refresh errors.
         });
       }, 10000);
     },
-    async load() {
-      this.loading = true;
+    async load(options = {}) {
+      if (!options.silent) this.loading = true;
       this.error = "";
       try {
         const [protocolsRes, analyticsRes] = await Promise.allSettled([

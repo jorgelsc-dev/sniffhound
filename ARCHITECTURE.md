@@ -25,7 +25,7 @@ Operador / navegador
 
 1. `sniffhound.manage` resuelve `HOST` y `PORT`.
 2. Si el puerto pedido esta ocupado, busca otro libre en el mismo bloque de 10 puertos.
-3. Si `CAPTURE_AUTO_START=1` y faltan privilegios, intenta relanzarse con `sudo` salvo que `SNIFFHOUND_REQUIRE_ADMIN=0` o `CAPTURE_DEMO_MODE=1`.
+3. Root es obligatorio sin excepcion: si faltan privilegios, intenta relanzarse con `sudo`; si no puede, imprime un error y termina sin arrancar el servidor.
 4. Imprime el token de sesion, arranca la consola interactiva y llama a `app.run(...)`.
 5. `bootstrap_capture()` arranca el motor activo si el autoarranque sigue habilitado.
 

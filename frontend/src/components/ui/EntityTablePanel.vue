@@ -6,13 +6,7 @@
     :show-skeleton="false"
     :error="error"
     :last-updated="lastUpdated"
-    :show-refresh="showRefresh"
-    :live-refresh="liveRefresh"
-    :live-enabled="liveEnabled"
-    :refresh-label="refreshLabel"
     :variant="variant"
-    @update:liveEnabled="$emit('update:liveEnabled', $event)"
-    @refresh="$emit('refresh')"
   >
     <v-row v-if="showTableControls" dense class="mb-3">
       <v-col v-if="searchEnabled" cols="12" md="6">
@@ -45,6 +39,34 @@
         />
       </v-col>
     </v-row>
+    <div class="d-flex justify-end mb-2">
+      <v-menu :close-on-content-click="false" location="bottom end">
+        <template #activator="{ props: menuProps }">
+          <v-btn
+            v-bind="menuProps"
+            size="small"
+            variant="outlined"
+            color="secondary"
+            prepend-icon="mdi-table-column"
+          >
+            Columns
+          </v-btn>
+        </template>
+        <v-card class="pa-3 column-picker-menu" min-width="220" rounded="lg">
+          <div class="text-caption text-medium-emphasis mb-2">Show columns</div>
+          <v-checkbox
+            v-for="column in pickableColumns"
+            :key="`colpick-${column.key}`"
+            v-model="visibleColumnKeys"
+            :value="column.key"
+            :label="column.label || column.key"
+            density="compact"
+            hide-details
+            class="column-picker-menu__item"
+          />
+        </v-card>
+      </v-menu>
+    </div>
     <div class="entity-table-wrap mt-1">
       <v-data-table
         v-model:page="currentPage"
@@ -170,22 +192,6 @@ export default {
       type: String,
       default: "id",
     },
-    showRefresh: {
-      type: Boolean,
-      default: false,
-    },
-    liveRefresh: {
-      type: Boolean,
-      default: false,
-    },
-    liveEnabled: {
-      type: Boolean,
-      default: false,
-    },
-    refreshLabel: {
-      type: String,
-      default: "Refresh",
-    },
     lastUpdated: {
       type: String,
       default: "",
@@ -227,13 +233,13 @@ export default {
       default: () => [],
     },
   },
-  emits: ["refresh", "update:liveEnabled"],
   data() {
     return {
       currentPage: 1,
       expandedRowKeys: [],
       tableSearchQuery: "",
       tableFilterValues: {},
+      visibleColumnKeys: [],
     };
   },
   computed: {
@@ -298,8 +304,15 @@ export default {
         { title: "All", value: -1 },
       ];
     },
+    pickableColumns() {
+      return this.normalizedColumns.filter((column) => column.key !== "actions");
+    },
+    visibleColumns() {
+      const visible = new Set(this.visibleColumnKeys);
+      return this.normalizedColumns.filter((column) => column.key === "actions" || visible.has(column.key));
+    },
     tableHeaders() {
-      const headers = this.normalizedColumns.map((column) => ({
+      const headers = this.visibleColumns.map((column) => ({
         key: column.key,
         title: column.label || column.key,
         sortable: column.sortable !== false && column.key !== "actions",
@@ -362,11 +375,24 @@ export default {
         this.syncExpandedRows();
       },
     },
+    normalizedColumns: {
+      handler() {
+        this.syncVisibleColumnKeys();
+      },
+    },
   },
   created() {
     this.syncTableFilterValues();
+    this.syncVisibleColumnKeys();
   },
   methods: {
+    syncVisibleColumnKeys() {
+      const validKeys = new Set(this.normalizedColumns.map((column) => column.key));
+      const kept = this.visibleColumnKeys.filter((key) => validKeys.has(key));
+      const missing = [...validKeys].filter((key) => !this.visibleColumnKeys.includes(key) && !kept.includes(key));
+      if (kept.length === this.visibleColumnKeys.length && !missing.length) return;
+      this.visibleColumnKeys = [...kept, ...missing];
+    },
     resolveRowKey(item, index) {
       const explicit = getByPath(item, this.rowKey);
       if (explicit !== undefined && explicit !== null && explicit !== "") {
@@ -621,5 +647,21 @@ export default {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.column-picker-menu {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid rgba(104, 178, 221, 0.2);
+  background: linear-gradient(180deg, rgba(7, 14, 24, 0.98), rgba(4, 10, 18, 0.98));
+  box-shadow: 0 18px 38px rgba(2, 8, 14, 0.34);
+}
+
+.column-picker-menu__item {
+  margin: 0;
+}
+
+.column-picker-menu__item :deep(.v-selection-control) {
+  min-height: 0;
 }
 </style>

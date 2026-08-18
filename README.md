@@ -268,20 +268,22 @@ Variables practicas del runtime:
 - `SNIFFHOUND_DB_PATH`
 - `SNIFFHOUND_RUNTIME_MODE`
 - `SNIFFHOUND_CAPTURE_AUTO_START`
-- `SNIFFHOUND_CAPTURE_DEMO_MODE`
 - `SNIFFHOUND_CAPTURE_INTERFACES`
 - `SNIFFHOUND_PROMISCUOUS`
 - `SNIFFHOUND_CAPTURE_BUFFER_BYTES`
 - `SNIFFHOUND_POLL_TIMEOUT`
 - `SNIFFHOUND_REQUIRE_AUTH`
-- `SNIFFHOUND_REQUIRE_ADMIN`
 - `SNIFFHOUND_JWT_SECRET`
 - `SNIFFHOUND_JWT_TTL`
 - `SNIFFHOUND_FRONTEND_DIST`
 
+Root es obligatorio siempre (captura raw de paquetes); no hay variable de
+entorno para omitirlo. Si no corre como root, `sniffhound` intenta
+relanzarse con `sudo` y, si no puede, termina sin arrancar el servidor.
+
 ## Componentes del repo
 
-- `sniffhound/manage.py`: launcher, elevacion opcional y consola interactiva.
+- `sniffhound/manage.py`: launcher (siempre requiere root) y consola interactiva.
 - `sniffhound/app.py`: SPA, API, WebSocket y runtime controller.
 - `sniffhound/sniffer.py`: captura raw y parseo de paquetes.
 - `sniffhound/honeypot.py`: listeners emulados y registro de trafico activo.

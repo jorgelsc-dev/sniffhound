@@ -189,7 +189,7 @@ export default {
       loading: false,
       error: "",
       lastUpdated: "",
-      liveRefreshEnabled: false,
+      liveRefreshEnabled: true,
       banners: [],
       favicons: [],
       bannerColumns: [
@@ -356,7 +356,7 @@ export default {
       if (this.wsRefreshTimer) return;
       this.wsRefreshTimer = setTimeout(() => {
         this.wsRefreshTimer = null;
-        this.load().catch(() => {
+        this.load({ silent: true }).catch(() => {
           // keep current response intelligence view on transient realtime failures
         });
       }, 10000);
@@ -407,8 +407,8 @@ export default {
           this.bannerActionLoading = { id: null, action: "" };
         });
     },
-    load() {
-      this.loading = true;
+    load(options = {}) {
+      if (!options.silent) this.loading = true;
       this.error = "";
       return Promise.allSettled([
         this.store.fetchJsonPromise("/banners/"),

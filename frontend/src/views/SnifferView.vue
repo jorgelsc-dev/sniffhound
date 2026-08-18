@@ -110,7 +110,50 @@
         <v-chip size="small" variant="outlined">
           Visible rows: {{ filteredPackets.length }}
         </v-chip>
+        <v-chip size="small" variant="outlined" color="info">
+          Captured: {{ runtime.packets_seen || 0 }}
+        </v-chip>
+        <v-chip size="small" variant="outlined" color="success">
+          Stored (detected): {{ runtime.packets_stored || 0 }}
+        </v-chip>
+        <v-btn
+          size="small"
+          variant="text"
+          color="primary"
+          prepend-icon="mdi-target-account"
+          to="/monitors"
+        >
+          Manage detection monitors
+        </v-btn>
       </div>
+
+      <v-card variant="tonal" class="pa-4 mb-4 engine-card">
+        <div class="d-flex align-start justify-space-between flex-wrap ga-3">
+          <div>
+            <div class="text-subtitle-2 font-weight-medium">Sniffer Engine</div>
+            <div class="text-caption text-medium-emphasis mt-1">
+              Only one engine (Sniffer or Honeypot) runs at a time. Starting this one stops the other.
+            </div>
+          </div>
+          <div class="d-flex align-center ga-2">
+            <v-chip size="small" :color="engineChipColor" variant="tonal">
+              {{ engineStatusLabel }}
+            </v-chip>
+            <v-btn
+              size="small"
+              :color="engineActionColor"
+              variant="outlined"
+              :loading="runtimeSubmitting"
+              @click="toggleEngine"
+            >
+              {{ engineActionLabel }}
+            </v-btn>
+          </div>
+        </div>
+        <v-alert v-if="runtimeError" type="warning" variant="tonal" density="comfortable" class="mt-3">
+          {{ runtimeError }}
+        </v-alert>
+      </v-card>
 
       <v-card variant="tonal" class="pa-4 mb-4 interface-card">
         <div class="d-flex align-start justify-space-between flex-wrap ga-3">
@@ -155,6 +198,66 @@
             </div>
           </v-col>
         </v-row>
+      </v-card>
+
+      <v-card variant="tonal" class="pa-4 mb-4 wifi-card">
+        <div class="d-flex align-start justify-space-between flex-wrap ga-3">
+          <div>
+            <div class="text-subtitle-2 font-weight-medium">WiFi Monitor Mode</div>
+            <div class="text-caption text-medium-emphasis mt-1">
+              Captures raw 802.11 management frames (beacons, probe requests/responses,
+              deauth/disassoc, auth) on a wireless adapter switched into monitor mode. Only the
+              adapter's current channel is captured — there is no channel hopping.
+            </div>
+          </div>
+          <v-chip size="small" :color="wifiState.enabled ? 'success' : 'secondary'" variant="tonal">
+            {{ wifiState.enabled ? "Monitoring" : "Off" }}
+          </v-chip>
+        </div>
+
+        <v-alert type="warning" variant="tonal" density="comfortable" class="mt-3">
+          Enabling this switches the adapter out of normal (managed) mode, which disconnects its
+          regular network/internet connectivity while monitor mode stays active. Turn it back off
+          to reconnect.
+        </v-alert>
+
+        <v-row dense class="mt-2" align="center">
+          <v-col cols="12" md="6">
+            <v-select
+              v-model="wifiSelectedInterface"
+              :items="wifiInterfaceOptions"
+              label="Wireless interface"
+              variant="outlined"
+              density="comfortable"
+              hide-details="auto"
+              :disabled="wifiState.enabled || !wifiInterfaceOptions.length"
+            />
+          </v-col>
+          <v-col cols="12" md="6" class="d-flex align-center ga-3">
+            <v-switch
+              :model-value="wifiState.enabled"
+              :loading="wifiSubmitting"
+              :disabled="!wifiState.enabled && !wifiSelectedInterface"
+              color="warning"
+              hide-details
+              inset
+              @update:model-value="toggleWifiMonitor"
+            />
+            <span class="text-caption text-medium-emphasis">
+              {{ wifiState.enabled ? `Monitoring on ${wifiState.interface}` : "Monitor mode disabled" }}
+            </span>
+          </v-col>
+        </v-row>
+
+        <v-alert v-if="wifiError" type="error" variant="tonal" density="comfortable" class="mt-3">
+          {{ wifiError }}
+        </v-alert>
+        <v-alert v-else-if="wifiState.error" type="error" variant="tonal" density="comfortable" class="mt-3">
+          {{ wifiState.error }}
+        </v-alert>
+        <v-alert v-if="!wifiInterfaceOptions.length" type="info" variant="tonal" density="comfortable" class="mt-3">
+          No wireless interfaces detected on this machine.
+        </v-alert>
       </v-card>
 
       <EntityTablePanel
@@ -256,10 +359,15 @@ export default {
       loading: false,
       error: "",
       lastUpdated: "",
-      liveRefreshEnabled: false,
+      liveRefreshEnabled: true,
       packets: [],
       interfaceSubmitting: false,
       interfaceError: "",
+      runtimeSubmitting: false,
+      runtimeError: "",
+      wifiSubmitting: false,
+      wifiError: "",
+      wifiSelectedInterface: "",
       filters: {
         query: "",
         proto: "",
@@ -295,6 +403,22 @@ export default {
     },
     snifferBlocked() {
       return String(this.runtime.capture_state || "").trim().toLowerCase() === "blocked";
+    },
+    engineStatusLabel() {
+      if (this.snifferBlocked) return "Blocked";
+      if (this.runtime.running) return "Running";
+      return "Stopped";
+    },
+    engineChipColor() {
+      if (this.snifferBlocked) return "error";
+      if (this.runtime.running) return "success";
+      return "secondary";
+    },
+    engineActionLabel() {
+      return this.runtime.running ? "Stop" : "Start";
+    },
+    engineActionColor() {
+      return this.runtime.running ? "warning" : "primary";
     },
     snifferErrorSummary() {
       const entries = this.runtime.errors && typeof this.runtime.errors === "object"
@@ -406,6 +530,13 @@ export default {
       }
       return "An empty selection means SniffHound will listen on every visible interface.";
     },
+    wifiState() {
+      return this.runtime.wifi && typeof this.runtime.wifi === "object" ? this.runtime.wifi : {};
+    },
+    wifiInterfaceOptions() {
+      const values = Array.isArray(this.wifiState.eligible_interfaces) ? this.wifiState.eligible_interfaces : [];
+      return uniqueSorted(values);
+    },
     filteredPackets() {
       const query = String(this.filters.query || "").trim().toLowerCase();
       const proto = String(this.filters.proto || "").trim().toLowerCase();
@@ -489,6 +620,20 @@ export default {
       if (state === "closed") return "error";
       return "secondary";
     },
+    toggleEngine() {
+      if (this.runtimeSubmitting) return;
+      const action = this.runtime.running ? "stop" : "start";
+      this.runtimeError = "";
+      this.runtimeSubmitting = true;
+      this.store
+        .controlRuntimeMode("sniffer", action)
+        .catch((err) => {
+          this.runtimeError = (err && err.message) || `Failed to ${action} the sniffer`;
+        })
+        .finally(() => {
+          this.runtimeSubmitting = false;
+        });
+    },
     updateSnifferInterfaces(value) {
       const normalized = Array.isArray(value)
         ? [...new Set(value.map((item) => String(item || "").trim()).filter(Boolean))]
@@ -512,6 +657,24 @@ export default {
           this.interfaceSubmitting = false;
         });
     },
+    toggleWifiMonitor(value) {
+      if (this.wifiSubmitting) return;
+      const enabled = Boolean(value);
+      if (enabled && !this.wifiSelectedInterface) {
+        this.wifiError = "Select a wireless interface first";
+        return;
+      }
+      this.wifiError = "";
+      this.wifiSubmitting = true;
+      this.store
+        .setWifiMonitor(enabled, enabled ? this.wifiSelectedInterface : "")
+        .catch((err) => {
+          this.wifiError = (err && err.message) || `Failed to ${enabled ? "enable" : "disable"} WiFi monitor mode`;
+        })
+        .finally(() => {
+          this.wifiSubmitting = false;
+        });
+    },
     handleWsRefresh(event) {
       if (!this.liveRefreshEnabled) return;
       const eventType = String((event && event.type) || "").trim().toLowerCase();
@@ -519,13 +682,13 @@ export default {
       if (this.wsRefreshTimer) return;
       this.wsRefreshTimer = setTimeout(() => {
         this.wsRefreshTimer = null;
-        this.load().catch(() => {
+        this.load({ silent: true }).catch(() => {
           // keep the current table on transient refresh errors
         });
       }, 10000);
     },
-    load() {
-      this.loading = true;
+    load(options = {}) {
+      if (!options.silent) this.loading = true;
       this.error = "";
       this.interfaceError = "";
       return Promise.allSettled([
@@ -557,6 +720,10 @@ export default {
 }
 
 .interface-card {
+  border-radius: 16px;
+}
+
+.engine-card {
   border-radius: 16px;
 }
 

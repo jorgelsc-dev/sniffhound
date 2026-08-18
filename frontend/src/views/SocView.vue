@@ -613,7 +613,7 @@ export default {
       loading: false,
       error: "",
       lastUpdated: "",
-      liveRefreshEnabled: false,
+      liveRefreshEnabled: true,
       cyclesRequested: 4,
       activeCycleId: 4,
       analysis: {},
@@ -993,15 +993,15 @@ export default {
       if (this.wsRefreshTimer) return;
       this.wsRefreshTimer = setTimeout(() => {
         this.wsRefreshTimer = null;
-        this.load().catch(() => {
+        this.load({ silent: true }).catch(() => {
           // Keep the current SOC view on transient refresh failures.
         });
       }, 10000);
     },
-    async load() {
+    async load(options = {}) {
       const loadSeq = ++this.loadSequence;
       const requestedCycles = Number.parseInt(this.cyclesRequested, 10) || 4;
-      this.loading = true;
+      if (!options.silent) this.loading = true;
       this.error = "";
       try {
         const payload = await this.store.fetchJsonPromise(

@@ -29,6 +29,8 @@ Changelog = "https://github.com/jorgelsc-dev/sniffhound/blob/main/CHANGELOG.md"
 
 [project.scripts]
 sniffhound = "sniffhound.manage:main"
+sniffhound-web = "sniffhound.manage:main_web"
+sniffhound-capture = "sniffhound.capture_service:main"
 
 [tool.setuptools]
 include-package-data = true

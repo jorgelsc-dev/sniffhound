@@ -11,7 +11,7 @@ from pathlib import Path
 import json
 import importlib
 import io
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, redirect_stderr
 from unittest.mock import patch
 
 import sniffhound
@@ -66,6 +66,64 @@ def _reload_runtime_stack(require_auth: str = "1"):
             os.environ.pop("SNIFFHOUND_REQUIRE_AUTH", None)
         else:
             os.environ["SNIFFHOUND_REQUIRE_AUTH"] = previous
+
+
+class _InProcessIpcClient:
+    """Test double standing in for `sniffhound.ipc.IpcClient`: routes
+    `RuntimeControllerClient` calls straight to a real `RuntimeController`
+    in the same process/thread, skipping the Unix socket entirely, while
+    keeping the real `Sniffer`/`HoneypotEngine`/`RuntimeController` logic
+    under test - mirrors how the capture process actually dispatches these
+    calls (see `capture_service.py`)."""
+
+    def __init__(self, controller):
+        self._controller = controller
+
+    def call(self, method, **kwargs):
+        return getattr(self._controller, method)(**kwargs)
+
+
+class _FakeCaptureProcess:
+    """Stands in for the `subprocess.Popen` handle `manage.main()` keeps
+    for the spawned capture child, so tests can exercise the surrounding
+    orchestration without actually spawning/sudo-elevating a process."""
+
+    def __init__(self):
+        self.returncode = None
+        self.terminate_calls = 0
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        self.terminate_calls += 1
+        self.returncode = 0
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+    def kill(self):
+        self.returncode = -9
+
+
+def _install_fake_capture_runtime(app_module, *, capture_auto_start=False):
+    from unittest.mock import MagicMock
+
+    from sniffhound.honeypot import HoneypotEngine
+    from sniffhound.runtime_controller import RuntimeController
+    from sniffhound.sniffer import Sniffer
+
+    sniffer = Sniffer(app_module.store, MagicMock(), interfaces=())
+    honeypot = HoneypotEngine(app_module.store, MagicMock())
+    controller = RuntimeController(
+        store=app_module.store,
+        sniffer=sniffer,
+        honeypot=honeypot,
+        hub=MagicMock(),
+        capture_auto_start=capture_auto_start,
+    )
+    app_module.runtime._ipc_client = _InProcessIpcClient(controller)
+    return controller, sniffer, honeypot
 
 
 class SmokeTests(unittest.TestCase):
@@ -451,43 +509,12 @@ class SmokeTests(unittest.TestCase):
         self.assertEqual(response.returncode, 0, response.stderr)
         self.assertEqual(response.stdout.strip(), "ok")
 
-    def test_runtime_uses_configured_default_mode_on_startup(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            db_path = Path(tmp_dir) / "runtime.db"
-            store = SniffStore(db_path)
-            try:
-                store.set_runtime_config("runtime_mode", "honeypot")
-            finally:
-                store.close()
-
-            previous_db = os.environ.get("SNIFFHOUND_DB_PATH")
-            previous_mode = os.environ.get("SNIFFHOUND_RUNTIME_MODE")
-            os.environ["SNIFFHOUND_DB_PATH"] = str(db_path)
-            os.environ.pop("SNIFFHOUND_RUNTIME_MODE", None)
-            try:
-                import sniffhound.settings as settings_module
-                import sniffhound.app as app_module
-
-                importlib.reload(settings_module)
-                app_module = importlib.reload(app_module)
-
-                self.assertEqual(app_module.runtime.mode, "sniffer")
-                self.assertEqual(app_module.store.get_runtime_config("runtime_mode", ""), "sniffer")
-                app_module.store.close()
-            finally:
-                if previous_db is None:
-                    os.environ.pop("SNIFFHOUND_DB_PATH", None)
-                else:
-                    os.environ["SNIFFHOUND_DB_PATH"] = previous_db
-                if previous_mode is None:
-                    os.environ.pop("SNIFFHOUND_RUNTIME_MODE", None)
-                else:
-                    os.environ["SNIFFHOUND_RUNTIME_MODE"] = previous_mode
-
     def test_runtime_api_exposes_and_updates_sniffer_interfaces(self):
         _auth_module, app_module = _reload_auth_stack("0")
+        self.addCleanup(app_module.store.close)
+        _controller, sniffer, _honeypot = _install_fake_capture_runtime(app_module)
 
-        with patch.object(app_module.sniffer, "list_available_interfaces", return_value=["eth0", "wlan0"]):
+        with patch.object(sniffer, "list_available_interfaces", return_value=["eth0", "wlan0"]):
             app_module.runtime.set_sniffer_interfaces([])
 
             get_request = Request("GET", "/api/runtime/", "", {}, b"", ("127.0.0.1", 0))
@@ -559,6 +586,9 @@ class SmokeTests(unittest.TestCase):
         try:
             _settings_module, _auth_module, app_module = _reload_runtime_stack("0")
             self.addCleanup(app_module.store.close)
+            _controller, sniffer, _honeypot = _install_fake_capture_runtime(
+                app_module, capture_auto_start=app_module.CAPTURE_AUTO_START
+            )
 
             sniffer_state = {"running": False}
 
@@ -582,8 +612,8 @@ class SmokeTests(unittest.TestCase):
                 sniffer_state["running"] = True
                 return fake_sniffer_snapshot()
 
-            with patch.object(app_module.sniffer, "snapshot", side_effect=fake_sniffer_snapshot), patch.object(
-                app_module.sniffer, "start", side_effect=fake_sniffer_start
+            with patch.object(sniffer, "snapshot", side_effect=fake_sniffer_snapshot), patch.object(
+                sniffer, "start", side_effect=fake_sniffer_start
             ) as start_mock:
                 start_request = Request(
                     "POST",
@@ -624,6 +654,37 @@ class SmokeTests(unittest.TestCase):
             manage_module._candidate_ports(45678),
             (45678, 45670, 45671, 45672, 45673, 45674, 45675, 45676, 45677, 45679),
         )
+
+    def test_manage_capture_relaunch_command_forwards_pythonpath(self):
+        # The Debian package only makes `sniffhound` importable via
+        # PYTHONPATH pointing at its vendored copy (scripts/deb_wrapper.sh) -
+        # `sudo env ...` does not inherit it on its own, so it must be
+        # forwarded explicitly or the privileged child can't import the
+        # package at all.
+        import sniffhound.manage as manage_module
+
+        with patch.dict(os.environ, {"PYTHONPATH": "/usr/lib/sniffhound/vendor"}, clear=False):
+            command = manage_module._build_capture_relaunch_command("/tmp/x.sock", "tok", 1000)
+        self.assertIn("PYTHONPATH=/usr/lib/sniffhound/vendor", command)
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PYTHONPATH", None)
+            command = manage_module._build_capture_relaunch_command("/tmp/x.sock", "tok", 1000)
+        self.assertFalse(any(entry.startswith("PYTHONPATH=") for entry in command))
+
+    def test_manage_refuses_to_spawn_capture_child_without_sudo(self):
+        # manage.py (the web process) never elevates itself anymore - it
+        # only needs `sudo` to spawn the privileged capture child. Actual
+        # "capture always requires root, no bypass" policy now lives in
+        # capture_service.py (see tests/test_capture_service.py).
+        import sniffhound.manage as manage_module
+
+        output = io.StringIO()
+        with patch.object(manage_module.shutil, "which", return_value=None), redirect_stderr(output):
+            result = manage_module._spawn_capture_child("/tmp/sniffhound-test.sock", "test-token")
+
+        self.assertIsNone(result)
+        self.assertIn("requires root", output.getvalue())
 
     def test_manage_console_autocomplete_and_aliases(self):
         import sniffhound.manage as manage_module
@@ -768,17 +829,23 @@ class SmokeTests(unittest.TestCase):
         import sniffhound.app as app_module
         import sniffhound.manage as manage_module
 
+        fake_process = _FakeCaptureProcess()
+
         with patch.object(manage_module, "HOST", "127.0.0.1"), patch.object(
             manage_module, "PORT", 45678
         ), patch.object(
             manage_module, "_select_listen_port", return_value=45670
         ), patch.object(
-            manage_module, "_ensure_admin_privileges", return_value=True
-        ), patch.object(
+            manage_module, "_spawn_capture_child", return_value=fake_process
+        ) as spawn_mock, patch.object(
+            manage_module, "_stop_capture_child"
+        ) as stop_mock, patch.object(
             manage_module, "_print_port_fallback_notice"
         ) as notice_mock, patch.object(
             manage_module, "_print_startup_banner"
         ) as banner_mock, patch.object(
+            app_module, "connect_capture_service", return_value=True
+        ), patch.object(
             app_module, "bootstrap_capture"
         ), patch.object(
             app_module, "shutdown_capture"
@@ -788,6 +855,8 @@ class SmokeTests(unittest.TestCase):
             exit_code = manage_module.main()
 
         self.assertEqual(exit_code, 0)
+        spawn_mock.assert_called_once()
+        stop_mock.assert_called_once_with(fake_process)
         notice_mock.assert_called_once_with(45678, 45670)
         banner_mock.assert_called_once_with("127.0.0.1", 45670)
         run_mock.assert_called_once_with("127.0.0.1", 45670)
@@ -799,8 +868,6 @@ class SmokeTests(unittest.TestCase):
             manage_module, "PORT", 45678
         ), patch.object(
             manage_module, "_select_listen_port", return_value=None
-        ), patch.object(
-            manage_module, "_ensure_admin_privileges", return_value=True
         ), patch.object(
             manage_module, "_print_address_in_use_error"
         ) as error_mock, patch.object(

@@ -2,15 +2,11 @@
   <DataPanel
     :title="panelTitle"
     :subtitle="panelSubtitle"
-    v-model:live-enabled="liveRefreshEnabled"
     :loading="loading"
     :error="error"
     :last-updated="lastUpdated"
-    :show-refresh="showRefresh"
-    :live-refresh="showRefresh && !externalRealtime"
     :show-header="showPanelHeader"
     :keep-content-on-loading="true"
-    @refresh="manualRefresh"
   >
     <template #skeleton>
       <v-skeleton-loader type="image, table-thead, table-row@4" class="skeleton-block" />
@@ -61,15 +57,6 @@
         </div>
 
         <div class="map-overlay__meta">
-          <LiveRefreshControl
-            v-if="showRefresh && !showPanelHeader"
-            v-model:live-enabled="liveRefreshEnabled"
-            :loading="loading"
-            :show-manual="true"
-            :show-live="!externalRealtime"
-            refresh-label="Refresh"
-            @refresh="manualRefresh"
-          />
           <span class="map-status-pill">{{ projectionLabel }}</span>
           <span class="map-status-pill">{{ wsLabel }}</span>
           <span v-if="geoipSourceLabel" class="map-status-pill map-status-pill--accent">
@@ -447,7 +434,6 @@
 import store from "../state/appStore";
 import { appBaseUrl } from "../utils/runtimeEnv";
 import DataPanel from "./ui/DataPanel.vue";
-import LiveRefreshControl from "./ui/LiveRefreshControl.vue";
 
 const GLOBE_SIMPLE_WORLD_STEP = 5;
 const GLOBE_ROTATION_SPEED = 4.5;
@@ -458,7 +444,6 @@ export default {
   name: "MapPanel",
   components: {
     DataPanel,
-    LiveRefreshControl,
   },
   props: {
     mapOnly: {

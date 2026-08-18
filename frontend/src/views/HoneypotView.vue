@@ -27,6 +27,35 @@
       {{ error }}
     </v-alert>
 
+    <v-card variant="tonal" class="pa-4 mt-6 mb-2 engine-card">
+      <div class="d-flex align-start justify-space-between flex-wrap ga-3">
+        <div>
+          <div class="text-subtitle-2 font-weight-medium">Honeypot Engine</div>
+          <div class="text-caption text-medium-emphasis mt-1">
+            Only one engine (Sniffer or Honeypot) runs at a time. Starting this one stops the other.
+            Only activate honeypot mode where you're allowed to bind the listener ports.
+          </div>
+        </div>
+        <div class="d-flex align-center ga-2">
+          <v-chip size="small" :color="engineChipColor" variant="tonal">
+            {{ engineStatusLabel }}
+          </v-chip>
+          <v-btn
+            size="small"
+            :color="engineActionColor"
+            variant="outlined"
+            :loading="runtimeSubmitting"
+            @click="toggleEngine"
+          >
+            {{ engineActionLabel }}
+          </v-btn>
+        </div>
+      </div>
+      <v-alert v-if="runtimeError" type="warning" variant="tonal" density="comfortable" class="mt-3">
+        {{ runtimeError }}
+      </v-alert>
+    </v-card>
+
     <v-row dense class="mt-4">
       <v-col cols="12" md="5">
         <v-text-field
@@ -217,9 +246,11 @@ export default {
       loading: false,
       error: "",
       lastUpdated: "",
-      liveRefreshEnabled: false,
+      liveRefreshEnabled: true,
       packets: [],
       banners: [],
+      runtimeSubmitting: false,
+      runtimeError: "",
       filters: {
         query: "",
         proto: "",
@@ -262,6 +293,18 @@ export default {
     listenerCount() {
       const listeners = Array.isArray(this.runtime.listeners) ? this.runtime.listeners : [];
       return listeners.length;
+    },
+    engineStatusLabel() {
+      return this.runtime.running ? "Running" : "Stopped";
+    },
+    engineChipColor() {
+      return this.runtime.running ? "success" : "secondary";
+    },
+    engineActionLabel() {
+      return this.runtime.running ? "Stop" : "Start";
+    },
+    engineActionColor() {
+      return this.runtime.running ? "warning" : "primary";
     },
     metricCards() {
       const packets = this.packets;
@@ -401,6 +444,20 @@ export default {
     formatSize(value) {
       return formatBytes(value) || "-";
     },
+    toggleEngine() {
+      if (this.runtimeSubmitting) return;
+      const action = this.runtime.running ? "stop" : "start";
+      this.runtimeError = "";
+      this.runtimeSubmitting = true;
+      this.store
+        .controlRuntimeMode("honeypot", action)
+        .catch((err) => {
+          this.runtimeError = (err && err.message) || `Failed to ${action} the honeypot`;
+        })
+        .finally(() => {
+          this.runtimeSubmitting = false;
+        });
+    },
     statusColor(value) {
       const state = String(value || "").trim().toLowerCase();
       if (state === "open" || state === "active") return "success";
@@ -415,13 +472,13 @@ export default {
       if (this.wsRefreshTimer) return;
       this.wsRefreshTimer = setTimeout(() => {
         this.wsRefreshTimer = null;
-        this.load().catch(() => {
+        this.load({ silent: true }).catch(() => {
           // keep current honeypot view on transient realtime failures
         });
       }, 10000);
     },
-    load() {
-      this.loading = true;
+    load(options = {}) {
+      if (!options.silent) this.loading = true;
       this.error = "";
       return Promise.allSettled([
         this.store.fetchJsonPromise("/ports/?mode=honeypot&limit=400"),
@@ -456,6 +513,10 @@ export default {
 
 <style scoped>
 .metric-card {
+  border-radius: 16px;
+}
+
+.engine-card {
   border-radius: 16px;
 }
 

@@ -164,12 +164,8 @@ def normalize_action(action: dict) -> dict:
     }
 
 
-def rule_matches_packet(rule: dict, packet: dict) -> bool:
-    if not rule or not rule.get("enabled", True):
-        return False
-    match = rule.get("match") if isinstance(rule.get("match"), dict) else {}
-    proto = normalize_protocol_name(packet.get("proto"))
-    packet_text = " ".join(
+def build_packet_text(packet: dict) -> str:
+    return " ".join(
         str(value)
         for value in (
             packet.get("summary"),
@@ -181,6 +177,14 @@ def rule_matches_packet(rule: dict, packet: dict) -> bool:
         )
         if value not in (None, "")
     ).lower()
+
+
+def rule_matches_packet(rule: dict, packet: dict) -> bool:
+    if not rule or not rule.get("enabled", True):
+        return False
+    match = rule.get("match") if isinstance(rule.get("match"), dict) else {}
+    proto = normalize_protocol_name(packet.get("proto"))
+    packet_text = build_packet_text(packet)
     payload_hex = str(packet.get("payload_hex") or "").lower()
     payload_length = safe_int(packet.get("payload_len", 0), 0)
     packet_length = safe_int(packet.get("length", 0), 0)
