@@ -953,7 +953,7 @@ class Sniffer:
             self._parse_stp(packet, payload)
         else:
             packet["summary"] = f"EtherType 0x{eth_type:04x} payload {len(payload)} bytes"
-            packet["payload_text"] = bytes_to_text_preview(payload)
+            packet["payload_text"] = self._interpret_payload(packet, payload)
             packet["banner_text"] = packet["payload_text"]
         return self._finalize_packet(packet)
 
@@ -1057,7 +1057,7 @@ class Sniffer:
     def _parse_ipv4(self, packet: dict, payload: bytes):
         if len(payload) < 20:
             packet["summary"] = "IPv4 packet"
-            packet["payload_text"] = bytes_to_text_preview(payload)
+            packet["payload_text"] = self._interpret_payload(packet, payload)
             packet["banner_text"] = packet["payload_text"]
             return
         version_ihl = payload[0]
@@ -1088,7 +1088,7 @@ class Sniffer:
         else:
             packet["proto"] = "unknown"
             packet["summary"] = f"IPv4 protocol {proto} {packet['src_ip']} → {packet['dst_ip']}"
-            packet["payload_text"] = bytes_to_text_preview(body)
+            packet["payload_text"] = self._interpret_payload(packet, body)
             packet["banner_text"] = packet["payload_text"]
         if not packet.get("summary"):
             packet["summary"] = self._fallback_summary(packet)
@@ -1096,7 +1096,7 @@ class Sniffer:
     def _parse_ipv6(self, packet: dict, payload: bytes):
         if len(payload) < 40:
             packet["summary"] = "IPv6 packet"
-            packet["payload_text"] = bytes_to_text_preview(payload)
+            packet["payload_text"] = self._interpret_payload(packet, payload)
             packet["banner_text"] = packet["payload_text"]
             return
         packet["ip_version"] = 6
@@ -1119,7 +1119,7 @@ class Sniffer:
         else:
             packet["proto"] = "unknown"
             packet["summary"] = f"IPv6 {detail} {packet['src_ip']} → {packet['dst_ip']}"
-            packet["payload_text"] = bytes_to_text_preview(body)
+            packet["payload_text"] = self._interpret_payload(packet, body)
             packet["banner_text"] = packet["payload_text"]
         if not packet.get("summary"):
             packet["summary"] = self._fallback_summary(packet)
@@ -1170,7 +1170,7 @@ class Sniffer:
         if len(payload) < 28:
             packet["proto"] = "arp"
             packet["summary"] = "ARP packet"
-            packet["payload_text"] = bytes_to_text_preview(payload)
+            packet["payload_text"] = self._interpret_payload(packet, payload)
             packet["banner_text"] = packet["payload_text"]
             return
         packet["proto"] = "arp"
@@ -1180,20 +1180,20 @@ class Sniffer:
         packet["src_port"] = 0
         packet["dst_port"] = 0
         packet["summary"] = f"ARP {packet['src_ip']} → {packet['dst_ip']}"
-        packet["payload_text"] = bytes_to_text_preview(payload)
+        packet["payload_text"] = self._interpret_payload(packet, payload)
         packet["banner_text"] = packet["payload_text"] or packet["summary"]
 
     def _parse_stp(self, packet: dict, payload: bytes):
         packet["proto"] = "stp"
         packet["summary"] = "STP BPDU"
-        packet["payload_text"] = bytes_to_text_preview(payload)
+        packet["payload_text"] = self._interpret_payload(packet, payload)
         packet["banner_text"] = packet["payload_text"] or packet["summary"]
 
     def _parse_tcp(self, packet: dict, body: bytes, *, ip_version: int = 4):
         if len(body) < 20:
             packet["proto"] = "tcp"
             packet["summary"] = "TCP packet"
-            packet["payload_text"] = bytes_to_text_preview(body)
+            packet["payload_text"] = self._interpret_payload(packet, body)
             packet["banner_text"] = packet["payload_text"]
             return
         packet["proto"] = "tcp"
@@ -1253,7 +1253,7 @@ class Sniffer:
         if len(body) < 8:
             packet["proto"] = "udp"
             packet["summary"] = "UDP packet"
-            packet["payload_text"] = bytes_to_text_preview(body)
+            packet["payload_text"] = self._interpret_payload(packet, body)
             packet["banner_text"] = packet["payload_text"]
             return
         packet["proto"] = "udp"
@@ -1285,7 +1285,7 @@ class Sniffer:
         if len(body) < 12:
             packet["proto"] = "sctp"
             packet["summary"] = "SCTP packet"
-            packet["payload_text"] = bytes_to_text_preview(body)
+            packet["payload_text"] = self._interpret_payload(packet, body)
             packet["banner_text"] = packet["payload_text"]
             return
         packet["proto"] = "sctp"
@@ -1302,7 +1302,7 @@ class Sniffer:
         if len(body) < 4:
             packet["proto"] = "icmpv6" if ipv6 else "icmp"
             packet["summary"] = "ICMP packet"
-            packet["payload_text"] = bytes_to_text_preview(body)
+            packet["payload_text"] = self._interpret_payload(packet, body)
             packet["banner_text"] = packet["payload_text"]
             return
         packet["proto"] = "icmpv6" if ipv6 else "icmp"
@@ -1317,7 +1317,7 @@ class Sniffer:
         if len(body) < 8:
             packet["summary"] = "IGMP packet"
             packet["banner_text"] = packet["summary"]
-            packet["payload_text"] = bytes_to_text_preview(body)
+            packet["payload_text"] = self._interpret_payload(packet, body)
             return
         msg_type = body[0]
         type_name = IGMP_TYPE_NAMES.get(msg_type, f"type 0x{msg_type:02x}")
@@ -1492,13 +1492,18 @@ class Sniffer:
     def _interpret_payload(self, packet: dict, payload: bytes) -> str:
         if not payload:
             return ""
+        # Binary/encrypted payloads decode into misleading "text" here -
+        # `bytes.decode(errors="ignore")` silently drops undecodable bytes
+        # and keeps whatever printable-looking fragments remain, which is
+        # random noise that can coincidentally contain a monitor's regex
+        # trigger word (e.g. a webshell name). Only trust the decode when
+        # the payload is actually mostly-printable to begin with.
+        if not is_printable_payload(payload):
+            return ""
         text = bytes_to_text_preview(payload)
-        if is_printable_payload(payload):
-            if text:
-                packet["state"] = "open"
         if text:
-            return text
-        return ""
+            packet["state"] = "open"
+        return text
 
     def _classify_tcp_banner(self, packet: dict, payload: bytes) -> str:
         src_port = safe_int(packet.get("src_port"), 0)

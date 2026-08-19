@@ -413,7 +413,9 @@ class TestPortScanDetector(unittest.TestCase):
         detector._threshold = 5
         hits = []
         for port in range(1, 6):
-            hit = detector.evaluate({"proto": "tcp", "src_ip": "10.0.0.99", "dst_port": port})
+            hit = detector.evaluate(
+                {"proto": "tcp", "src_ip": "10.0.0.99", "dst_port": port, "tcp_flags": "SYN"}
+            )
             if hit:
                 hits.append(hit)
         self.assertEqual(len(hits), 1)
@@ -422,12 +424,31 @@ class TestPortScanDetector(unittest.TestCase):
     def test_repeated_connections_to_same_port_do_not_trigger(self):
         detector = PortScanDetector()
         detector._threshold = 5
-        hits = [detector.evaluate({"proto": "tcp", "src_ip": "10.0.0.5", "dst_port": 443}) for _ in range(20)]
+        hits = [
+            detector.evaluate({"proto": "tcp", "src_ip": "10.0.0.5", "dst_port": 443, "tcp_flags": "SYN"})
+            for _ in range(20)
+        ]
         self.assertTrue(all(hit is None for hit in hits))
 
     def test_ignores_non_tcp_udp(self):
         detector = PortScanDetector()
         self.assertIsNone(detector.evaluate({"proto": "icmp", "src_ip": "10.0.0.5", "dst_port": 0}))
+
+    def test_ignores_tcp_packets_that_are_not_bare_syn(self):
+        # Regression test: a remote server's own SYN-ACK/ACK/RST replies -
+        # sent back to the many distinct ephemeral ports a single local host
+        # used for ordinary parallel connections - must not make that server
+        # look like it is "scanning" the many ports it merely replied to.
+        detector = PortScanDetector()
+        detector._threshold = 5
+        for flags in ("SYN,ACK", "ACK", "RST,ACK", "PSH,ACK", ""):
+            hits = [
+                detector.evaluate(
+                    {"proto": "tcp", "src_ip": "203.0.113.10", "dst_port": port, "tcp_flags": flags}
+                )
+                for port in range(1, 20)
+            ]
+            self.assertTrue(all(hit is None for hit in hits), f"flags={flags!r} should never trigger")
 
     def test_first_alert_fires_even_on_a_freshly_booted_monotonic_clock(self):
         # Regression test: `time.monotonic()` is relative to an arbitrary
@@ -439,7 +460,9 @@ class TestPortScanDetector(unittest.TestCase):
             detector = PortScanDetector()
             detector._threshold = 5
             hits = [
-                detector.evaluate({"proto": "tcp", "src_ip": "10.0.0.99", "dst_port": port})
+                detector.evaluate(
+                    {"proto": "tcp", "src_ip": "10.0.0.99", "dst_port": port, "tcp_flags": "SYN"}
+                )
                 for port in range(1, 6)
             ]
         self.assertTrue(any(hits))
@@ -450,7 +473,9 @@ class TestPortScanDetector(unittest.TestCase):
         hits = []
         for port in range(1, 20):
             hits.extend(
-                engine.evaluate({"proto": "tcp", "src_ip": "10.0.0.99", "dst_port": port}, monitors)
+                engine.evaluate(
+                    {"proto": "tcp", "src_ip": "10.0.0.99", "dst_port": port, "tcp_flags": "SYN"}, monitors
+                )
             )
         self.assertEqual(len(hits), 1)
         hit = hits[0]

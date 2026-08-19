@@ -126,8 +126,19 @@ class PortScanDetector:
         self._last_alert: dict[str, float] = {}
 
     def evaluate(self, packet: dict) -> dict | None:
-        if packet.get("proto") not in ("tcp", "udp"):
+        proto = packet.get("proto")
+        if proto not in ("tcp", "udp"):
             return None
+        if proto == "tcp":
+            # Only bare SYN (connection-initiation) packets count as a probe.
+            # Without this, a remote server's own SYN-ACK/ACK/RST replies -
+            # sent back to the many distinct ephemeral source ports a single
+            # local host used for ordinary parallel connections - look
+            # identical to that server "touching many destination ports",
+            # misattributing the scan to whichever side happens to reply.
+            flags = str(packet.get("tcp_flags") or "")
+            if "SYN" not in flags or "ACK" in flags:
+                return None
         src_ip = str(packet.get("src_ip") or "").strip()
         dst_port = packet.get("dst_port")
         if not src_ip or not dst_port:

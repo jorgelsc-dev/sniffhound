@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 
 import sniffhound
 from sniffhound import auth, logger, utils
+from sniffhound.monitors import DEFAULT_MONITORS, evaluate_packet, normalize_monitor
 from sniffhound.sniffer import Sniffer
 from sniffhound.store import SniffStore
 
@@ -383,7 +384,48 @@ class TestSnifferParsing(unittest.TestCase):
         self.assertEqual(packet["ip_version"], 6)
         self.assertEqual(packet["src_port"], 5353)
         self.assertEqual(packet["dst_port"], 5353)
-        self.assertIn("mdns", packet["payload_text"])
+        # The 4-byte "mdns" fixture payload isn't valid DNS wire format (real
+        # mDNS queries are >=12 bytes) and is too short to pass the printable-
+        # payload floor in `is_printable_payload`, so `payload_text` no longer
+        # falls back to that raw literal - it gets the synthetic mDNS summary
+        # instead, same as any other packet where parsing found no questions.
+        self.assertIn("mdns", packet["payload_text"].lower())
+
+    def test_unknown_ethertype_binary_noise_does_not_leak_into_payload_text(self):
+        # Regression test: a completely unparsed (proto="unknown") Ethernet
+        # frame's raw binary payload used to always get decoded into
+        # `payload_text` via `bytes.decode(errors="ignore")`, no matter how
+        # noisy the result - and that noise can coincidentally spell out a
+        # monitor's trigger word. This exact payload (captured live) tripped
+        # a false "Web shell reference" alert purely from the "wso" fragment
+        # buried in the noise.
+        payload_hex = (
+            "000010006c098004b90000003724070000001c0500000000000091ed3801"
+            "00000000160011030200e037b900b10188424800d62f705f794244896de7"
+            "c2ef44896de7c2e0506f000026cc002012000000797bcc3d9fdf5504b889"
+            "e28c432ab5df3de5b3e446da2ec82b08533847277318c8e384720626738a"
+            "ae3a6b2ca74ae4bb529ee8c40715e2db0e8c29b3d5a56f0adad1bafd5425"
+            "d98a84658b3fd03cc6a188a4c6752116d3b1bf15ad8a893c79931413b0d3"
+            "f56f9e753923084f2959e9fbf3db7bb12b6ee221677aec1673f70b5cd9a2"
+            "303f7a356b8ce1887a64bde13355635519bc1ed84151a36d818fe0cbed18"
+            "5753fc4f3a16ba1be4eb659609a88ced"
+        )
+        payload = bytes.fromhex(payload_hex)
+        frame = (
+            bytes.fromhex("00003c002a40")  # dst mac
+            + bytes.fromhex("58a8200800a0")  # src mac
+            + (0x2008).to_bytes(2, "big")  # unrecognized EtherType
+            + payload
+        )
+        packet = self.sniffer.parse_packet(frame, interface="wlan0")
+
+        self.assertIsNotNone(packet)
+        self.assertEqual(packet["proto"], "unknown")
+        self.assertEqual(packet["payload_text"], "")
+
+        monitors = [normalize_monitor(item, allow_source=True) for item in DEFAULT_MONITORS]
+        hits = evaluate_packet(packet, monitors)
+        self.assertEqual(hits, [])
 
 
 class TestSniffStore(unittest.TestCase):

@@ -62,7 +62,6 @@
           :color="authStateColor"
           variant="tonal"
           size="small"
-          :icon="authStateIcon"
           class="auth-chip status-chip"
           :aria-label="authStateLabel"
           @click="$emit('open-auth')"
@@ -142,6 +141,12 @@ export default {
       if (this.authStatus === "required") return "warning";
       return "secondary";
     },
+    authStateIcon() {
+      if (!this.authRequired) return "mdi-shield-outline";
+      if (this.authStatus === "authenticated") return "mdi-shield-check-outline";
+      if (this.authStatus === "required") return "mdi-shield-alert-outline";
+      return "mdi-shield-key-outline";
+    },
     runtimeStateLabel() {
       const runtime = store.state.runtime || {};
       const mode = String(runtime.mode || store.state.runtimeMode || "").trim().toLowerCase();
@@ -153,6 +158,12 @@ export default {
       const mode = String(runtime.mode || store.state.runtimeMode || "").trim().toLowerCase();
       if (mode === "honeypot") return "warning";
       return "info";
+    },
+    runtimeStateIcon() {
+      const runtime = store.state.runtime || {};
+      const mode = String(runtime.mode || store.state.runtimeMode || "").trim().toLowerCase();
+      if (mode === "honeypot") return "mdi-shield-bug";
+      return "mdi-lan-connect";
     },
     wsStateLabel() {
       const value = String(this.wsStatus || "").trim().toLowerCase();
@@ -169,6 +180,14 @@ export default {
       if (value === "locked") return "secondary";
       if (value === "error") return "error";
       return "warning";
+    },
+    wsStateIcon() {
+      const value = String(this.wsStatus || "").trim().toLowerCase();
+      if (value === "online") return "mdi-access-point";
+      if (value === "connecting") return "mdi-progress-clock";
+      if (value === "locked") return "mdi-lock-outline";
+      if (value === "error") return "mdi-access-point-off";
+      return "mdi-access-point-off";
     },
   },
 };
