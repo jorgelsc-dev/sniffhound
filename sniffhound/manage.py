@@ -5,6 +5,7 @@ import os
 import shlex
 import socket
 import shutil
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -16,7 +17,7 @@ from pathlib import Path
 
 from .ipc import generate_ipc_token
 from .process_control import request_process_shutdown, reset_process_shutdown_request
-from .settings import HOST, PORT, resolve_ipc_socket, resolve_ipc_token
+from .settings import DB_PATH, HOST, PORT, resolve_ipc_socket, resolve_ipc_token
 
 try:
     import readline
@@ -225,6 +226,55 @@ def _print_address_in_use_error(host: str, preferred_port: int) -> None:
         "    Stop the existing process or set SNIFFHOUND_HOST/SNIFFHOUND_PORT to another value.\n",
         file=sys.stderr,
     )
+
+
+def _resolve_db_path() -> Path:
+    path = Path(DB_PATH)
+    return path if path.is_absolute() else Path.cwd() / path
+
+
+def _print_db_permission_error(exc: sqlite3.OperationalError) -> None:
+    """SniffHound's web process (this one) never runs as root - it opens
+    the SQLite database as the invoking user. A "readonly database" error
+    here almost always means the db file (or its -wal/-shm siblings) is
+    left over from a run under `sudo`, so this process can no longer write
+    to it."""
+    db_path = _resolve_db_path()
+    print(f"\n[!] Cannot open the SniffHound database: {exc}", file=sys.stderr)
+    print(f"    Path: {db_path}", file=sys.stderr)
+    print(
+        "    This usually means the database was previously created by a "
+        "privileged (root/sudo) run and this unprivileged process can't write "
+        "to it anymore.",
+        file=sys.stderr,
+    )
+    print(
+        f"    Fix: sudo chown \"$(id -un):$(id -gn)\" {db_path} {db_path}-wal {db_path}-shm 2>/dev/null\n"
+        "    (or delete those files to let SniffHound recreate them, or point "
+        "SNIFFHOUND_DB_PATH at a location you own).\n",
+        file=sys.stderr,
+    )
+
+
+def _running_as_root() -> bool:
+    return hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+def _print_root_invocation_error() -> None:
+    """Refusing to ever start this process as root is what makes the
+    permission error in _print_db_permission_error() unable to recur: as
+    long as SniffHound.db is only ever created by an unprivileged run, no
+    future unprivileged run can find it root-owned and unwritable."""
+    print("\n[!] Do not run this with `sudo` / as root.", file=sys.stderr)
+    print(
+        "    The web server and database are meant to run as your normal user - "
+        "it spawns the privileged capture child itself (via sudo) when it needs "
+        "raw-socket access. Running the whole process as root instead leaves "
+        "SniffHound.db owned by root, which then breaks every later "
+        "unprivileged run with 'attempt to write a readonly database'.",
+        file=sys.stderr,
+    )
+    print("    Run it as yourself instead, without sudo.\n", file=sys.stderr)
 
 
 # Policy: capture (raw-socket sniffing, honeypot low-port binds, WiFi
@@ -609,10 +659,13 @@ def _stop_interactive_console(
 
 
 def main():
-    """Combined single-command entry point (`sniffhound`). Spawns a
-    privileged `sniffhound-capture` child and runs the unprivileged web
-    server itself, connected over local IPC. See CLAUDE.md for why capture
-    still unconditionally requires root."""
+    """Combined single-command entry point (`sniffhound`). Runs the web
+    server + database as the invoking (unprivileged) user, and spawns a
+    privileged `sniffhound-capture` child over local IPC for raw-socket
+    access. Only the capture child ever needs root - see CLAUDE.md."""
+    if _running_as_root():
+        _print_root_invocation_error()
+        return 1
     reset_process_shutdown_request()
     tty_attrs = _snapshot_tty_attrs()
     host = str(HOST)
@@ -636,7 +689,11 @@ def main():
     # first owns it on disk, and a root-owned DB file/WAL is unwritable by
     # this process afterwards. Importing first guarantees the web process
     # wins that race regardless of how fast the capture child starts.
-    from .app import app, append_chat_message, bootstrap_capture, connect_capture_service, hub, runtime, shutdown_capture
+    try:
+        from .app import app, append_chat_message, bootstrap_capture, connect_capture_service, hub, runtime, shutdown_capture
+    except sqlite3.OperationalError as exc:
+        _print_db_permission_error(exc)
+        return 1
 
     capture_process = _spawn_capture_child(ipc_socket, ipc_token)
     if capture_process is None:
@@ -689,6 +746,9 @@ def main_web():
     capture child - expects SNIFFHOUND_IPC_SOCKET/SNIFFHOUND_IPC_TOKEN to
     already point at a `sniffhound-capture` process started separately
     (its own systemd unit, a different user, a different host, ...)."""
+    if _running_as_root():
+        _print_root_invocation_error()
+        return 1
     reset_process_shutdown_request()
     host = str(HOST)
     requested_port = int(PORT)
@@ -699,7 +759,11 @@ def main_web():
         _print_address_in_use_error(host, requested_port)
         return 1
 
-    from .app import app, append_chat_message, bootstrap_capture, connect_capture_service, hub, runtime, shutdown_capture
+    try:
+        from .app import app, append_chat_message, bootstrap_capture, connect_capture_service, hub, runtime, shutdown_capture
+    except sqlite3.OperationalError as exc:
+        _print_db_permission_error(exc)
+        return 1
 
     try:
         if not connect_capture_service():
