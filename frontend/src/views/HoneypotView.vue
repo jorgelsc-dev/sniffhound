@@ -70,52 +70,61 @@
         </v-btn>
       </template>
 
-      <v-table density="comfortable" class="listeners-table">
-        <thead>
-          <tr>
-            <th>Listener</th>
-            <th>Label</th>
-            <th>Source</th>
-            <th>Status</th>
-            <th>Enabled</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="listener in listeners" :key="listener.id">
-            <td class="mono">{{ String(listener.proto || "").toUpperCase() }}/{{ listener.port }}</td>
-            <td>{{ listener.label || "-" }}</td>
-            <td>
-              <v-chip size="x-small" :color="listener.source === 'builtin' ? 'secondary' : 'info'" variant="tonal">
-                {{ listener.source }}
-              </v-chip>
-            </td>
-            <td>
-              <v-chip
-                size="x-small"
-                :color="listener.running ? 'success' : 'secondary'"
-                variant="tonal"
-                :prepend-icon="listener.running ? 'mdi-check-circle-outline' : 'mdi-close-circle-outline'"
-              >
-                {{ listener.running ? "Running" : "Stopped" }}
-              </v-chip>
-            </td>
-            <td>
-              <v-switch
-                :model-value="listener.enabled"
-                :loading="listenerTogglePending === listener.id"
-                :disabled="Boolean(listenerTogglePending)"
-                density="compact"
-                hide-details
-                color="success"
-                @update:model-value="(value) => toggleListener(listener, value)"
-              />
-            </td>
-          </tr>
-          <tr v-if="!listeners.length">
-            <td colspan="5" class="text-center text-medium-emphasis py-4">No listeners yet.</td>
-          </tr>
-        </tbody>
-      </v-table>
+      <v-text-field
+        v-model.trim="listenerSearch"
+        label="Search listeners"
+        placeholder="proto, port, label, source..."
+        prepend-inner-icon="mdi-magnify"
+        clearable
+        variant="outlined"
+        density="comfortable"
+        class="mb-3"
+        hide-details
+      />
+
+      <v-data-table
+        :headers="listenerHeaders"
+        :items="listeners"
+        :search="listenerSearch"
+        :custom-filter="filterListenerRows"
+        density="comfortable"
+        items-per-page="10"
+        no-data-text="No listeners yet."
+        class="listeners-table"
+      >
+        <template v-slot:[`item.endpoint`]="{ item }">
+          <span class="mono">{{ String(item.proto || "").toUpperCase() }}/{{ item.port }}</span>
+        </template>
+        <template v-slot:[`item.label`]="{ item }">
+          {{ item.label || "-" }}
+        </template>
+        <template v-slot:[`item.source`]="{ item }">
+          <v-chip size="x-small" :color="item.source === 'builtin' ? 'secondary' : 'info'" variant="tonal">
+            {{ item.source }}
+          </v-chip>
+        </template>
+        <template v-slot:[`item.running`]="{ item }">
+          <v-chip
+            size="x-small"
+            :color="item.running ? 'success' : 'secondary'"
+            variant="tonal"
+            :prepend-icon="item.running ? 'mdi-check-circle-outline' : 'mdi-close-circle-outline'"
+          >
+            {{ item.running ? "Running" : "Stopped" }}
+          </v-chip>
+        </template>
+        <template v-slot:[`item.enabled`]="{ item }">
+          <v-switch
+            :model-value="item.enabled"
+            :loading="listenerTogglePending === item.id"
+            :disabled="Boolean(listenerTogglePending)"
+            density="compact"
+            hide-details
+            color="success"
+            @update:model-value="(value) => toggleListener(item, value)"
+          />
+        </template>
+      </v-data-table>
     </DataPanel>
 
     <MonitorMatchesPanel :monitor="honeypotHitsMonitor" class="mt-4 mb-2" />
@@ -392,6 +401,14 @@ export default {
       listeners: [],
       listenersError: "",
       listenerTogglePending: "",
+      listenerSearch: "",
+      listenerHeaders: [
+        { title: "Listener", key: "endpoint", value: (item) => `${item.proto}/${item.port}` },
+        { title: "Label", key: "label" },
+        { title: "Source", key: "source" },
+        { title: "Status", key: "running" },
+        { title: "Enabled", key: "enabled", sortable: false },
+      ],
       newListenerDialog: false,
       newListenerSubmitting: false,
       newListenerError: "",
@@ -639,6 +656,15 @@ export default {
         .finally(() => {
           this.loading = false;
         });
+    },
+    filterListenerRows(value, query, item) {
+      const needle = String(query || "").trim().toLowerCase();
+      if (!needle) return true;
+      const raw = item && item.raw ? item.raw : item;
+      const haystack = [raw.proto, raw.port, raw.label, raw.source, raw.running ? "running" : "stopped"]
+        .map((part) => String(part == null ? "" : part).toLowerCase())
+        .join(" ");
+      return haystack.includes(needle);
     },
     loadListeners() {
       return this.store
