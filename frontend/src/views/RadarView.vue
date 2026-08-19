@@ -33,6 +33,7 @@
         subtitle="Clickable host nodes and animated traffic relationships between captured endpoints."
         :snapshot="mapSnapshot"
         :top-hosts="topHosts"
+        :host-alerts="hostAlerts"
         :loading="loading"
         :error="error"
         :last-updated="lastUpdated"
@@ -53,6 +54,7 @@
         :show-panel-header="true"
         :show-intro="false"
         :show-projection-switch="true"
+        default-projection="globe"
         :immersive="true"
       />
     </div>
@@ -127,6 +129,47 @@ const RADAR_REFRESH_EVENT_TYPES = new Set([
   "stats_update",
 ]);
 const RADAR_REFRESH_DELAY_MS = 10000;
+const SEVERITY_RANK = { critical: 4, high: 3, medium: 2, low: 1 };
+
+function packetTags(packet) {
+  if (!packet) return [];
+  if (Array.isArray(packet.tags)) return packet.tags;
+  const raw = packet.tags_json;
+  if (typeof raw !== "string" || !raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+// Rolls recent flagged packets up into a per-IP { count, severity } map so
+// the host graph can badge every node currently involved in a monitor hit,
+// counting it against both the source and the destination endpoint.
+function buildHostAlerts(rows) {
+  const alerts = {};
+  const bump = (ip, severity) => {
+    const key = String(ip || "").trim();
+    if (!key) return;
+    const entry = alerts[key] || { count: 0, severity: "low" };
+    entry.count += 1;
+    if ((SEVERITY_RANK[severity] || 0) > (SEVERITY_RANK[entry.severity] || 0)) {
+      entry.severity = severity;
+    }
+    alerts[key] = entry;
+  };
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    packetTags(row).forEach((tag) => {
+      if (!tag || tag.key !== "monitor") return;
+      const severity = String(tag.severity || "").trim().toLowerCase();
+      if (!SEVERITY_RANK[severity]) return;
+      bump(row.src_ip, severity);
+      bump(row.dst_ip, severity);
+    });
+  });
+  return alerts;
+}
 
 export default {
   name: "RadarView",
@@ -144,6 +187,7 @@ export default {
       lastUpdated: "",
       analytics: {},
       mapSnapshot: {},
+      hostAlerts: {},
       wsRefreshTimer: null,
       stopTableRefreshSubscription: null,
       stopMapSnapshotSubscription: null,
@@ -246,7 +290,10 @@ export default {
       if (this.wsRefreshTimer || this.loading) return;
       this.wsRefreshTimer = setTimeout(() => {
         this.wsRefreshTimer = null;
-        this.loadAnalytics().catch(() => {
+        Promise.all([
+          this.loadAnalytics(),
+          this.loadHostAlerts(),
+        ]).catch(() => {
           // keep the current radar visible on transient realtime failures
         });
       }, RADAR_REFRESH_DELAY_MS);
@@ -261,12 +308,23 @@ export default {
         return payload;
       });
     },
+    loadHostAlerts() {
+      // Best-effort: alert badges are a nice-to-have overlay on the host
+      // graph, never a reason to block or error out the main radar load.
+      return this.store
+        .fetchJsonPromise("/ports/?limit=500")
+        .then((payload) => {
+          this.hostAlerts = buildHostAlerts(this.store.extractArray(payload));
+        })
+        .catch(() => {});
+    },
     load() {
       this.loading = true;
       this.error = "";
       return Promise.allSettled([
         this.store.fetchJsonPromise("/api/charts/analytics"),
         this.store.fetchJsonPromise("/api/map/scan?limit=500"),
+        this.loadHostAlerts(),
       ])
         .then(([analyticsRes, mapRes]) => {
           if (analyticsRes.status === "fulfilled") {

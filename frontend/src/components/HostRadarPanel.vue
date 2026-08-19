@@ -228,6 +228,24 @@
                   fill="rgba(238, 246, 255, 0.96)"
                 />
               </g>
+
+              <g
+                v-if="node.alertCount > 0"
+                class="host-radar-alert-badge"
+                :transform="`translate(${node.haloRadius * 0.72}, ${-node.haloRadius * 0.72})`"
+              >
+                <title>{{ node.alertCount }} {{ node.alertSeverity }} alert{{ node.alertCount === 1 ? '' : 's' }} on {{ node.ip }}</title>
+                <circle r="9.4" :fill="node.alertGlow" class="host-radar-alert-badge__pulse" />
+                <circle r="6.6" :fill="node.alertFill" :stroke="node.alertRing" stroke-width="1.1" />
+                <text
+                  text-anchor="middle"
+                  dominant-baseline="central"
+                  dy="0.5"
+                  fill="rgba(10, 14, 22, 0.94)"
+                  font-size="7.6px"
+                  font-weight="800"
+                >{{ node.alertCount > 99 ? "99+" : node.alertCount }}</text>
+              </g>
               <text
                 :y="node.labelY"
                 text-anchor="middle"
@@ -285,6 +303,7 @@
           <span class="legend-chip legend-chip--live">Live attack</span>
           <span class="legend-chip legend-chip--history">Historical host</span>
           <span class="legend-chip legend-chip--pc">Node icon</span>
+          <span class="legend-chip legend-chip--alert">Alert count</span>
         </div>
       </div>
 
@@ -453,6 +472,19 @@ function scopeTheme(scope, emphasis = 0) {
   };
 }
 
+// Mirrors the theme colors in main.js (Vuetify "error"/"warning"/"info") so
+// the alert badge reads consistently with severity chips elsewhere in the app.
+function severityBadgeTheme(severity) {
+  const normalized = String(severity || "").trim().toLowerCase();
+  if (normalized === "critical" || normalized === "high") {
+    return { fill: "#ff647a", glow: "rgba(255, 100, 122, 0.55)", ring: "rgba(255, 189, 199, 0.9)" };
+  }
+  if (normalized === "medium") {
+    return { fill: "#f5bb62", glow: "rgba(245, 187, 98, 0.5)", ring: "rgba(255, 224, 173, 0.9)" };
+  }
+  return { fill: "#4b8fff", glow: "rgba(75, 143, 255, 0.5)", ring: "rgba(178, 205, 255, 0.9)" };
+}
+
 export default {
   name: "HostRadarPanel",
   components: {
@@ -466,6 +498,12 @@ export default {
     topHosts: {
       type: Array,
       default: () => [],
+    },
+    // Per-IP alert rollup built by the parent view from recent monitor hits:
+    // { [ip]: { count: number, severity: "critical"|"high"|"medium"|"low" } }.
+    hostAlerts: {
+      type: Object,
+      default: () => ({}),
     },
     title: {
       type: String,
@@ -696,6 +734,9 @@ export default {
           const score = (host.trafficPackets * 7) +
             (Math.min(48, host.openPorts) * 4) +
             (Math.log10(host.trafficBytes + 10) * 18);
+          const alertInfo = this.hostAlerts && this.hostAlerts[host.ip];
+          const alertCount = Math.max(0, Number(alertInfo && alertInfo.count) || 0);
+          const alertTheme = alertCount > 0 ? severityBadgeTheme(alertInfo.severity) : null;
           return {
             ...host,
             protocols,
@@ -704,6 +745,11 @@ export default {
             score,
             metricLabel: host.openPorts > 0 ? `${host.openPorts} ports` : `${host.trafficPackets} pkts`,
             ...theme,
+            alertCount,
+            alertSeverity: alertCount > 0 ? String(alertInfo.severity || "").trim().toLowerCase() : "",
+            alertFill: alertTheme ? alertTheme.fill : "",
+            alertGlow: alertTheme ? alertTheme.glow : "",
+            alertRing: alertTheme ? alertTheme.ring : "",
           };
         })
         .sort((left, right) => right.score - left.score || left.ip.localeCompare(right.ip));
@@ -1478,7 +1524,10 @@ export default {
         ? node.protocols.join(", ")
         : "no protocol sample";
       const history = node.activeNow ? "live" : "historical";
-      return `${node.ip} | ${node.scope || "unknown"} host | ${history} | ${node.trafficPackets} packets | ${node.openPorts} open ports | ${protocols}`;
+      const alertPart = node.alertCount > 0
+        ? ` | ${node.alertCount} ${node.alertSeverity} alert${node.alertCount === 1 ? "" : "s"}`
+        : "";
+      return `${node.ip} | ${node.scope || "unknown"} host | ${history} | ${node.trafficPackets} packets | ${node.openPorts} open ports | ${protocols}${alertPart}`;
     },
     navigateToHost(node) {
       if (!node || !node.ip || !this.$router) return;
@@ -1499,44 +1548,11 @@ export default {
   overflow: hidden;
   border-radius: 24px;
   border: 1px solid rgba(94, 176, 226, 0.22);
-  background:
-    radial-gradient(circle at 12% 16%, rgba(76, 190, 255, 0.16), transparent 34%),
-    radial-gradient(circle at 88% 14%, rgba(255, 177, 96, 0.08), transparent 28%),
-    linear-gradient(180deg, rgba(4, 12, 24, 0.99), rgba(3, 8, 16, 0.98));
+  background: linear-gradient(180deg, rgba(4, 12, 24, 0.99), rgba(3, 8, 16, 0.98));
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.03),
     inset 0 26px 80px rgba(39, 110, 174, 0.08),
     0 24px 60px rgba(3, 8, 15, 0.42);
-}
-
-.host-radar-stage::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background:
-    linear-gradient(180deg, rgba(145, 222, 255, 0.04), rgba(145, 222, 255, 0) 24%),
-    radial-gradient(circle at 50% 50%, rgba(52, 230, 255, 0.04), transparent 48%);
-  opacity: 0.74;
-}
-
-.host-radar-stage::after {
-  content: "";
-  position: absolute;
-  top: 126px;
-  left: -18%;
-  width: 42%;
-  height: 94px;
-  pointer-events: none;
-  background: linear-gradient(
-    90deg,
-    rgba(112, 220, 255, 0),
-    rgba(112, 220, 255, 0.06),
-    rgba(255, 182, 101, 0.18),
-    rgba(112, 220, 255, 0)
-  );
-  transform: skewX(-18deg);
-  animation: host-threat-sweep 9s linear infinite;
 }
 
 .host-radar-stage svg {
@@ -1608,6 +1624,30 @@ export default {
 
 .legend-chip--pc {
   border-color: rgba(93, 204, 255, 0.84);
+}
+
+.legend-chip--alert {
+  border-color: rgba(255, 100, 122, 0.9);
+}
+
+.host-radar-alert-badge {
+  pointer-events: none;
+}
+
+.host-radar-alert-badge__pulse {
+  animation: host-radar-alert-pulse 1.8s ease-in-out infinite;
+  transform-origin: center;
+}
+
+@keyframes host-radar-alert-pulse {
+  0%, 100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.18;
+    transform: scale(1.45);
+  }
 }
 
 .host-radar-flow {
@@ -1691,15 +1731,6 @@ export default {
   color: rgba(165, 196, 222, 0.84);
   font-size: 0.76rem;
   font-weight: 600;
-}
-
-@keyframes host-threat-sweep {
-  from {
-    transform: translateX(0%) skewX(-18deg);
-  }
-  to {
-    transform: translateX(300%) skewX(-18deg);
-  }
 }
 
 @keyframes host-radar-flow {
