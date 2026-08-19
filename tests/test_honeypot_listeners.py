@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 import socket
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -17,6 +20,60 @@ def _free_high_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))
         return probe.getsockname()[1]
+
+
+class TestSeedingDoesNotImportHeavyHoneypotModule(unittest.TestCase):
+    """Regression test for a real bug: SniffStore's honeypot_listeners
+    seeding used to do `from .honeypot import COMMON_PORTS`, which pulls in
+    honeypot.py's module-level side effects (it opens a RotatingFileHandler
+    for honeypot.log as soon as it's imported). That module had previously
+    only ever been imported by the privileged capture process (root, so
+    permission issues on a pre-existing honeypot.log were masked) - once
+    the unprivileged web process started constructing SniffStore before
+    the privileged process even starts, importing honeypot.py from there
+    could crash the whole app on `PermissionError` if an older honeypot.log
+    in the current directory happened to be root-owned. Run in a real
+    subprocess so sys.modules isn't polluted by whatever other tests in
+    this session have already imported."""
+
+    def test_constructing_a_store_never_imports_sniffhound_honeypot(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            script = (
+                "import sys\n"
+                "from pathlib import Path\n"
+                "from sniffhound.store import SniffStore\n"
+                f"store = SniffStore(Path({tmp_dir!r}) / 'test.db')\n"
+                "store.list_honeypot_listeners()\n"
+                "store.close()\n"
+                "assert 'sniffhound.honeypot' not in sys.modules, "
+                "'constructing SniffStore must not import sniffhound.honeypot'\n"
+                "print('OK')\n"
+            )
+            repo_root = str(Path(__file__).resolve().parents[1])
+            env = {**os.environ, "PYTHONPATH": repo_root}
+            result = subprocess.run(
+                [sys.executable, "-c", script],
+                cwd=tmp_dir,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("OK", result.stdout)
+
+    def test_honeypot_ports_module_is_importable_standalone(self):
+        repo_root = str(Path(__file__).resolve().parents[1])
+        env = {**os.environ, "PYTHONPATH": repo_root}
+        result = subprocess.run(
+            [sys.executable, "-c", "from sniffhound.honeypot_ports import COMMON_PORTS; print(len(COMMON_PORTS['tcp']))"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertTrue(int(result.stdout.strip()) > 0)
 
 
 class TestHoneypotListenerStore(unittest.TestCase):

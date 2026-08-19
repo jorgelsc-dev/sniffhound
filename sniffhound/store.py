@@ -611,7 +611,7 @@ class SniffStore:
         row - so a listener the user has since disabled stays disabled
         across restarts, and a new port added to COMMON_PORTS in a later
         release still reaches already-populated databases."""
-        from .honeypot import COMMON_PORTS
+        from .honeypot_ports import COMMON_PORTS
 
         cursor = self._conn.execute("SELECT id FROM honeypot_listeners")
         existing_ids = {str(row["id"]) for row in cursor.fetchall()}
