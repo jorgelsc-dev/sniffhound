@@ -151,6 +151,7 @@ def normalize_match(match: dict) -> dict:
         "payload_regex": [str(item) for item in _list("payload_regex")],
         "min_length": safe_int(data.get("min_length", 0), 0),
         "max_length": safe_int(data.get("max_length", 0), 0),
+        "min_payload_text_length": safe_int(data.get("min_payload_text_length", 0), 0),
     }
     return normalized
 
@@ -238,6 +239,17 @@ def rule_matches_packet(rule: dict, packet: dict) -> bool:
     max_length = safe_int(match.get("max_length", 0), 0)
     if max_length and packet_length > max_length:
         return False
+
+    min_payload_text_length = safe_int(match.get("min_payload_text_length", 0), 0)
+    if min_payload_text_length:
+        # `payload_text` is only ever populated by Sniffer._interpret_payload()
+        # after utils.is_printable_payload() confirmed the raw bytes are
+        # mostly (>=55%) printable ASCII - so a length threshold here is a
+        # reliable "readable/plaintext payload" signal, not a guess based on
+        # summary/IP/MAC text that's always present regardless of payload.
+        payload_text_length = len(str(packet.get("payload_text") or ""))
+        if payload_text_length < min_payload_text_length:
+            return False
 
     return True
 

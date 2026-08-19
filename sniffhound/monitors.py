@@ -165,6 +165,17 @@ DEFAULT_MONITORS = [
         "action": {"tag": "snmp", "label": "SNMP", "severity": "medium"},
     },
     {
+        "id": "builtin-plaintext-payload",
+        "name": "Readable plaintext payload",
+        "description": "Payload decodes to a substantial run of human-readable text - data traveling unencrypted, regardless of protocol/port. Fires on top of any more specific monitor that also matched (e.g. Telnet, FTP, credentials).",
+        "enabled": True,
+        "priority": 125,
+        "source": "builtin",
+        "mode": "rule",
+        "match": {"min_payload_text_length": 20},
+        "action": {"tag": "plaintext", "label": "Readable plaintext", "severity": "low"},
+    },
+    {
         "id": "builtin-http-basic-auth",
         "name": "HTTP Basic Auth",
         "description": "HTTP requests carrying a base64-encoded Basic Authorization header (credentials recoverable, not encrypted).",
@@ -1120,7 +1131,11 @@ def _validate_match_not_empty(match: dict):
         "payload_regex",
     )
     has_list_criteria = any(match.get(key) for key in criteria_keys)
-    has_length_criteria = bool(match.get("min_length")) or bool(match.get("max_length"))
+    has_length_criteria = (
+        bool(match.get("min_length"))
+        or bool(match.get("max_length"))
+        or bool(match.get("min_payload_text_length"))
+    )
     if not has_list_criteria and not has_length_criteria:
         raise ValueError("Monitor match must include at least one condition")
 
@@ -1257,5 +1272,10 @@ def describe_match(monitor: dict, packet: dict) -> str:
     min_length = safe_int(match.get("min_length", 0), 0)
     if min_length:
         return f"length {safe_int(packet.get('length', 0), 0)}B"
+
+    if match.get("min_payload_text_length"):
+        payload_text = str(packet.get("payload_text") or "").strip()
+        if payload_text:
+            return payload_text[:120]
 
     return ""

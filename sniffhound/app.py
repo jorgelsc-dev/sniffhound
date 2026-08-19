@@ -729,7 +729,8 @@ def _ruleset_row(row: dict) -> dict:
     }
 
 
-def _monitor_row(row: dict) -> dict:
+def _monitor_row(row: dict, match_counts: dict | None = None) -> dict:
+    counts = match_counts or {}
     return {
         "id": row.get("id"),
         "name": row.get("name") or "",
@@ -740,6 +741,7 @@ def _monitor_row(row: dict) -> dict:
         "mode": row.get("mode") or "rule",
         "match": row.get("match") or {},
         "action": row.get("action") or {},
+        "match_count": int(counts.get(str(row.get("id")), 0)),
         "created_at": row.get("created_at") or utc_now(),
         "updated_at": row.get("updated_at") or row.get("created_at") or utc_now(),
     }
@@ -1705,7 +1707,8 @@ def catalog_presets(request):
 @app.api("/api/monitors/", methods=("GET", "POST", "PUT", "DELETE"))
 def monitors_collection(request):
     if request.method.upper() == "GET":
-        return [_monitor_row(row) for row in store.list_monitors()]
+        match_counts = store.monitor_match_counts()
+        return [_monitor_row(row, match_counts) for row in store.list_monitors()]
     payload = _read_json_body(request)
     if request.method.upper() in {"POST", "PUT"}:
         return _monitor_row(store.save_monitor(payload))

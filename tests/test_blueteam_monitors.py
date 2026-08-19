@@ -112,8 +112,11 @@ class TestSensitiveDataMonitors(unittest.TestCase):
         self.assertIn("sensitive-ntlm-auth", self._tags("Authorization: Negotiate YIIFxAYGKwYBBQUC"))
 
     def test_benign_text_matches_nothing(self):
+        # "plaintext" is expected here - it's genuinely readable text on the
+        # wire, just not sensitive - the other sensitive-data monitors are
+        # what this test is actually about.
         tags = self._tags("normal chat message, nothing sensitive here at all")
-        self.assertEqual(tags, set())
+        self.assertEqual(tags - {"plaintext"}, set())
 
 
 class TestTorMonitors(unittest.TestCase):
@@ -283,8 +286,11 @@ class TestMalwareAndC2Monitors(unittest.TestCase):
         self.assertIn("crypto-mining-pool-domain", self._tags("Host: pool.minexmr.com"))
 
     def test_benign_text_matches_nothing(self):
+        # "plaintext" is expected here - it's genuinely readable text on the
+        # wire, just not malware/C2 - the other monitors in this class are
+        # what this test is actually about.
         tags = self._tags("just browsing the news today, nothing unusual")
-        self.assertEqual(tags, set())
+        self.assertEqual(tags - {"plaintext"}, set())
 
 
 class TestPhishingMonitors(unittest.TestCase):

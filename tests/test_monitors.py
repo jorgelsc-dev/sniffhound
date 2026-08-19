@@ -104,6 +104,18 @@ class TestEvaluatePacket(unittest.TestCase):
         hits = evaluate_packet(packet, self.monitors)
         self.assertEqual(hits, [])
 
+    def test_readable_payload_text_matches_plaintext_monitor(self):
+        packet = _packet(payload_text="220 Welcome to the FTP server, please authenticate")
+        hits = evaluate_packet(packet, self.monitors)
+        tags = {hit["tag"] for hit in hits}
+        self.assertIn("plaintext", tags)
+
+    def test_short_payload_text_does_not_match_plaintext_monitor(self):
+        packet = _packet(payload_text="hi")
+        hits = evaluate_packet(packet, self.monitors)
+        tags = {hit["tag"] for hit in hits}
+        self.assertNotIn("plaintext", tags)
+
     def test_stateful_monitors_are_never_matched_declaratively(self):
         # Stateful monitors have no declarative match logic — evaluate_packet
         # must skip them entirely (they're handled by anomaly.AnomalyEngine),
@@ -332,6 +344,13 @@ class TestSnifferGatedPersistence(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["dst_port"], 3389)
         self.assertEqual(self.store.list_packets_by_monitor("builtin-credentials"), [])
+
+    def test_monitor_match_counts_only_includes_matched_monitors(self):
+        self.sniffer._store_packet(self._base_packet(dst_port=3389))
+        self.sniffer._store_packet(self._base_packet(dst_port=3389, dst_ip="10.0.0.50"))
+        counts = self.store.monitor_match_counts()
+        self.assertEqual(counts.get("builtin-admin-ports"), 2)
+        self.assertNotIn("builtin-credentials", counts)
 
     def test_list_packets_by_monitor_includes_matched_value(self):
         self.sniffer._store_packet(self._base_packet(dst_port=3389))

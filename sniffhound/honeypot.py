@@ -751,8 +751,23 @@ class HoneypotEngine:
         self._stop_event.set()
         with self._state_lock:
             self._state.running = False
-        for listener_id in list(self._listener_threads.keys()):
-            self._stop_listener_thread(listener_id)
+        # Signal every listener's stop_event before joining any of them -
+        # each listener thread only notices within its own ~1s accept()/
+        # recvfrom() timeout, so joining sequentially (signal, join, signal,
+        # join, ...) made total shutdown time scale with the listener count
+        # (dozens of honeypot ports -> tens of seconds, well past the IPC
+        # call timeout). Signalling all of them up front means they all
+        # start winding down concurrently and the joins below just wait out
+        # the shared ~1s grace period once.
+        listener_ids = list(self._listener_threads.keys())
+        for listener_id in listener_ids:
+            stop_event = self._listener_stop_events.pop(listener_id, None)
+            if stop_event is not None:
+                stop_event.set()
+        for listener_id in listener_ids:
+            thread = self._listener_threads.pop(listener_id, None)
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=1.5)
         if self._writer_thread and self._writer_thread.is_alive():
             self._writer_thread.join(timeout=1.2)
         self._writer_thread = None

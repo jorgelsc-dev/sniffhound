@@ -137,29 +137,6 @@
               <animate attributeName="r" values="2;10;2" :dur="arc.duration" :begin="arc.begin" repeatCount="indefinite" />
               <animate attributeName="opacity" values="0;0.24;0" :dur="arc.duration" :begin="arc.begin" repeatCount="indefinite" />
             </circle>
-            <circle
-              v-for="arc in arcPaths"
-              :key="`trace-glow-${arc.id}`"
-              :r="arc.traceRadius * 2.85"
-              :fill="arc.traceGlow"
-              class="host-radar-trace host-radar-trace--glow"
-              :opacity="arc.traceGlowOpacity"
-              :filter="`url(#${nodeGlowFilterId})`"
-            >
-              <animateMotion :dur="arc.duration" :begin="arc.begin" repeatCount="indefinite" :path="arc.d" />
-            </circle>
-            <circle
-              v-for="arc in arcPaths"
-              :key="`trace-${arc.id}`"
-              :r="arc.traceRadius"
-              :fill="arc.traceColor"
-              :stroke="arc.traceStroke"
-              stroke-width="0.58"
-              class="host-radar-trace"
-              :opacity="arc.traceOpacity"
-            >
-              <animateMotion :dur="arc.duration" :begin="arc.begin" repeatCount="indefinite" :path="arc.d" />
-            </circle>
           </g>
 
           <g v-if="layoutNodes.length" class="host-radar-nodes">
@@ -818,11 +795,6 @@ export default {
             strokeWidth: strength,
             strokeOpacity: laneOpacity,
             glowOpacity: link.activeNow ? 0.18 : Math.max(0.06, laneOpacity * 0.38),
-            traceRadius: Math.max(2.4, Math.min(4.2, 2.1 + (Math.log2((link.packets || 0) + 1) * 0.34))),
-            traceGlow: palette.glow,
-            traceStroke: "rgba(236, 246, 255, 0.88)",
-            traceOpacity: link.activeNow ? 0.98 : Math.max(0.46, laneOpacity * 0.96),
-            traceGlowOpacity: link.activeNow ? 0.34 : Math.max(0.16, laneOpacity * 0.54),
             duration: `${(2.7 + ((index % 5) * 0.22)).toFixed(2)}s`,
             begin: `${(index % 7) * 0.15}s`,
             markerEnd: link.activeNow ? `url(#${this.attackMarkerId})` : "",
@@ -1653,11 +1625,6 @@ export default {
 .host-radar-flow {
   stroke-dasharray: 10 13;
   animation: host-radar-flow 2.8s linear infinite;
-}
-
-.host-radar-trace {
-  pointer-events: none;
-  mix-blend-mode: screen;
 }
 
 .host-radar-node {

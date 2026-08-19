@@ -164,7 +164,7 @@ export default {
       const runtime = store.state.runtime || {};
       const mode = String(runtime.mode || store.state.runtimeMode || "").trim().toLowerCase();
       if (mode === "honeypot") return "mdi-shield-bug";
-      return "mdi-lan-connect";
+      return "mdi-database-outline";
     },
     wsStateLabel() {
       const value = String(this.wsStatus || "").trim().toLowerCase();

@@ -154,6 +154,16 @@
       >
         <v-expansion-panel-title>
           <div class="d-flex align-center flex-wrap ga-2">
+            <v-chip
+              v-if="monitor.match_count > 0"
+              size="x-small"
+              color="info"
+              variant="tonal"
+              prepend-icon="mdi-table-row"
+              class="match-count-chip"
+            >
+              {{ monitor.match_count.toLocaleString() }}
+            </v-chip>
             <span class="font-weight-medium">{{ monitor.name }}</span>
             <v-chip size="x-small" :color="modeColor(monitor.mode)" variant="tonal">
               {{ modeLabel(monitor.mode) }}
@@ -731,6 +741,7 @@ export default {
       }
       if (match.min_length) parts.push(`>=${match.min_length}B`);
       if (match.max_length) parts.push(`<=${match.max_length}B`);
+      if (match.min_payload_text_length) parts.push(`>=${match.min_payload_text_length} readable chars`);
       return parts.length ? parts.join(" · ") : "-";
     },
     isValidRegex(pattern) {
@@ -928,6 +939,11 @@ export default {
 </script>
 
 <style scoped>
+.match-count-chip {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
 .metric-card {
   border-radius: 16px;
 }

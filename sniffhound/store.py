@@ -1359,6 +1359,21 @@ class SniffStore:
             row["enabled"] = bool(row.get("enabled"))
         return rows
 
+    def monitor_match_counts(self) -> dict:
+        """Matched-packet count per monitor id, in one grouped query - not
+        folded into list_monitors() itself since that's also polled every
+        MONITOR_CACHE_TTL_SECONDS by the live capture path (Sniffer), which
+        has no use for these counts and shouldn't pay for them."""
+        rows = self._fetchall(
+            """
+            SELECT tags.value AS monitor_id, COUNT(DISTINCT tags.packet_id) AS count
+            FROM tags
+            WHERE tags.key = 'monitor_id'
+            GROUP BY tags.value
+            """
+        )
+        return {str(row["monitor_id"]): int(row["count"]) for row in rows}
+
     def get_monitor(self, monitor_id: str):
         row = self._fetchone("SELECT * FROM monitors WHERE id = ?", (str(monitor_id),))
         if not row:
