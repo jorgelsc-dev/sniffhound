@@ -300,6 +300,15 @@ class RuntimeControllerClient:
     def wifi_snapshot(self):
         return self._ipc_client.call("wifi_snapshot")
 
+    def list_honeypot_listeners(self):
+        return self._ipc_client.call("list_honeypot_listeners")
+
+    def create_honeypot_listener(self, proto: str, port, label: str = ""):
+        return self._ipc_client.call("create_honeypot_listener", proto=proto, port=port, label=label)
+
+    def set_honeypot_listener_enabled(self, listener_id: str, enabled: bool):
+        return self._ipc_client.call("set_honeypot_listener_enabled", listener_id=listener_id, enabled=enabled)
+
 
 def _on_capture_event(payload: dict) -> None:
     hub.broadcast(payload)
@@ -376,6 +385,9 @@ ENDPOINTS = [
     {"method": "POST", "path": "/api/runtime/", "desc": "Switch runtime mode or update the sniffer interface."},
     {"method": "GET", "path": "/api/wifi/monitor", "desc": "WiFi 802.11 monitor-mode capture status."},
     {"method": "POST", "path": "/api/wifi/monitor", "desc": "Toggle WiFi 802.11 monitor-mode capture on an interface."},
+    {"method": "GET", "path": "/api/honeypot/listeners/", "desc": "List honeypot listeners (builtin + custom) and their enabled/running state."},
+    {"method": "POST", "path": "/api/honeypot/listeners/", "desc": "Create a new honeypot listener. Listeners can only be created or toggled, never edited or deleted."},
+    {"method": "POST", "path": "/api/honeypot/listeners/toggle", "desc": "Enable/disable a honeypot listener (builtin or custom) without removing it."},
     {"method": "GET", "path": "/api/ws/clients", "desc": "Connected WebSocket clients."},
     {"method": "POST", "path": "/api/ws/broadcast", "desc": "Broadcast a WebSocket payload."},
     {"method": "POST", "path": "/api/ws/ping", "desc": "Ping all WebSocket clients."},
@@ -1548,6 +1560,29 @@ def wifi_monitor_api(request):
     enabled = bool(payload.get("enabled"))
     interface = str(payload.get("interface") or "").strip()
     return runtime.set_wifi_monitor(enabled, interface)
+
+
+@app.api("/api/honeypot/listeners/", methods=("GET", "POST"))
+def honeypot_listeners_api(request):
+    if request.method.upper() == "GET":
+        return runtime.list_honeypot_listeners()
+    payload = _read_json_body(request)
+    proto = str(payload.get("proto") or "").strip().lower()
+    port = payload.get("port")
+    label = str(payload.get("label") or "").strip()
+    return runtime.create_honeypot_listener(proto, port, label)
+
+
+@app.api("/api/honeypot/listeners/toggle", methods=("POST",))
+def honeypot_listeners_toggle_api(request):
+    payload = _read_json_body(request)
+    listener_id = str(payload.get("id") or "").strip()
+    if not listener_id:
+        raise ValueError("id is required")
+    if "enabled" not in payload:
+        raise ValueError("enabled is required")
+    enabled = bool(payload.get("enabled"))
+    return runtime.set_honeypot_listener_enabled(listener_id, enabled)
 
 
 @app.api("/api/catalog/file/banner-rules", methods=("GET", "POST"))

@@ -474,7 +474,6 @@ def _build_postgres_error_packet() -> bytes:
 class HoneypotState:
     running: bool = False
     errors: dict[str, str] = field(default_factory=dict)
-    listeners: list[str] = field(default_factory=list)
     packets_seen: int = 0
     packets_total_bytes: int = 0
     started_at: str = ""
@@ -490,7 +489,12 @@ class HoneypotEngine:
         self._stop_event = threading.Event()
         self._state_lock = threading.RLock()
         self._event_queue: queue.Queue[dict[str, Any]] = queue.Queue()
-        self._threads: list[threading.Thread] = []
+        # Each listener gets its own stop event/thread, keyed by id
+        # ("tcp/22") - the shared `_stop_event` above still governs the
+        # writer thread and overall engine lifecycle, but per-listener
+        # start/stop needs per-listener signaling.
+        self._listener_stop_events: dict[str, threading.Event] = {}
+        self._listener_threads: dict[str, threading.Thread] = {}
         self._writer_thread: threading.Thread | None = None
         self._state = HoneypotState()
         self._tls_sni_map: dict[int, str] = {}
@@ -736,18 +740,34 @@ class HoneypotEngine:
         )
 
     def snapshot(self) -> dict:
+        listener_rows = self.store.list_honeypot_listeners()
+        listeners = []
+        for row in listener_rows:
+            listener_id = str(row.get("id") or "")
+            thread = self._listener_threads.get(listener_id)
+            listeners.append(
+                {
+                    "id": listener_id,
+                    "proto": row.get("proto"),
+                    "port": row.get("port"),
+                    "label": row.get("label") or "",
+                    "enabled": bool(row.get("enabled")),
+                    "source": row.get("source") or "builtin",
+                    "running": bool(thread is not None and thread.is_alive()),
+                }
+            )
         with self._state_lock:
             return {
                 "running": bool(self._state.running),
                 "mode": "honeypot",
                 "errors": dict(self._state.errors),
-                "listeners": list(self._state.listeners),
+                "listeners": listeners,
                 "packets_seen": int(self._state.packets_seen),
                 "packets_total_bytes": int(self._state.packets_total_bytes),
                 "started_at": self._state.started_at,
                 "last_event_at": self._state.last_event_at,
                 "session_id": int(self._state.session_id),
-                "active_threads": sum(1 for thread in self._threads if thread.is_alive()) + (1 if self._writer_thread and self._writer_thread.is_alive() else 0),
+                "active_threads": sum(1 for thread in self._listener_threads.values() if thread.is_alive()) + (1 if self._writer_thread and self._writer_thread.is_alive() else 0),
                 "log_file": str(LOG_FILE),
                 "event_db": str(EVENT_DB_FILE),
                 "tls_ready": self._tls_context is not None,
@@ -760,7 +780,6 @@ class HoneypotEngine:
             self._stop_event.clear()
             self._state.running = True
             self._state.errors = {}
-            self._state.listeners = [f"tcp/{port}" for port in COMMON_PORTS["tcp"]] + [f"udp/{port}" for port in COMMON_PORTS["udp"]]
             self._state.packets_seen = 0
             self._state.packets_total_bytes = 0
             self._state.started_at = utc_now()
@@ -778,45 +797,24 @@ class HoneypotEngine:
             self._set_error("tls", str(error))
             LOGGER.exception("No se pudo inicializar TLS")
 
-        threads: list[threading.Thread] = []
-        for port in COMMON_PORTS["tcp"]:
-            tls_context = self._tls_context if port in TLS_TCP_PORTS else None
-            if port in TLS_TCP_PORTS and tls_context is None:
-                self._set_error(f"tcp/{port}", "TLS context unavailable")
+        started = 0
+        for listener in self.store.list_honeypot_listeners():
+            if not listener.get("enabled"):
                 continue
-            thread = threading.Thread(
-                target=self._tcp_listener,
-                args=(port, tls_context),
-                name=f"sniffhound-honeypot-tcp-{port}",
-                daemon=True,
-            )
-            thread.start()
-            threads.append(thread)
+            if self._spawn_listener(listener["id"], listener["proto"], listener["port"]):
+                started += 1
 
-        for port in COMMON_PORTS["udp"]:
-            thread = threading.Thread(
-                target=self._udp_listener,
-                args=(port,),
-                name=f"sniffhound-honeypot-udp-{port}",
-                daemon=True,
-            )
-            thread.start()
-            threads.append(thread)
-
-        self._threads = threads
-        LOGGER.info("Honeypot activo en %s con %s listeners", self.bind_host, len(self._state.listeners))
+        LOGGER.info("Honeypot activo en %s con %s listeners", self.bind_host, started)
         return self.snapshot()
 
     def stop(self):
         self._stop_event.set()
         with self._state_lock:
             self._state.running = False
-        for thread in list(self._threads):
-            if thread.is_alive():
-                thread.join(timeout=0.8)
+        for listener_id in list(self._listener_threads.keys()):
+            self._stop_listener_thread(listener_id)
         if self._writer_thread and self._writer_thread.is_alive():
             self._writer_thread.join(timeout=1.2)
-        self._threads = []
         self._writer_thread = None
         self._close_event_db()
         try:
@@ -983,6 +981,18 @@ class HoneypotEngine:
                 {"key": "mode", "value": "honeypot"},
                 {"key": "service", "value": normalize_protocol_name(protocol)},
                 {"key": "port", "value": str(port)},
+                # A "monitor"/"monitor_id" pair, same shape Sniffer's monitor
+                # engine emits - this is what the frontend's notifyForPacketEvent
+                # (appStore.js) scans for to pop a toast/notification. Honeypot
+                # traffic never runs through evaluate_packet/AnomalyEngine (a
+                # separate pipeline by design), so this is added directly here
+                # rather than via a DEFAULT_MONITORS catalog entry - there's no
+                # declarative match to toggle, every honeypot hit is inherently
+                # notable. "critical" severity clears NOTIFY_MONITOR_SEVERITIES
+                # so it always toasts, matching the Sniffer-side "alert me"
+                # behavior for high/critical monitors.
+                {"key": "monitor", "value": "Honeypot hit", "severity": "critical"},
+                {"key": "monitor_id", "value": "builtin-honeypot-hit", "severity": "critical"},
             ],
             "rule_hits": [
                 {"rule_id": "honeypot", "rule_name": "Honeypot", "tag": "honeypot", "label": "Honeypot", "severity": "high"}
@@ -1002,10 +1012,9 @@ class HoneypotEngine:
     def _emit_packet(self, packet: dict):
         self._event_queue.put({"packet": packet, "meta": packet.get("honeypot_meta") or {}})
 
-    def _listen(self, port: int, handler, *, udp: bool = False):
+    def _listen(self, port: int, handler, *, udp: bool = False, stop_event: threading.Event):
         sock_type = socket.SOCK_DGRAM if udp else socket.SOCK_STREAM
         with socket.socket(socket.AF_INET, sock_type) as sock:
-            self._last_socket = sock
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 sock.bind((self.bind_host, port))
@@ -1018,13 +1027,13 @@ class HoneypotEngine:
                 sock.listen(20)
                 sock.settimeout(1.0)
                 LOGGER.info("TCP honeypot activo en %s:%s", self.bind_host, port)
-                while not self._stop_event.is_set():
+                while not stop_event.is_set():
                     try:
                         client, addr = sock.accept()
                     except socket.timeout:
                         continue
                     except OSError as error:
-                        if self._stop_event.is_set():
+                        if stop_event.is_set():
                             break
                         self._set_error(f"tcp/{port}", str(error))
                         continue
@@ -1032,27 +1041,97 @@ class HoneypotEngine:
             else:
                 sock.settimeout(1.0)
                 LOGGER.info("UDP honeypot activo en %s:%s", self.bind_host, port)
-                while not self._stop_event.is_set():
+                while not stop_event.is_set():
                     try:
                         data, addr = sock.recvfrom(MAX_PACKET_SIZE)
                     except socket.timeout:
                         continue
                     except OSError as error:
-                        if self._stop_event.is_set():
+                        if stop_event.is_set():
                             break
                         self._set_error(f"udp/{port}", str(error))
                         continue
                     if data:
                         handler(sock, addr, port, data)
 
-    def _tcp_listener(self, port: int, tls_context=None):
+    def _tcp_listener(self, port: int, stop_event: threading.Event, tls_context=None):
         if tls_context is not None:
-            self._listen(port, lambda client, addr, p: self._handle_tcp(client, addr, p, tls_context=tls_context))
+            self._listen(
+                port,
+                lambda client, addr, p: self._handle_tcp(client, addr, p, tls_context=tls_context),
+                stop_event=stop_event,
+            )
         else:
-            self._listen(port, self._handle_tcp)
+            self._listen(port, self._handle_tcp, stop_event=stop_event)
 
-    def _udp_listener(self, port: int):
-        self._listen(port, self._handle_udp, udp=True)
+    def _udp_listener(self, port: int, stop_event: threading.Event):
+        self._listen(port, self._handle_udp, udp=True, stop_event=stop_event)
+
+    def _spawn_listener(self, listener_id: str, proto: str, port: int) -> bool:
+        """Start a single listener's thread, if it isn't already running.
+        Returns False (with an error recorded) only for a TCP/TLS listener
+        whose TLS context isn't ready - every other failure surfaces later,
+        from inside the thread, via `_set_error` (bind failures etc.)."""
+        existing = self._listener_threads.get(listener_id)
+        if existing is not None and existing.is_alive():
+            return True
+        stop_event = threading.Event()
+        if proto == "tcp":
+            tls_context = self._tls_context if port in TLS_TCP_PORTS else None
+            if port in TLS_TCP_PORTS and tls_context is None:
+                self._set_error(listener_id, "TLS context unavailable")
+                return False
+            thread = threading.Thread(
+                target=self._tcp_listener,
+                args=(port, stop_event, tls_context),
+                name=f"sniffhound-honeypot-tcp-{port}",
+                daemon=True,
+            )
+        else:
+            thread = threading.Thread(
+                target=self._udp_listener,
+                args=(port, stop_event),
+                name=f"sniffhound-honeypot-udp-{port}",
+                daemon=True,
+            )
+        self._listener_stop_events[listener_id] = stop_event
+        thread.start()
+        self._listener_threads[listener_id] = thread
+        return True
+
+    def _stop_listener_thread(self, listener_id: str):
+        stop_event = self._listener_stop_events.pop(listener_id, None)
+        if stop_event is not None:
+            stop_event.set()
+        thread = self._listener_threads.pop(listener_id, None)
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=1.5)
+
+    def set_listener_enabled(self, listener_id: str, enabled: bool) -> dict:
+        """The only way to change a listener after creation - flips its
+        stored `enabled` flag and, if the engine is currently running,
+        starts/stops its live thread to match immediately. Never edits the
+        listener's proto/port, and there is no delete."""
+        listener = self.store.set_honeypot_listener_enabled(listener_id, enabled)
+        with self._state_lock:
+            running = bool(self._state.running)
+        if running:
+            if enabled:
+                self._spawn_listener(listener["id"], listener["proto"], listener["port"])
+            else:
+                self._stop_listener_thread(listener_id)
+        return self.snapshot()
+
+    def create_listener(self, proto: str, port: int, label: str = "") -> dict:
+        """Add a brand-new listener (always starts enabled). If the engine
+        is currently running, its thread starts immediately; otherwise it
+        joins the roster the next time `start()` runs."""
+        listener = self.store.create_honeypot_listener(proto, port, label)
+        with self._state_lock:
+            running = bool(self._state.running)
+        if running:
+            self._spawn_listener(listener["id"], listener["proto"], listener["port"])
+        return self.snapshot()
 
     def _handle_tcp(self, client_sock, addr, port, tls_context=None):
         wrapped_sock = client_sock

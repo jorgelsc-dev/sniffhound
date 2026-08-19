@@ -424,8 +424,25 @@ const DOMAIN_SOURCE_LABELS = {
   http_host: "HTTP Host",
 };
 
-const PROTOCOL_OPTIONS = ["tcp", "udp", "icmp", "icmpv6", "arp"];
-const SEVERITY_OPTIONS = ["info", "low", "medium", "high"];
+const PROTOCOL_OPTIONS = [
+  "tcp",
+  "udp",
+  "icmp",
+  "icmpv6",
+  "arp",
+  "sctp",
+  "modbus",
+  "dnp3",
+  "snmp",
+  "syslog",
+  "tftp",
+  "radius",
+  "mqtt",
+  "wifi-mgmt",
+  "wifi-ctrl",
+  "wifi-data",
+];
+const SEVERITY_OPTIONS = ["info", "low", "medium", "high", "critical"];
 const REFRESH_EVENT_TYPES = new Set(["packet", "stats_update", "runtime_mode"]);
 
 function emptyForm() {

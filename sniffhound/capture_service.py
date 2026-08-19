@@ -128,6 +128,9 @@ def main() -> int:
             "set_sniffer_interface": runtime.set_sniffer_interface,
             "set_wifi_monitor": runtime.set_wifi_monitor,
             "wifi_snapshot": runtime.wifi_snapshot,
+            "list_honeypot_listeners": runtime.list_honeypot_listeners,
+            "create_honeypot_listener": runtime.create_honeypot_listener,
+            "set_honeypot_listener_enabled": runtime.set_honeypot_listener_enabled,
             "snapshot": runtime.snapshot,
             "shutdown": request_process_shutdown,
         }

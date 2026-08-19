@@ -188,6 +188,54 @@ IGMP_TYPE_NAMES = {
     0x22: "v3 membership report",
 }
 
+# --- ICS/SCADA and infrastructure protocol tables -------------------------
+
+MODBUS_FUNCTION_NAMES = {
+    1: "read-coils", 2: "read-discrete-inputs", 3: "read-holding-registers",
+    4: "read-input-registers", 5: "write-single-coil", 6: "write-single-register",
+    7: "read-exception-status", 8: "diagnostics", 11: "get-comm-event-counter",
+    15: "write-multiple-coils", 16: "write-multiple-registers",
+    17: "report-server-id", 20: "read-file-record", 21: "write-file-record",
+    22: "mask-write-register", 23: "read-write-multiple-registers",
+    24: "read-fifo-queue", 43: "encapsulated-interface-transport",
+}
+# Function codes that change process state on the target device - the
+# single highest-value signal a passive ICS monitor can surface.
+MODBUS_WRITE_FUNCTION_CODES = {5, 6, 15, 16, 21, 22, 23}
+
+DNP3_START = b"\x05\x64"
+DNP3_FUNCTION_NAMES = {
+    0: "confirm", 1: "read", 2: "write", 3: "select", 4: "operate",
+    5: "direct-operate", 6: "direct-operate-noack", 7: "immediate-freeze",
+    8: "immediate-freeze-noack", 9: "freeze-clear", 10: "freeze-clear-noack",
+    11: "freeze-at-time", 12: "freeze-at-time-noack", 13: "cold-restart",
+    14: "warm-restart", 15: "initialize-data", 16: "initialize-application",
+    17: "start-application", 18: "stop-application", 19: "save-configuration",
+    20: "enable-unsolicited", 21: "disable-unsolicited", 22: "assign-class",
+    23: "delay-measure", 24: "record-current-time", 129: "response",
+    130: "unsolicited-response",
+}
+DNP3_RESTART_FUNCTION_CODES = {13, 14}
+
+TFTP_OPCODE_NAMES = {1: "RRQ", 2: "WRQ", 3: "DATA", 4: "ACK", 5: "ERROR", 6: "OACK"}
+
+RADIUS_CODE_NAMES = {
+    1: "Access-Request", 2: "Access-Accept", 3: "Access-Reject",
+    4: "Accounting-Request", 5: "Accounting-Response", 11: "Access-Challenge",
+    12: "Status-Server", 13: "Status-Client",
+}
+
+MQTT_PACKET_TYPE_NAMES = {
+    1: "CONNECT", 2: "CONNACK", 3: "PUBLISH", 4: "PUBACK", 5: "PUBREC",
+    6: "PUBREL", 7: "PUBCOMP", 8: "SUBSCRIBE", 9: "SUBACK", 10: "UNSUBSCRIBE",
+    11: "UNSUBACK", 12: "PINGREQ", 13: "PINGRESP", 14: "DISCONNECT",
+}
+
+SYSLOG_SEVERITY_NAMES = {
+    0: "emergency", 1: "alert", 2: "critical", 3: "error",
+    4: "warning", 5: "notice", 6: "info", 7: "debug",
+}
+
 
 def _read_dns_name(payload: bytes, offset: int, *, max_jumps: int = 20) -> tuple[str, int]:
     """Decode a (possibly compressed) DNS name starting at `offset`.
@@ -661,11 +709,11 @@ class Sniffer:
                 continue
             try:
                 packet = wifi_module.parse_80211_frame(data, interface=interface)
-            except Exception:
+            except Exception as exc:
                 LOGGER.exception("Failed to parse 802.11 frame on %s", interface)
-                continue
+                packet = self._build_unparseable_packet(interface, data, reason=str(exc) or type(exc).__name__)
             if not packet:
-                continue
+                packet = self._build_unparseable_packet(interface, data, reason="802.11 frame too short/malformed")
             packet = self._finalize_packet(packet)
             try:
                 self._store_packet(packet)
@@ -786,9 +834,17 @@ class Sniffer:
                 continue
             if not data:
                 continue
-            packet = self.parse_packet(data, interface=interface)
+            try:
+                packet = self.parse_packet(data, interface=interface)
+            except Exception as exc:
+                # A parser bug on one malformed frame must never take down
+                # the whole capture thread - fall back to a taggable
+                # "unparseable" record instead of letting the exception
+                # propagate out of the loop.
+                LOGGER.exception("Failed to parse captured frame on %s", interface)
+                packet = self._build_unparseable_packet(interface, data, reason=str(exc) or type(exc).__name__)
             if not packet:
-                continue
+                packet = self._build_unparseable_packet(interface, data, reason="frame too short to parse")
             try:
                 self._store_packet(packet)
             except Exception:
@@ -798,6 +854,20 @@ class Sniffer:
             sock.close()
         except Exception:
             pass
+
+    def _build_unparseable_packet(self, interface: str, data: bytes, *, reason: str) -> dict:
+        """A frame that either raised while parsing or was too short to even
+        attempt (`parse_packet` returning `None`) - still worth a record so
+        it's visible/taggable rather than silently vanishing, tagged
+        distinctly from `proto="unknown"` (a *recognized* structure with an
+        unrecognized protocol number)."""
+        packet = build_base_packet(utc_now(), interface, data, data)
+        packet["proto"] = "unparseable"
+        packet["parse_error"] = reason
+        summary = f"Unparseable frame ({len(data)}B): {reason}"
+        packet["summary"] = summary
+        packet["banner_text"] = summary
+        return self._finalize_packet(packet)
 
     def _enable_promiscuous(self, sock, interface: str):
         try:
@@ -1229,6 +1299,21 @@ class Sniffer:
                 if ip_version == 6 and not packet.get("hop_limit"):
                     packet["hop_limit"] = 64
                 return
+        if (packet["src_port"] == 502 or packet["dst_port"] == 502) and len(payload) >= 8:
+            self._parse_modbus(packet, payload)
+            if ip_version == 6 and not packet.get("hop_limit"):
+                packet["hop_limit"] = 64
+            return
+        if (packet["src_port"] == 20000 or packet["dst_port"] == 20000) and payload[0:2] == DNP3_START:
+            self._parse_dnp3(packet, payload)
+            if ip_version == 6 and not packet.get("hop_limit"):
+                packet["hop_limit"] = 64
+            return
+        if (packet["src_port"] == 1883 or packet["dst_port"] == 1883) and payload:
+            self._parse_mqtt(packet, payload)
+            if ip_version == 6 and not packet.get("hop_limit"):
+                packet["hop_limit"] = 64
+            return
         packet["payload_text"] = self._interpret_payload(packet, payload)
         packet["banner_text"] = packet["payload_text"] or self._classify_tcp_banner(packet, payload)
         packet["summary"] = packet["banner_text"] or f"TCP {packet['src_ip']}:{packet['src_port']} → {packet['dst_ip']}:{packet['dst_port']}"
@@ -1280,6 +1365,16 @@ class Sniffer:
             self._apply_dns_result(packet, payload, prefix="LLMNR", source="llmnr")
         elif src_port == 137 or dst_port == 137:
             self._parse_nbns(packet, payload)
+        elif src_port in (161, 162) or dst_port in (161, 162):
+            self._parse_snmp(packet, payload)
+        elif src_port == 514 or dst_port == 514:
+            self._parse_syslog(packet, payload)
+        elif src_port == 69 or dst_port == 69:
+            self._parse_tftp(packet, payload)
+        elif src_port in (1812, 1813) or dst_port in (1812, 1813):
+            self._parse_radius(packet, payload)
+        elif (src_port == 20000 or dst_port == 20000) and payload[0:2] == DNP3_START:
+            self._parse_dnp3(packet, payload)
 
     def _parse_sctp(self, packet: dict, body: bytes, *, ip_version: int = 4):
         if len(body) < 12:
@@ -1435,6 +1530,8 @@ class Sniffer:
                     hostname = value.decode("ascii", errors="replace")
                 elif code == 60:
                     vendor_class = value.decode("ascii", errors="replace")
+            if msg_type is not None:
+                packet["dhcp_msg_type"] = msg_type
             type_name = DHCP_MSG_TYPES.get(msg_type, f"type {msg_type}" if msg_type is not None else "message")
             parts = [f"DHCP {type_name}"]
             if hostname:
@@ -1475,6 +1572,288 @@ class Sniffer:
             packet["payload_text"] = summary
         except Exception:
             packet["summary"] = packet.get("summary") or "NBNS packet"
+            packet["banner_text"] = packet["summary"]
+
+    def _parse_modbus(self, packet: dict, payload: bytes):
+        # MBAP header (RFC-less but universally implemented as): Transaction
+        # ID(2) + Protocol ID(2, always 0 for Modbus) + Length(2) + Unit ID(1),
+        # then the PDU: Function Code(1) + data. A response to an error has
+        # the top bit of the function code set (fc | 0x80) followed by a
+        # 1-byte exception code.
+        packet["proto"] = "modbus"
+        try:
+            if len(payload) < 8:
+                packet["summary"] = "Modbus packet"
+                packet["banner_text"] = packet["summary"]
+                return
+            unit_id = payload[6]
+            function_code = payload[7]
+            is_exception = bool(function_code & 0x80)
+            base_code = function_code & 0x7F
+            func_name = MODBUS_FUNCTION_NAMES.get(base_code, f"fc-{base_code}")
+            is_write = base_code in MODBUS_WRITE_FUNCTION_CODES
+            packet["modbus_unit_id"] = unit_id
+            packet["modbus_function_code"] = base_code
+            packet["modbus_is_write"] = is_write
+            kind = "write" if is_write else "read/other"
+            summary = f"Modbus {func_name} ({kind}) unit={unit_id}"
+            if is_exception:
+                exception_code = payload[8] if len(payload) > 8 else None
+                summary = f"Modbus EXCEPTION {func_name} unit={unit_id} code={exception_code}"
+            packet["summary"] = summary
+            packet["banner_text"] = summary
+            packet["payload_text"] = summary
+        except Exception:
+            packet["summary"] = packet.get("summary") or "Modbus packet"
+            packet["banner_text"] = packet["summary"]
+
+    def _parse_dnp3(self, packet: dict, payload: bytes):
+        # Best-effort: DNP3 chunks its payload into CRC-protected 16-byte
+        # blocks past the data-link header, which this doesn't reassemble -
+        # it decodes the fixed 10-byte data-link header (start bytes,
+        # length, control, destination, source) and, for the common case of
+        # a short single-block frame, peeks the application-layer function
+        # code right after the 2-byte data-link CRC. Enough to flag
+        # restart/unsolicited-response commands; a truncated/multi-block
+        # frame just degrades to reporting the data-link fields alone.
+        packet["proto"] = "dnp3"
+        try:
+            if len(payload) < 10 or payload[0:2] != DNP3_START:
+                packet["summary"] = "DNP3 packet"
+                packet["banner_text"] = packet["summary"]
+                return
+            dest = int.from_bytes(payload[4:6], "little")
+            src = int.from_bytes(payload[6:8], "little")
+            packet["dnp3_dest"] = dest
+            packet["dnp3_src"] = src
+            function_code = None
+            # 8-byte data-link header (start+length+control+dest+src) + 2-byte
+            # CRC = 10 bytes consumed; transport control byte at [10],
+            # application control byte at [11], function code at [12].
+            if len(payload) >= 13:
+                function_code = payload[12]
+            packet["dnp3_function_code"] = function_code
+            func_name = (
+                DNP3_FUNCTION_NAMES.get(function_code, f"fc-{function_code}")
+                if function_code is not None
+                else "unknown"
+            )
+            summary = f"DNP3 {func_name} src={src} dest={dest}"
+            packet["summary"] = summary
+            packet["banner_text"] = summary
+            packet["payload_text"] = summary
+        except Exception:
+            packet["summary"] = packet.get("summary") or "DNP3 packet"
+            packet["banner_text"] = packet["summary"]
+
+    def _read_ber_length(self, data: bytes, offset: int) -> tuple[int | None, int]:
+        """Minimal BER/DER length-octet decoder (short and long form) - just
+        enough to walk SNMP's outer SEQUENCE/INTEGER/OCTET STRING TLVs
+        without a real ASN.1 library."""
+        if offset >= len(data):
+            return None, offset
+        first = data[offset]
+        offset += 1
+        if first < 0x80:
+            return first, offset
+        num_bytes = first & 0x7F
+        if num_bytes == 0 or offset + num_bytes > len(data):
+            return None, offset
+        length = int.from_bytes(data[offset : offset + num_bytes], "big")
+        return length, offset + num_bytes
+
+    def _parse_snmp(self, packet: dict, payload: bytes):
+        # SNMPv1/v2c's outer structure is BER: SEQUENCE { INTEGER version,
+        # OCTET STRING community, PDU ... } - the community string (SNMP's
+        # entire access control for v1/v2c, sent in cleartext) sits at a
+        # fixed shallow offset right after the version integer. SNMPv3 uses
+        # a different structure with no plain community string; the OCTET
+        # STRING tag check below simply won't match there and this degrades
+        # to reporting just the version.
+        packet["proto"] = "snmp"
+        try:
+            if len(payload) < 2 or payload[0] != 0x30:
+                packet["summary"] = "SNMP packet"
+                packet["banner_text"] = packet["summary"]
+                return
+            pos = 1
+            _seq_len, pos = self._read_ber_length(payload, pos)
+            version = None
+            community = ""
+            if pos < len(payload) and payload[pos] == 0x02:  # INTEGER version
+                pos += 1
+                length, pos = self._read_ber_length(payload, pos)
+                if length and pos + length <= len(payload):
+                    version = int.from_bytes(payload[pos : pos + length], "big")
+                    pos += length
+            if pos < len(payload) and payload[pos] == 0x04:  # OCTET STRING community
+                pos += 1
+                length, pos = self._read_ber_length(payload, pos)
+                if length and pos + length <= len(payload):
+                    community = payload[pos : pos + length].decode("utf-8", errors="replace")
+                    pos += length
+            version_name = {0: "v1", 1: "v2c"}.get(version, f"v{version}" if version is not None else "?")
+            packet["snmp_version"] = version_name
+            packet["snmp_community"] = community
+            summary = f"SNMP {version_name}"
+            if community:
+                summary += f" community='{community}'"
+            packet["summary"] = summary
+            packet["banner_text"] = summary
+            packet["payload_text"] = summary
+        except Exception:
+            packet["summary"] = packet.get("summary") or "SNMP packet"
+            packet["banner_text"] = packet["summary"]
+
+    def _parse_syslog(self, packet: dict, payload: bytes):
+        packet["proto"] = "syslog"
+        try:
+            text = bytes_to_text_preview(payload, limit=400)
+            message = text
+            pri = None
+            if text.startswith("<"):
+                end = text.find(">")
+                if 1 <= end <= 4 and text[1:end].isdigit():
+                    pri = int(text[1:end])
+                    message = text[end + 1 :]
+            message = message.strip()
+            if pri is not None:
+                severity = SYSLOG_SEVERITY_NAMES.get(pri % 8, str(pri % 8))
+                facility = pri // 8
+                packet["syslog_severity"] = severity
+                packet["syslog_facility"] = facility
+                summary = f"Syslog facility={facility} severity={severity}"
+                if message:
+                    summary += f": {message[:120]}"
+            else:
+                summary = f"Syslog: {message[:120]}" if message else "Syslog message"
+            packet["summary"] = summary
+            packet["banner_text"] = summary
+            packet["payload_text"] = message or summary
+        except Exception:
+            packet["summary"] = packet.get("summary") or "Syslog message"
+            packet["banner_text"] = packet["summary"]
+
+    def _parse_tftp(self, packet: dict, payload: bytes):
+        packet["proto"] = "tftp"
+        try:
+            if len(payload) < 2:
+                packet["summary"] = "TFTP packet"
+                packet["banner_text"] = packet["summary"]
+                return
+            opcode = int.from_bytes(payload[0:2], "big")
+            opcode_name = TFTP_OPCODE_NAMES.get(opcode, f"opcode-{opcode}")
+            summary = f"TFTP {opcode_name}"
+            if opcode in (1, 2) and len(payload) > 2:  # RRQ / WRQ
+                parts = payload[2:].split(b"\x00")
+                filename = parts[0].decode("ascii", errors="replace") if parts and parts[0] else ""
+                mode = parts[1].decode("ascii", errors="replace") if len(parts) > 1 and parts[1] else ""
+                if filename:
+                    packet["tftp_filename"] = filename
+                    summary += f" file='{filename}'"
+                if mode:
+                    summary += f" mode={mode}"
+            packet["summary"] = summary
+            packet["banner_text"] = summary
+            packet["payload_text"] = summary
+        except Exception:
+            packet["summary"] = packet.get("summary") or "TFTP packet"
+            packet["banner_text"] = packet["summary"]
+
+    def _parse_radius(self, packet: dict, payload: bytes):
+        packet["proto"] = "radius"
+        try:
+            if len(payload) < 20:
+                packet["summary"] = "RADIUS packet"
+                packet["banner_text"] = packet["summary"]
+                return
+            code_name = RADIUS_CODE_NAMES.get(payload[0], f"code-{payload[0]}")
+            username = ""
+            nas_ip = ""
+            offset = 20
+            while offset + 2 <= len(payload):
+                attr_type = payload[offset]
+                attr_len = payload[offset + 1]
+                if attr_len < 2 or offset + attr_len > len(payload):
+                    break
+                value = payload[offset + 2 : offset + attr_len]
+                if attr_type == 1:  # User-Name
+                    username = value.decode("utf-8", errors="replace")
+                elif attr_type == 4 and len(value) == 4:  # NAS-IP-Address
+                    nas_ip = str(ipaddress.IPv4Address(value))
+                offset += attr_len
+            if username:
+                packet["radius_username"] = username
+            summary = f"RADIUS {code_name}"
+            if username:
+                summary += f" user='{username}'"
+            if nas_ip:
+                summary += f" nas={nas_ip}"
+            packet["summary"] = summary
+            packet["banner_text"] = summary
+            packet["payload_text"] = summary
+        except Exception:
+            packet["summary"] = packet.get("summary") or "RADIUS packet"
+            packet["banner_text"] = packet["summary"]
+
+    def _read_mqtt_remaining_length(self, payload: bytes, offset: int) -> tuple[int | None, int]:
+        multiplier = 1
+        value = 0
+        start = offset
+        while offset < len(payload) and offset - start < 4:
+            byte = payload[offset]
+            offset += 1
+            value += (byte & 0x7F) * multiplier
+            if not (byte & 0x80):
+                return value, offset
+            multiplier *= 128
+        return None, offset
+
+    def _read_mqtt_string(self, payload: bytes, offset: int) -> tuple[str, int]:
+        if offset + 2 > len(payload):
+            return "", offset
+        length = int.from_bytes(payload[offset : offset + 2], "big")
+        offset += 2
+        if length == 0 or offset + length > len(payload):
+            return "", offset
+        return payload[offset : offset + length].decode("utf-8", errors="replace"), offset + length
+
+    def _parse_mqtt(self, packet: dict, payload: bytes):
+        packet["proto"] = "mqtt"
+        try:
+            packet_type = (payload[0] >> 4) & 0x0F
+            type_name = MQTT_PACKET_TYPE_NAMES.get(packet_type, f"type-{packet_type}")
+            summary = f"MQTT {type_name}"
+            if packet_type == 1 and len(payload) > 1:  # CONNECT
+                _remaining_length, offset = self._read_mqtt_remaining_length(payload, 1)
+                _protocol_name, offset = self._read_mqtt_string(payload, offset)
+                offset += 1  # protocol level
+                connect_flags = payload[offset] if offset < len(payload) else 0
+                offset += 1
+                offset += 2  # keep alive
+                client_id, offset = self._read_mqtt_string(payload, offset)
+                if connect_flags & 0x04:  # will flag - skip will topic + message
+                    _, offset = self._read_mqtt_string(payload, offset)
+                    _, offset = self._read_mqtt_string(payload, offset)
+                username = ""
+                password_present = False
+                if connect_flags & 0x80:  # username flag
+                    username, offset = self._read_mqtt_string(payload, offset)
+                if connect_flags & 0x40:  # password flag
+                    password_present = True
+                if client_id:
+                    packet["mqtt_client_id"] = client_id
+                    summary += f" client='{client_id}'"
+                if username:
+                    packet["mqtt_username"] = username
+                    summary += f" user='{username}'"
+                if password_present:
+                    summary += " password=<present>"
+            packet["summary"] = summary
+            packet["banner_text"] = summary
+            packet["payload_text"] = summary
+        except Exception:
+            packet["summary"] = packet.get("summary") or "MQTT packet"
             packet["banner_text"] = packet["summary"]
 
     def _apply_dns_result(self, packet: dict, payload: bytes, *, prefix: str, source: str):

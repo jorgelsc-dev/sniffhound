@@ -511,6 +511,18 @@ class SniffStore:
                 updated_at TEXT NOT NULL
             )
             """,
+            """
+            CREATE TABLE IF NOT EXISTS honeypot_listeners (
+                id TEXT PRIMARY KEY,
+                proto TEXT NOT NULL,
+                port INTEGER NOT NULL,
+                label TEXT NOT NULL DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                source TEXT NOT NULL DEFAULT 'builtin',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """,
         ]
         with self._lock:
             for statement in schema:
@@ -590,6 +602,87 @@ class SniffStore:
             self._seed_new_builtin_monitors()
 
         self._seed_file_catalogs()
+        self._seed_builtin_honeypot_listeners()
+
+    def _seed_builtin_honeypot_listeners(self):
+        """Additive migration, same shape as `_seed_new_builtin_monitors`:
+        insert any built-in listener (from `honeypot.COMMON_PORTS`) that
+        isn't already in the table, by id, without touching any existing
+        row - so a listener the user has since disabled stays disabled
+        across restarts, and a new port added to COMMON_PORTS in a later
+        release still reaches already-populated databases."""
+        from .honeypot import COMMON_PORTS
+
+        cursor = self._conn.execute("SELECT id FROM honeypot_listeners")
+        existing_ids = {str(row["id"]) for row in cursor.fetchall()}
+        now = utc_now()
+        inserted = False
+        for proto in ("tcp", "udp"):
+            for port in COMMON_PORTS.get(proto, ()):
+                listener_id = f"{proto}/{port}"
+                if listener_id in existing_ids:
+                    continue
+                self._conn.execute(
+                    """
+                    INSERT OR IGNORE INTO honeypot_listeners
+                    (id, proto, port, label, enabled, source, created_at, updated_at)
+                    VALUES (?, ?, ?, '', 1, 'builtin', ?, ?)
+                    """,
+                    (listener_id, proto, int(port), now, now),
+                )
+                inserted = True
+        if inserted:
+            self._conn.commit()
+
+    def list_honeypot_listeners(self):
+        rows = self._fetchall("SELECT * FROM honeypot_listeners ORDER BY proto ASC, port ASC")
+        for row in rows:
+            row["enabled"] = bool(row.get("enabled"))
+        return rows
+
+    def get_honeypot_listener(self, listener_id: str):
+        row = self._fetchone("SELECT * FROM honeypot_listeners WHERE id = ?", (str(listener_id),))
+        if not row:
+            return None
+        row["enabled"] = bool(row.get("enabled"))
+        return row
+
+    def create_honeypot_listener(self, proto: str, port: int, label: str = ""):
+        proto = str(proto or "").strip().lower()
+        if proto not in ("tcp", "udp"):
+            raise ValueError("proto must be 'tcp' or 'udp'")
+        port = safe_int(port, 0)
+        if port < 1 or port > 65535:
+            raise ValueError("port must be between 1 and 65535")
+        listener_id = f"{proto}/{port}"
+        if self.get_honeypot_listener(listener_id):
+            raise ValueError(f"Listener {listener_id} already exists")
+        now = utc_now()
+        self._execute(
+            """
+            INSERT INTO honeypot_listeners (id, proto, port, label, enabled, source, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 1, 'custom', ?, ?)
+            """,
+            (listener_id, proto, port, str(label or ""), now, now),
+            commit=True,
+        )
+        return self.get_honeypot_listener(listener_id)
+
+    def set_honeypot_listener_enabled(self, listener_id: str, enabled: bool):
+        """Flip a listener's `enabled` flag only - this is the *only* way to
+        change any listener after creation, builtin or custom alike; there
+        is deliberately no edit/delete path (see honeypot.py's HoneypotView
+        docs) so the historical record of what was ever exposed stays intact."""
+        existing = self.get_honeypot_listener(listener_id)
+        if not existing:
+            raise ValueError(f"Unknown listener id: {listener_id}")
+        now = utc_now()
+        self._execute(
+            "UPDATE honeypot_listeners SET enabled = ?, updated_at = ? WHERE id = ?",
+            (1 if enabled else 0, now, str(listener_id)),
+            commit=True,
+        )
+        return self.get_honeypot_listener(listener_id)
 
     def _seed_new_builtin_monitors(self):
         """Additive migration: insert any DEFAULT_MONITORS id that isn't

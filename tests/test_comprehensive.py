@@ -10,6 +10,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import os
+import socket
 import tempfile
 import threading
 import time
@@ -425,7 +426,76 @@ class TestSnifferParsing(unittest.TestCase):
 
         monitors = [normalize_monitor(item, allow_source=True) for item in DEFAULT_MONITORS]
         hits = evaluate_packet(packet, monitors)
-        self.assertEqual(hits, [])
+        # The generic "unknown protocol" visibility monitor is expected to
+        # match (that's its whole purpose) - the regression this test
+        # actually guards is that nothing else (a noise-derived false
+        # positive like the webshell-reference regex) matches alongside it.
+        self.assertEqual({hit["tag"] for hit in hits}, {"unknown-protocol"})
+
+    def test_unparseable_packet_is_tagged_distinctly_from_unknown(self):
+        packet = self.sniffer._build_unparseable_packet("wlan0", b"\x00\x01\x02", reason="frame too short to parse")
+        self.assertEqual(packet["proto"], "unparseable")
+        self.assertEqual(packet["parse_error"], "frame too short to parse")
+        self.assertIn("Unparseable frame", packet["summary"])
+
+        monitors = [normalize_monitor(item, allow_source=True) for item in DEFAULT_MONITORS]
+        hits = evaluate_packet(packet, monitors)
+        self.assertEqual({hit["tag"] for hit in hits}, {"unparseable-packet"})
+
+    def test_capture_worker_survives_a_parser_exception_without_crashing(self):
+        # Regression test: parse_packet() used to be called with no try/except
+        # around it in _capture_worker - a single malformed frame tripping a
+        # bug in any parser would raise out of the loop and silently kill the
+        # whole capture thread, with nothing captured again until a manual
+        # restart. Drive the real loop (fake socket, real threading.Event)
+        # to prove it now degrades to a tagged record and keeps running.
+        fake_sock = MagicMock()
+        call_count = {"n": 0}
+
+        def fake_recvfrom(_bufsize):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return b"\x00" * 20, None
+            self.sniffer._stop_event.set()
+            raise socket.timeout()
+
+        fake_sock.recvfrom.side_effect = fake_recvfrom
+        stored: list[dict] = []
+        self.sniffer._stop_event = threading.Event()
+        with patch("socket.socket", return_value=fake_sock), \
+             patch.object(self.sniffer, "parse_packet", side_effect=ValueError("boom")), \
+             patch.object(self.sniffer, "_store_packet", side_effect=stored.append):
+            self.sniffer._capture_worker("wlan0")
+
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0]["proto"], "unparseable")
+        self.assertEqual(stored[0]["parse_error"], "boom")
+
+    def test_capture_worker_tags_a_none_return_as_unparseable_too(self):
+        # parse_packet() returning None (frame too short) used to be
+        # silently dropped with no record at all - now it degrades the
+        # same way an exception does.
+        fake_sock = MagicMock()
+        call_count = {"n": 0}
+
+        def fake_recvfrom(_bufsize):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return b"\x00" * 20, None
+            self.sniffer._stop_event.set()
+            raise socket.timeout()
+
+        fake_sock.recvfrom.side_effect = fake_recvfrom
+        stored: list[dict] = []
+        self.sniffer._stop_event = threading.Event()
+        with patch("socket.socket", return_value=fake_sock), \
+             patch.object(self.sniffer, "parse_packet", return_value=None), \
+             patch.object(self.sniffer, "_store_packet", side_effect=stored.append):
+            self.sniffer._capture_worker("wlan0")
+
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0]["proto"], "unparseable")
+        self.assertEqual(stored[0]["parse_error"], "frame too short to parse")
 
 
 class TestSniffStore(unittest.TestCase):

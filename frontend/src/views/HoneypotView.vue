@@ -57,6 +57,113 @@
       </v-alert>
     </v-card>
 
+    <v-card variant="tonal" class="pa-4 mt-4 mb-2 listeners-card">
+      <div class="d-flex align-start justify-space-between flex-wrap ga-3 mb-3">
+        <div>
+          <div class="text-subtitle-2 font-weight-medium">Listeners</div>
+          <div class="text-caption text-medium-emphasis mt-1">
+            Enable or disable individual listeners. A listener can never be edited or removed once
+            created - only turned on or off - so the record of what was ever exposed stays intact.
+          </div>
+        </div>
+        <v-btn size="small" color="primary" variant="outlined" prepend-icon="mdi-plus" @click="openNewListenerDialog">
+          New Listener
+        </v-btn>
+      </div>
+
+      <v-alert v-if="listenersError" type="error" variant="tonal" density="comfortable" class="mb-3">
+        {{ listenersError }}
+      </v-alert>
+
+      <v-table density="comfortable" class="listeners-table">
+        <thead>
+          <tr>
+            <th>Listener</th>
+            <th>Label</th>
+            <th>Source</th>
+            <th>Status</th>
+            <th>Enabled</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="listener in listeners" :key="listener.id">
+            <td class="mono">{{ String(listener.proto || "").toUpperCase() }}/{{ listener.port }}</td>
+            <td>{{ listener.label || "-" }}</td>
+            <td>
+              <v-chip size="x-small" :color="listener.source === 'builtin' ? 'secondary' : 'info'" variant="tonal">
+                {{ listener.source }}
+              </v-chip>
+            </td>
+            <td>
+              <v-chip
+                size="x-small"
+                :color="listener.running ? 'success' : 'secondary'"
+                variant="tonal"
+                :prepend-icon="listener.running ? 'mdi-check-circle-outline' : 'mdi-close-circle-outline'"
+              >
+                {{ listener.running ? "Running" : "Stopped" }}
+              </v-chip>
+            </td>
+            <td>
+              <v-switch
+                :model-value="listener.enabled"
+                :loading="listenerTogglePending === listener.id"
+                :disabled="Boolean(listenerTogglePending)"
+                density="compact"
+                hide-details
+                color="success"
+                @update:model-value="(value) => toggleListener(listener, value)"
+              />
+            </td>
+          </tr>
+          <tr v-if="!listeners.length">
+            <td colspan="5" class="text-center text-medium-emphasis py-4">No listeners yet.</td>
+          </tr>
+        </tbody>
+      </v-table>
+    </v-card>
+
+    <v-dialog v-model="newListenerDialog" max-width="420">
+      <v-card class="pa-4">
+        <div class="text-h6 mb-3">New Listener</div>
+        <div class="text-caption text-medium-emphasis mb-3">
+          This can be enabled or disabled later, but never edited or removed - double-check the
+          protocol and port before creating it.
+        </div>
+        <v-select
+          v-model="newListener.proto"
+          :items="['tcp', 'udp']"
+          label="Protocol"
+          variant="outlined"
+          density="comfortable"
+        />
+        <v-text-field
+          v-model.number="newListener.port"
+          label="Port"
+          type="number"
+          variant="outlined"
+          density="comfortable"
+          :min="1"
+          :max="65535"
+        />
+        <v-text-field
+          v-model.trim="newListener.label"
+          label="Label (optional)"
+          variant="outlined"
+          density="comfortable"
+        />
+        <v-alert v-if="newListenerError" type="error" variant="tonal" density="comfortable" class="mb-3">
+          {{ newListenerError }}
+        </v-alert>
+        <div class="d-flex justify-end ga-2">
+          <v-btn variant="text" @click="newListenerDialog = false">Cancel</v-btn>
+          <v-btn color="primary" variant="flat" :loading="newListenerSubmitting" @click="createListener">
+            Create
+          </v-btn>
+        </div>
+      </v-card>
+    </v-dialog>
+
     <v-row dense class="mt-4">
       <v-col cols="12" md="5">
         <v-text-field
@@ -281,6 +388,13 @@ export default {
       ],
       wsRefreshTimer: null,
       stopTableRefreshSubscription: null,
+      listeners: [],
+      listenersError: "",
+      listenerTogglePending: "",
+      newListenerDialog: false,
+      newListenerSubmitting: false,
+      newListenerError: "",
+      newListener: { proto: "tcp", port: null, label: "" },
     };
   },
   computed: {
@@ -425,6 +539,7 @@ export default {
   },
   mounted() {
     this.load();
+    this.loadListeners();
     this.stopTableRefreshSubscription = this.store.subscribeTableRefresh(this.handleWsRefresh);
   },
   beforeUnmount() {
@@ -482,6 +597,9 @@ export default {
         this.load({ silent: true }).catch(() => {
           // keep current honeypot view on transient realtime failures
         });
+        this.loadListeners().catch(() => {
+          // keep current listener list on transient realtime failures
+        });
       }, 10000);
     },
     load(options = {}) {
@@ -512,6 +630,65 @@ export default {
         })
         .finally(() => {
           this.loading = false;
+        });
+    },
+    loadListeners() {
+      return this.store
+        .listHoneypotListeners()
+        .then((payload) => {
+          this.listeners = this.store.extractArray(payload);
+          this.listenersError = "";
+        })
+        .catch((err) => {
+          this.listeners = [];
+          this.listenersError = (err && err.message) || "Failed to load listeners";
+        });
+    },
+    toggleListener(listener, value) {
+      if (this.listenerTogglePending) return;
+      this.listenerTogglePending = listener.id;
+      this.listenersError = "";
+      this.store
+        .toggleHoneypotListenerEnabled(listener.id, value)
+        .then((snapshot) => {
+          this.listeners = this.store.extractArray(snapshot && snapshot.listeners);
+        })
+        .catch((err) => {
+          this.listenersError = (err && err.message) || `Failed to ${value ? "enable" : "disable"} ${listener.id}`;
+        })
+        .finally(() => {
+          this.listenerTogglePending = "";
+        });
+    },
+    openNewListenerDialog() {
+      this.newListener = { proto: "tcp", port: null, label: "" };
+      this.newListenerError = "";
+      this.newListenerDialog = true;
+    },
+    createListener() {
+      const port = Number(this.newListener.port);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        this.newListenerError = "Port must be a whole number between 1 and 65535";
+        return;
+      }
+      const listenerId = `${this.newListener.proto}/${port}`;
+      if (this.listeners.some((item) => item.id === listenerId)) {
+        this.newListenerError = `${listenerId} already exists`;
+        return;
+      }
+      this.newListenerSubmitting = true;
+      this.newListenerError = "";
+      this.store
+        .createHoneypotListener(this.newListener.proto, port, this.newListener.label)
+        .then((snapshot) => {
+          this.listeners = this.store.extractArray(snapshot && snapshot.listeners);
+          this.newListenerDialog = false;
+        })
+        .catch((err) => {
+          this.newListenerError = (err && err.message) || "Failed to create listener";
+        })
+        .finally(() => {
+          this.newListenerSubmitting = false;
         });
     },
   },

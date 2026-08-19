@@ -256,6 +256,24 @@ function getMonitorConfig() {
   return fetchJsonPromise("/api/monitors/config");
 }
 
+function listHoneypotListeners() {
+  return fetchJsonPromise("/api/honeypot/listeners/");
+}
+
+function createHoneypotListener(proto, port, label) {
+  return fetchJsonPromise("/api/honeypot/listeners/", {
+    method: "POST",
+    body: JSON.stringify({ proto, port, label: label || "" }),
+  });
+}
+
+function toggleHoneypotListenerEnabled(id, enabled) {
+  return fetchJsonPromise("/api/honeypot/listeners/toggle", {
+    method: "POST",
+    body: JSON.stringify({ id, enabled: Boolean(enabled) }),
+  });
+}
+
 function setMonitorConfig(payload) {
   return fetchJsonPromise("/api/monitors/config", {
     method: "POST",
@@ -1103,6 +1121,9 @@ export default {
   toggleMonitorEnabled,
   getMonitorConfig,
   setMonitorConfig,
+  listHoneypotListeners,
+  createHoneypotListener,
+  toggleHoneypotListenerEnabled,
   listDomains,
   listPaths,
   listIpCatalog,

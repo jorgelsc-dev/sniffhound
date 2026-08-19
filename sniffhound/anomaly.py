@@ -281,6 +281,37 @@ class WifiRogueApDetector:
         }
 
 
+class DhcpRogueServerDetector:
+    """Flags more than one distinct source IP handing out DHCP leases
+    (DHCPOFFER/DHCPACK) - a classic rogue/unauthorized DHCP server signature.
+    An attacker's server races the legitimate one to answer first, pointing
+    victims at a malicious gateway/DNS server. Mirrors WifiRogueApDetector's
+    "seen from more than one X" shape."""
+
+    OFFER_ACK_TYPES = (2, 5)  # DHCPOFFER, DHCPACK
+
+    def __init__(self):
+        self._servers: set[str] = set()
+        self._last_alert: float | None = None
+
+    def evaluate(self, packet: dict) -> dict | None:
+        if packet.get("proto") != "dhcp" or packet.get("dhcp_msg_type") not in self.OFFER_ACK_TYPES:
+            return None
+        src_ip = str(packet.get("src_ip") or "").strip()
+        if not src_ip:
+            return None
+        self._servers.add(src_ip)
+        if len(self._servers) <= 1:
+            return None
+        now = time.monotonic()
+        if self._last_alert is not None and now - self._last_alert < settings.DHCP_ROGUE_SERVER_COOLDOWN_SECONDS:
+            return None
+        self._last_alert = now
+        return {
+            "detail": f"{len(self._servers)} distinct DHCP servers observed: {', '.join(sorted(self._servers))}"
+        }
+
+
 class AnomalyEngine:
     def __init__(self):
         self._detectors = {
@@ -292,6 +323,7 @@ class AnomalyEngine:
             "builtin-syn-flood": SynFloodDetector(),
             "builtin-brute-force-login": BruteForceLoginDetector(),
             "builtin-dns-query-flood": DnsQueryFloodDetector(),
+            "builtin-dhcp-rogue-server": DhcpRogueServerDetector(),
         }
 
     def evaluate(self, packet: dict, monitors: list[dict]) -> list[dict]:

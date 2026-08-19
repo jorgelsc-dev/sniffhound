@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from sniffhound.anomaly import AnomalyEngine, PortScanDetector
+from sniffhound.anomaly import AnomalyEngine, DhcpRogueServerDetector, PortScanDetector
 from sniffhound.monitors import DEFAULT_MONITORS, evaluate_packet, normalize_monitor
 
 
@@ -558,6 +558,155 @@ class TestWifiVisibilityMonitors(unittest.TestCase):
         )
         tags = {hit["tag"] for hit in evaluate_packet(packet, self.monitors)}
         self.assertFalse({t for t in tags if t.startswith("wifi-")})
+
+
+class TestIcsMonitors(unittest.TestCase):
+    def setUp(self):
+        self.monitors = [normalize_monitor(item, allow_source=True) for item in DEFAULT_MONITORS]
+
+    def _tags(self, proto: str, summary: str) -> set[str]:
+        packet = _packet(proto=proto, payload_text=summary, summary=summary, payload_len=len(summary))
+        return {hit["tag"] for hit in evaluate_packet(packet, self.monitors)}
+
+    def test_modbus_write_is_tagged(self):
+        tags = self._tags("modbus", "Modbus write-single-coil (write) unit=1")
+        self.assertIn("modbus-write-command", tags)
+        self.assertIn("modbus-traffic", tags)
+
+    def test_modbus_read_is_not_tagged_as_write(self):
+        tags = self._tags("modbus", "Modbus read-holding-registers (read/other) unit=1")
+        self.assertNotIn("modbus-write-command", tags)
+        self.assertIn("modbus-traffic", tags)
+
+    def test_dnp3_cold_restart_is_tagged_critical(self):
+        tags = self._tags("dnp3", "DNP3 cold-restart src=1024 dest=7")
+        self.assertIn("dnp3-restart-command", tags)
+
+    def test_dnp3_unsolicited_response_is_tagged(self):
+        tags = self._tags("dnp3", "DNP3 unsolicited-response src=1024 dest=7")
+        self.assertIn("dnp3-unsolicited-response", tags)
+
+    def test_dnp3_normal_read_is_not_flagged_as_restart(self):
+        tags = self._tags("dnp3", "DNP3 read src=1024 dest=7")
+        self.assertNotIn("dnp3-restart-command", tags)
+        self.assertIn("dnp3-traffic", tags)
+
+
+class TestDhcpRogueServerDetector(unittest.TestCase):
+    def test_single_server_never_fires(self):
+        detector = DhcpRogueServerDetector()
+        hits = [
+            detector.evaluate({"proto": "dhcp", "dhcp_msg_type": 2, "src_ip": "10.0.0.1"}),
+            detector.evaluate({"proto": "dhcp", "dhcp_msg_type": 5, "src_ip": "10.0.0.1"}),
+        ]
+        self.assertTrue(all(hit is None for hit in hits))
+
+    def test_second_server_fires(self):
+        detector = DhcpRogueServerDetector()
+        detector.evaluate({"proto": "dhcp", "dhcp_msg_type": 2, "src_ip": "10.0.0.1"})
+        hit = detector.evaluate({"proto": "dhcp", "dhcp_msg_type": 2, "src_ip": "10.0.0.66"})
+        self.assertIsNotNone(hit)
+        self.assertIn("10.0.0.1", hit["detail"])
+        self.assertIn("10.0.0.66", hit["detail"])
+
+    def test_ignores_discover_and_request_messages(self):
+        detector = DhcpRogueServerDetector()
+        hits = [
+            detector.evaluate({"proto": "dhcp", "dhcp_msg_type": 1, "src_ip": "10.0.0.1"}),  # DISCOVER
+            detector.evaluate({"proto": "dhcp", "dhcp_msg_type": 3, "src_ip": "10.0.0.2"}),  # REQUEST
+        ]
+        self.assertTrue(all(hit is None for hit in hits))
+
+    def test_cooldown_suppresses_repeat_alert(self):
+        detector = DhcpRogueServerDetector()
+        detector.evaluate({"proto": "dhcp", "dhcp_msg_type": 2, "src_ip": "10.0.0.1"})
+        first = detector.evaluate({"proto": "dhcp", "dhcp_msg_type": 2, "src_ip": "10.0.0.66"})
+        second = detector.evaluate({"proto": "dhcp", "dhcp_msg_type": 5, "src_ip": "10.0.0.66"})
+        self.assertIsNotNone(first)
+        self.assertIsNone(second)
+
+    def test_first_alert_fires_even_on_a_freshly_booted_monotonic_clock(self):
+        with patch("sniffhound.anomaly.time.monotonic", return_value=0.0):
+            detector = DhcpRogueServerDetector()
+            detector.evaluate({"proto": "dhcp", "dhcp_msg_type": 2, "src_ip": "10.0.0.1"})
+            hit = detector.evaluate({"proto": "dhcp", "dhcp_msg_type": 2, "src_ip": "10.0.0.66"})
+        self.assertIsNotNone(hit)
+
+    def test_engine_reports_dhcp_rogue_server_with_correct_shape(self):
+        engine = AnomalyEngine()
+        monitors = [normalize_monitor(item, allow_source=True) for item in DEFAULT_MONITORS]
+        engine.evaluate({"proto": "dhcp", "dhcp_msg_type": 2, "src_ip": "10.0.0.1"}, monitors)
+        hits = engine.evaluate({"proto": "dhcp", "dhcp_msg_type": 2, "src_ip": "10.0.0.66"}, monitors)
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]["monitor_id"], "builtin-dhcp-rogue-server")
+        self.assertEqual(hits[0]["severity"], "critical")
+
+
+class TestInfraProtocolMonitors(unittest.TestCase):
+    def setUp(self):
+        self.monitors = [normalize_monitor(item, allow_source=True) for item in DEFAULT_MONITORS]
+
+    def _tags(self, proto: str, summary: str) -> set[str]:
+        packet = _packet(proto=proto, payload_text=summary, summary=summary, payload_len=len(summary))
+        return {hit["tag"] for hit in evaluate_packet(packet, self.monitors)}
+
+    def test_snmp_default_community_is_tagged(self):
+        self.assertIn("snmp-weak-community", self._tags("snmp", "SNMP v1 community='public'"))
+
+    def test_snmp_custom_community_is_not_flagged_weak(self):
+        tags = self._tags("snmp", "SNMP v2c community='S3cr3t-Str1ng'")
+        self.assertNotIn("snmp-weak-community", tags)
+        self.assertIn("snmp-traffic", tags)
+
+    def test_syslog_critical_severity_is_tagged(self):
+        self.assertIn(
+            "syslog-high-severity",
+            self._tags("syslog", "Syslog facility=20 severity=critical: disk full"),
+        )
+
+    def test_syslog_info_severity_is_not_flagged_high(self):
+        tags = self._tags("syslog", "Syslog facility=20 severity=info: heartbeat")
+        self.assertNotIn("syslog-high-severity", tags)
+
+    def test_tftp_read_request_is_tagged(self):
+        self.assertIn("tftp-file-transfer", self._tags("tftp", "TFTP RRQ file='firmware.bin' mode=octet"))
+
+    def test_mqtt_credentials_are_tagged(self):
+        tags = self._tags("mqtt", "MQTT CONNECT client='sensor-42' user='admin' password=<present>")
+        self.assertIn("mqtt-cleartext-credentials", tags)
+        self.assertIn("mqtt-traffic", tags)
+
+    def test_mqtt_without_credentials_is_not_flagged(self):
+        tags = self._tags("mqtt", "MQTT CONNECT client='sensor-42'")
+        self.assertNotIn("mqtt-cleartext-credentials", tags)
+        self.assertIn("mqtt-traffic", tags)
+
+
+class TestRecentCveMonitors(unittest.TestCase):
+    def setUp(self):
+        self.monitors = [normalize_monitor(item, allow_source=True) for item in DEFAULT_MONITORS]
+
+    def _tags(self, text: str) -> set[str]:
+        packet = _packet(payload_text=text, summary=text, payload_len=len(text))
+        return {hit["tag"] for hit in evaluate_packet(packet, self.monitors)}
+
+    def test_screenconnect_setupwizard_path_is_tagged(self):
+        self.assertIn(
+            "cve-2024-1709-screenconnect",
+            self._tags("GET /SetupWizard.aspx/theme/images/hero.jpg HTTP/1.1"),
+        )
+
+    def test_ivanti_totp_traversal_is_tagged(self):
+        self.assertIn(
+            "cve-2024-21887-ivanti",
+            self._tags("GET /api/v1/totp/user-backup-code/../../license/keys-status/ HTTP/1.1"),
+        )
+
+    def test_ordinary_setupwizard_style_url_without_trailing_slash_is_not_flagged(self):
+        # The vulnerable pattern requires the trailing-slash path-info suffix
+        # after .aspx - a plain, already-authenticated request to the page
+        # itself shouldn't match.
+        self.assertNotIn("cve-2024-1709-screenconnect", self._tags("GET /Login.aspx HTTP/1.1"))
 
 
 if __name__ == "__main__":

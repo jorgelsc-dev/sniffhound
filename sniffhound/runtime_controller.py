@@ -168,3 +168,22 @@ class RuntimeController:
 
     def wifi_snapshot(self):
         return self._sniffer.wifi_snapshot()
+
+    def list_honeypot_listeners(self):
+        """Listener management is independent of which engine is currently
+        active (same reasoning as `set_wifi_monitor` above) - you can create
+        or toggle a honeypot listener while the Sniffer is the active mode;
+        it just won't have a live thread until honeypot mode is started."""
+        return self._honeypot.store.list_honeypot_listeners()
+
+    def create_honeypot_listener(self, proto: str, port, label: str = ""):
+        with self._lock:
+            snapshot = self._honeypot.create_listener(proto, port, label)
+        self._broadcast_snapshot(self.snapshot())
+        return snapshot
+
+    def set_honeypot_listener_enabled(self, listener_id: str, enabled: bool):
+        with self._lock:
+            snapshot = self._honeypot.set_listener_enabled(listener_id, bool(enabled))
+        self._broadcast_snapshot(self.snapshot())
+        return snapshot

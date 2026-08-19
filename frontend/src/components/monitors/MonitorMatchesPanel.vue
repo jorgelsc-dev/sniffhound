@@ -1,6 +1,6 @@
 <template>
   <div class="monitor-matches pa-4">
-    <div class="d-flex flex-wrap ga-2 mb-4">
+    <div class="d-flex flex-wrap align-center ga-2 mb-4">
       <v-chip size="small" variant="tonal" color="primary">
         Matched: {{ stats.total }}
       </v-chip>
@@ -13,6 +13,17 @@
       <v-chip size="small" variant="outlined">
         Last match: {{ stats.lastSeen || "-" }}
       </v-chip>
+      <v-spacer />
+      <v-btn
+        size="small"
+        variant="outlined"
+        color="secondary"
+        prepend-icon="mdi-download"
+        :disabled="!rows.length"
+        @click="downloadJson"
+      >
+        Download JSON
+      </v-btn>
     </div>
 
     <v-alert v-if="error" type="error" variant="tonal" density="comfortable" class="mb-3">
@@ -232,6 +243,26 @@ export default {
       if (state === "filtered" || state === "blocked") return "warning";
       if (state === "closed") return "error";
       return "secondary";
+    },
+    downloadJson() {
+      if (!this.rows.length) return;
+      const payload = {
+        monitor_id: this.monitor.id,
+        monitor_name: this.monitor.name,
+        exported_at: new Date().toISOString(),
+        count: this.rows.length,
+        packets: this.rows,
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const safeId = String(this.monitor.id || "monitor").replace(/[^a-z0-9_-]+/gi, "-");
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `sniffhound-${safeId}-${Date.now()}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
     },
     load(options = {}) {
       if (!options.silent) this.loading = true;
