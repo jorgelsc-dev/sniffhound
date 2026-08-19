@@ -27,53 +27,48 @@
       {{ error }}
     </v-alert>
 
-    <v-card variant="tonal" class="pa-4 mt-6 mb-2 engine-card">
-      <div class="d-flex align-start justify-space-between flex-wrap ga-3">
-        <div>
-          <div class="text-subtitle-2 font-weight-medium">Honeypot Engine</div>
-          <div class="text-caption text-medium-emphasis mt-1">
-            Only one engine (Sniffer or Honeypot) runs at a time. Starting this one stops the other.
-            Only activate honeypot mode where you're allowed to bind the listener ports.
-          </div>
-        </div>
-        <div class="d-flex align-center ga-2">
-          <v-chip size="small" :color="engineChipColor" variant="tonal" :prepend-icon="engineStatusIcon">
-            {{ engineStatusLabel }}
-          </v-chip>
-          <v-btn
-            size="small"
-            :color="engineActionColor"
-            variant="outlined"
-            :prepend-icon="engineActionIcon"
-            :loading="runtimeSubmitting"
-            @click="toggleEngine"
-          >
-            {{ engineActionLabel }}
-          </v-btn>
-        </div>
-      </div>
-      <v-alert v-if="runtimeError" type="warning" variant="tonal" density="comfortable" class="mt-3">
-        {{ runtimeError }}
-      </v-alert>
-    </v-card>
+    <DataPanel
+      title="Honeypot Engine"
+      subtitle="Only one engine (Sniffer or Honeypot) runs at a time. Starting this one stops the other. Only activate honeypot mode where you're allowed to bind the listener ports."
+      variant="tonal"
+      collapsible
+      :count="runtime.packets_seen || 0"
+      count-label="events seen"
+      :error="runtimeError"
+      class="mt-6 mb-2 engine-card"
+    >
+      <template #header-actions>
+        <v-chip size="small" :color="engineChipColor" variant="tonal" :prepend-icon="engineStatusIcon">
+          {{ engineStatusLabel }}
+        </v-chip>
+        <v-btn
+          size="small"
+          :color="engineActionColor"
+          variant="outlined"
+          :prepend-icon="engineActionIcon"
+          :loading="runtimeSubmitting"
+          @click="toggleEngine"
+        >
+          {{ engineActionLabel }}
+        </v-btn>
+      </template>
+    </DataPanel>
 
-    <v-card variant="tonal" class="pa-4 mt-4 mb-2 listeners-card">
-      <div class="d-flex align-start justify-space-between flex-wrap ga-3 mb-3">
-        <div>
-          <div class="text-subtitle-2 font-weight-medium">Listeners</div>
-          <div class="text-caption text-medium-emphasis mt-1">
-            Enable or disable individual listeners. A listener can never be edited or removed once
-            created - only turned on or off - so the record of what was ever exposed stays intact.
-          </div>
-        </div>
+    <DataPanel
+      title="Listeners"
+      subtitle="Enable or disable individual listeners. A listener can never be edited or removed once created - only turned on or off - so the record of what was ever exposed stays intact."
+      variant="tonal"
+      collapsible
+      :count="listeners.length"
+      count-label="listeners"
+      :error="listenersError"
+      class="mt-4 mb-2 listeners-card"
+    >
+      <template #header-actions>
         <v-btn size="small" color="primary" variant="outlined" prepend-icon="mdi-plus" @click="openNewListenerDialog">
           New Listener
         </v-btn>
-      </div>
-
-      <v-alert v-if="listenersError" type="error" variant="tonal" density="comfortable" class="mb-3">
-        {{ listenersError }}
-      </v-alert>
+      </template>
 
       <v-table density="comfortable" class="listeners-table">
         <thead>
@@ -121,7 +116,9 @@
           </tr>
         </tbody>
       </v-table>
-    </v-card>
+    </DataPanel>
+
+    <MonitorMatchesPanel :monitor="honeypotHitsMonitor" class="mt-4 mb-2" />
 
     <v-dialog v-model="newListenerDialog" max-width="420">
       <v-card class="pa-4">
@@ -327,6 +324,8 @@
 import store from "../state/appStore";
 import ViewHeader from "../components/ui/ViewHeader.vue";
 import EntityTablePanel from "../components/ui/EntityTablePanel.vue";
+import DataPanel from "../components/ui/DataPanel.vue";
+import MonitorMatchesPanel from "../components/monitors/MonitorMatchesPanel.vue";
 import {
   buildPacketSizeSummary,
   buildPacketSummary,
@@ -347,6 +346,8 @@ export default {
   components: {
     ViewHeader,
     EntityTablePanel,
+    DataPanel,
+    MonitorMatchesPanel,
   },
   data() {
     return {
@@ -398,6 +399,13 @@ export default {
     };
   },
   computed: {
+    honeypotHitsMonitor() {
+      // Not a real entry in the monitors catalog (honeypot traffic never
+      // runs through evaluate_packet/AnomalyEngine) - just enough shape for
+      // MonitorMatchesPanel to query /api/monitors/packets/?monitor_id=
+      // builtin-honeypot-hit, the id honeypot.py tags every hit with.
+      return { id: "builtin-honeypot-hit", name: "Honeypot hits" };
+    },
     apiBase() {
       return this.store.state.apiBase;
     },

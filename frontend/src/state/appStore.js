@@ -773,6 +773,12 @@ function notifyForPacketEvent(payload) {
   const dstPort = (packet && packet.dst_port) || "";
   const route = srcIp && dstIp ? `${srcIp} → ${dstIp}${dstPort ? `:${dstPort}` : ""}` : "";
   hits.forEach((hit) => {
+    // Honeypot hits are tagged with monitor_id="builtin-honeypot-hit" (see
+    // honeypot.py) but that id has no real entry in the monitors catalog -
+    // honeypot traffic never runs through evaluate_packet/AnomalyEngine, so
+    // /monitors?monitor=builtin-honeypot-hit had nothing to scroll to. Send
+    // those to the Honeypot view's own "Honeypot hits" table instead.
+    const isHoneypotHit = hit.monitorId === "builtin-honeypot-hit";
     pushNotification({
       kind: "monitor",
       severity: hit.severity,
@@ -782,7 +788,7 @@ function notifyForPacketEvent(payload) {
       // monitor maximo": every hit for the same monitor bumps one counter
       // instead of piling up a separate entry per source IP.
       groupKey: `monitor:${hit.monitorId || hit.label}`,
-      href: `/monitors?monitor=${encodeURIComponent(hit.monitorId || hit.label)}`,
+      href: isHoneypotHit ? "/honeypot" : `/monitors?monitor=${encodeURIComponent(hit.monitorId || hit.label)}`,
     });
   });
 }

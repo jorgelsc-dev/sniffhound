@@ -127,43 +127,43 @@
         </v-btn>
       </div>
 
-      <v-card variant="tonal" class="pa-4 mb-4 engine-card">
-        <div class="d-flex align-start justify-space-between flex-wrap ga-3">
-          <div>
-            <div class="text-subtitle-2 font-weight-medium">Sniffer Engine</div>
-            <div class="text-caption text-medium-emphasis mt-1">
-              Only one engine (Sniffer or Honeypot) runs at a time. Starting this one stops the other.
-            </div>
-          </div>
-          <div class="d-flex align-center ga-2">
-            <v-chip size="small" :color="engineChipColor" variant="tonal" :prepend-icon="engineStatusIcon">
-              {{ engineStatusLabel }}
-            </v-chip>
-            <v-btn
-              size="small"
-              :color="engineActionColor"
-              variant="outlined"
-              :prepend-icon="engineActionIcon"
-              :loading="runtimeSubmitting"
-              @click="toggleEngine"
-            >
-              {{ engineActionLabel }}
-            </v-btn>
-          </div>
-        </div>
-        <v-alert v-if="runtimeError" type="warning" variant="tonal" density="comfortable" class="mt-3">
-          {{ runtimeError }}
-        </v-alert>
-      </v-card>
+      <DataPanel
+        title="Sniffer Engine"
+        subtitle="Only one engine (Sniffer or Honeypot) runs at a time. Starting this one stops the other."
+        variant="tonal"
+        collapsible
+        :count="runtime.packets_seen || 0"
+        count-label="packets seen"
+        :error="runtimeError"
+        class="mb-4 engine-card"
+      >
+        <template #header-actions>
+          <v-chip size="small" :color="engineChipColor" variant="tonal" :prepend-icon="engineStatusIcon">
+            {{ engineStatusLabel }}
+          </v-chip>
+          <v-btn
+            size="small"
+            :color="engineActionColor"
+            variant="outlined"
+            :prepend-icon="engineActionIcon"
+            :loading="runtimeSubmitting"
+            @click="toggleEngine"
+          >
+            {{ engineActionLabel }}
+          </v-btn>
+        </template>
+      </DataPanel>
 
-      <v-card variant="tonal" class="pa-4 mb-4 interface-card">
-        <div class="d-flex align-start justify-space-between flex-wrap ga-3">
-          <div>
-            <div class="text-subtitle-2 font-weight-medium">Capture Interfaces</div>
-            <div class="text-caption text-medium-emphasis mt-1">
-              Select one or more interfaces to listen on. Leave it empty to sniff every visible interface.
-            </div>
-          </div>
+      <DataPanel
+        title="Capture Interfaces"
+        subtitle="Select one or more interfaces to listen on. Leave it empty to sniff every visible interface."
+        variant="tonal"
+        collapsible
+        :count="selectedSnifferInterfaces.length || snifferInterfaceOptions.length"
+        count-label="interfaces"
+        class="mb-4 interface-card"
+      >
+        <template #header-actions>
           <v-chip
             size="small"
             :color="snifferBlocked ? 'error' : 'info'"
@@ -172,7 +172,7 @@
           >
             {{ selectedInterfacesLabel }}
           </v-chip>
-        </div>
+        </template>
 
         <v-row dense class="mt-2">
           <v-col cols="12" md="8">
@@ -204,18 +204,19 @@
             </div>
           </v-col>
         </v-row>
-      </v-card>
+      </DataPanel>
 
-      <v-card variant="tonal" class="pa-4 mb-4 wifi-card">
-        <div class="d-flex align-start justify-space-between flex-wrap ga-3">
-          <div>
-            <div class="text-subtitle-2 font-weight-medium">WiFi Monitor Mode</div>
-            <div class="text-caption text-medium-emphasis mt-1">
-              Captures raw 802.11 management frames (beacons, probe requests/responses,
-              deauth/disassoc, auth) on a wireless adapter switched into monitor mode. Only the
-              adapter's current channel is captured — there is no channel hopping.
-            </div>
-          </div>
+      <DataPanel
+        title="WiFi Monitor Mode"
+        subtitle="Captures raw 802.11 management frames (beacons, probe requests/responses, deauth/disassoc, auth) on a wireless adapter switched into monitor mode. Only the adapter's current channel is captured — there is no channel hopping."
+        variant="tonal"
+        collapsible
+        default-collapsed
+        :count="wifiInterfaceOptions.length"
+        count-label="wireless interfaces"
+        class="mb-4 wifi-card"
+      >
+        <template #header-actions>
           <v-chip
             size="small"
             :color="wifiState.enabled ? 'success' : 'secondary'"
@@ -224,7 +225,7 @@
           >
             {{ wifiState.enabled ? "Monitoring" : "Off" }}
           </v-chip>
-        </div>
+        </template>
 
         <v-alert type="warning" variant="tonal" density="comfortable" class="mt-3">
           Enabling this switches the adapter out of normal (managed) mode, which disconnects its
@@ -269,7 +270,7 @@
         <v-alert v-if="!wifiInterfaceOptions.length" type="info" variant="tonal" density="comfortable" class="mt-3">
           No wireless interfaces detected on this machine.
         </v-alert>
-      </v-card>
+      </DataPanel>
 
       <EntityTablePanel
         title="Packets"
@@ -343,6 +344,7 @@
 import store from "../state/appStore";
 import ViewHeader from "../components/ui/ViewHeader.vue";
 import EntityTablePanel from "../components/ui/EntityTablePanel.vue";
+import DataPanel from "../components/ui/DataPanel.vue";
 import {
   buildPacketDetail,
   buildPacketRouteSummary,
@@ -363,6 +365,7 @@ export default {
   components: {
     ViewHeader,
     EntityTablePanel,
+    DataPanel,
   },
   data() {
     return {

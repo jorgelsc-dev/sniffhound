@@ -7,6 +7,10 @@
     :error="error"
     :last-updated="lastUpdated"
     :variant="variant"
+    :collapsible="collapsible"
+    :default-collapsed="defaultCollapsed"
+    :count="normalizedRows.length"
+    :count-label="countLabel"
   >
     <v-row v-if="showTableControls" dense class="mb-3">
       <v-col v-if="searchEnabled" cols="12" md="6">
@@ -280,6 +284,18 @@ export default {
     filterDefinitions: {
       type: Array,
       default: () => [],
+    },
+    collapsible: {
+      type: Boolean,
+      default: true,
+    },
+    defaultCollapsed: {
+      type: Boolean,
+      default: false,
+    },
+    countLabel: {
+      type: String,
+      default: "rows",
     },
   },
   data() {

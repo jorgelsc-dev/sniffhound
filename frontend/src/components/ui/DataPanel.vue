@@ -14,9 +14,25 @@
         </div>
       </div>
       <div class="d-flex align-center ga-2">
+        <v-chip v-if="count !== null && count !== undefined" size="small" variant="tonal" color="primary">
+          {{ count }} {{ countLabel }}
+        </v-chip>
         <v-chip v-if="lastUpdated" size="small" variant="outlined" color="info">
           {{ lastUpdated }}
         </v-chip>
+        <slot name="header-actions" />
+        <v-btn
+          v-if="collapsible"
+          icon
+          size="small"
+          variant="text"
+          color="secondary"
+          :aria-label="collapsed ? `Expand ${title}` : `Collapse ${title}`"
+          @click="collapsed = !collapsed"
+        >
+          <v-icon :icon="collapsed ? 'mdi-chevron-down' : 'mdi-chevron-up'" />
+          <v-tooltip activator="parent" location="bottom">{{ collapsed ? "Expand" : "Collapse" }}</v-tooltip>
+        </v-btn>
       </div>
     </div>
 
@@ -24,25 +40,27 @@
       {{ error }}
     </v-alert>
 
-    <transition name="panel-fade">
-      <div v-if="loading" class="panel-loader-shell">
-        <BrandMark :size="58" animated framed />
-        <div class="panel-loader-copy">
-          <div class="panel-loader-title">Loading live panel</div>
-          <div class="panel-loader-text">
-            The official brand mark keeps moving while this view refreshes.
+    <div v-show="!collapsed">
+      <transition name="panel-fade">
+        <div v-if="loading" class="panel-loader-shell">
+          <BrandMark :size="58" animated framed />
+          <div class="panel-loader-copy">
+            <div class="panel-loader-title">Loading live panel</div>
+            <div class="panel-loader-text">
+              The official brand mark keeps moving while this view refreshes.
+            </div>
           </div>
         </div>
-      </div>
-    </transition>
+      </transition>
 
-    <div class="panel-body">
-      <div
-        v-if="!loading || keepContentOnLoading"
-        class="panel-content"
-        :class="{ 'panel-content--loading': loading && keepContentOnLoading }"
-      >
-        <slot />
+      <div class="panel-body">
+        <div
+          v-if="!loading || keepContentOnLoading"
+          class="panel-content"
+          :class="{ 'panel-content--loading': loading && keepContentOnLoading }"
+        >
+          <slot />
+        </div>
       </div>
     </div>
   </v-card>
@@ -93,6 +111,27 @@ export default {
       type: String,
       default: "outlined",
     },
+    collapsible: {
+      type: Boolean,
+      default: false,
+    },
+    defaultCollapsed: {
+      type: Boolean,
+      default: false,
+    },
+    count: {
+      type: [Number, String],
+      default: null,
+    },
+    countLabel: {
+      type: String,
+      default: "items",
+    },
+  },
+  data() {
+    return {
+      collapsed: this.defaultCollapsed,
+    };
   },
 };
 </script>
