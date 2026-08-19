@@ -119,6 +119,77 @@ class TestSetNetworkManagerManaged(unittest.TestCase):
             self.assertFalse(netlink.set_networkmanager_managed("wlan0", False))
 
 
+class TestSetWpaSupplicantActive(unittest.TestCase):
+    """set_wpa_supplicant_active closes the second half of the same real bug
+    as set_networkmanager_managed: a standalone system-wide
+    wpa_supplicant.service (common alongside NetworkManager on Kali) also
+    reasserts control of the interface and reverts monitor mode within
+    seconds unless it's stopped first."""
+
+    def test_returns_false_without_systemctl(self):
+        with patch("shutil.which", return_value=None):
+            self.assertFalse(netlink.set_wpa_supplicant_active(False))
+
+    def test_calls_systemctl_stop(self):
+        completed = MagicMock(returncode=0)
+        with patch("shutil.which", return_value="/usr/bin/systemctl"), \
+             patch("subprocess.run", return_value=completed) as run:
+            result = netlink.set_wpa_supplicant_active(False)
+        self.assertTrue(result)
+        args = run.call_args[0][0]
+        self.assertEqual(args, ["/usr/bin/systemctl", "stop", "wpa_supplicant.service"])
+
+    def test_calls_systemctl_start(self):
+        completed = MagicMock(returncode=0)
+        with patch("shutil.which", return_value="/usr/bin/systemctl"), \
+             patch("subprocess.run", return_value=completed) as run:
+            netlink.set_wpa_supplicant_active(True)
+        args = run.call_args[0][0]
+        self.assertEqual(args, ["/usr/bin/systemctl", "start", "wpa_supplicant.service"])
+
+    def test_nonzero_returncode_is_false(self):
+        completed = MagicMock(returncode=1)
+        with patch("shutil.which", return_value="/usr/bin/systemctl"), \
+             patch("subprocess.run", return_value=completed):
+            self.assertFalse(netlink.set_wpa_supplicant_active(False))
+
+    def test_subprocess_exception_is_false_not_raised(self):
+        with patch("shutil.which", return_value="/usr/bin/systemctl"), \
+             patch("subprocess.run", side_effect=OSError("boom")):
+            self.assertFalse(netlink.set_wpa_supplicant_active(False))
+
+
+class TestSetMonitorModeStopsWpaSupplicant(unittest.TestCase):
+    """set_monitor_mode must call set_wpa_supplicant_active alongside
+    set_networkmanager_managed on both the enable and disable path - neither
+    alone is enough to keep the mode switch from being silently reverted on a
+    box running both NetworkManager and a standalone wpa_supplicant.service."""
+
+    def test_enable_stops_wpa_supplicant_before_switching(self):
+        with patch("sniffhound.netlink.is_wireless_interface", return_value=True), \
+             patch("socket.if_nametoindex", return_value=3), \
+             patch("sniffhound.netlink.NetlinkSocket", return_value=MagicMock()), \
+             patch("sniffhound.netlink.resolve_family_id", return_value=0x1234), \
+             patch("sniffhound.netlink.set_interface_type"), \
+             patch("sniffhound.netlink.set_interface_up"), \
+             patch("sniffhound.netlink.set_networkmanager_managed", return_value=False), \
+             patch("sniffhound.netlink.set_wpa_supplicant_active", return_value=False) as wpa:
+            netlink.set_monitor_mode("wlan0", enabled=True)
+        wpa.assert_called_once_with(False)
+
+    def test_disable_restarts_wpa_supplicant(self):
+        with patch("sniffhound.netlink.is_wireless_interface", return_value=True), \
+             patch("socket.if_nametoindex", return_value=3), \
+             patch("sniffhound.netlink.NetlinkSocket", return_value=MagicMock()), \
+             patch("sniffhound.netlink.resolve_family_id", return_value=0x1234), \
+             patch("sniffhound.netlink.set_interface_type"), \
+             patch("sniffhound.netlink.set_interface_up"), \
+             patch("sniffhound.netlink.set_networkmanager_managed", return_value=False), \
+             patch("sniffhound.netlink.set_wpa_supplicant_active", return_value=False) as wpa:
+            netlink.set_monitor_mode("wlan0", enabled=False)
+        wpa.assert_called_once_with(True)
+
+
 class TestIsWirelessInterface(unittest.TestCase):
     def test_nonexistent_interface_is_false(self):
         self.assertFalse(netlink.is_wireless_interface("definitely-not-a-real-nic-xyz"))

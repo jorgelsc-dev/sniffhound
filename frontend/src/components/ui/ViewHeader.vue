@@ -19,6 +19,7 @@
           :aria-label="refreshLabel"
           @click="$emit('refresh')"
         >
+          <v-icon icon="mdi-refresh" />
           <v-tooltip activator="parent" location="bottom">{{ refreshLabel }}</v-tooltip>
         </v-btn>
       </slot>

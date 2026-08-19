@@ -100,15 +100,35 @@ class TestParse80211Frame(unittest.TestCase):
         self.assertEqual(packet["wifi_subtype"], "disassoc")
         self.assertEqual(packet["wifi_reason_code"], 3)
 
-    def test_data_frame_gets_generic_summary_without_decoding(self):
+    def test_protected_data_frame_marked_encrypted(self):
         fc_val = (0 << 4) | (2 << 2) | 0  # type=data, subtype=0
+        fc_val |= 0x4000  # Protected Frame bit
         frame = struct.pack("<H", fc_val) + struct.pack("<H", 0)
         frame += _mac("aa:aa:aa:aa:aa:aa") + _mac("bb:bb:bb:bb:bb:bb") + _mac("cc:cc:cc:cc:cc:cc")
         frame += struct.pack("<H", 0)
         data = _build_radiotap() + frame + b"\xde\xad\xbe\xef"
         packet = parse_80211_frame(data, interface="wlan0mon")
         self.assertEqual(packet["proto"], "wifi-data")
+        self.assertTrue(packet["wifi_protected"])
         self.assertIn("encrypted", packet["summary"])
+
+    def test_open_data_frame_not_marked_encrypted_and_has_ds_status(self):
+        # Regression test: the old decoder unconditionally labeled every data
+        # frame "(encrypted)" regardless of the actual Protected Frame bit in
+        # frame control - this one has to_ds set and no protected bit, i.e. a
+        # genuine plaintext STA->AP frame (e.g. an EAPOL frame before keys are
+        # installed), and must be reported as such rather than assumed opaque.
+        fc_val = (0 << 4) | (2 << 2) | 0  # type=data, subtype=0
+        fc_val |= 0x0100  # to_ds
+        frame = struct.pack("<H", fc_val) + struct.pack("<H", 0)
+        frame += _mac("aa:aa:aa:aa:aa:aa") + _mac("bb:bb:bb:bb:bb:bb") + _mac("cc:cc:cc:cc:cc:cc")
+        frame += struct.pack("<H", 0)
+        data = _build_radiotap() + frame + b"\xde\xad\xbe\xef"
+        packet = parse_80211_frame(data, interface="wlan0mon")
+        self.assertEqual(packet["proto"], "wifi-data")
+        self.assertFalse(packet["wifi_protected"])
+        self.assertNotIn("encrypted", packet["summary"])
+        self.assertEqual(packet["wifi_ds_status"], "STA->AP")
 
     def test_control_frame_minimal(self):
         fc_val = (0xD << 4) | (1 << 2) | 0  # type=control, subtype=ACK(0xD)
@@ -116,6 +136,33 @@ class TestParse80211Frame(unittest.TestCase):
         data = _build_radiotap() + frame
         packet = parse_80211_frame(data, interface="wlan0mon")
         self.assertEqual(packet["proto"], "wifi-ctrl")
+        self.assertEqual(packet["wifi_subtype"], "ctrl-ack")
+        self.assertIn("ACK", packet["summary"])
+        self.assertIn("aa:aa:aa:aa:aa:aa", packet["summary"])
+
+    def test_control_frame_rts_resolves_transmitter_address(self):
+        # RTS carries Address 2 (transmitter) unlike the bare ACK/CTS frames -
+        # regression test for the subtype-name + addr2 resolution added to
+        # give control frames more than a raw subtype number.
+        fc_val = (0xB << 4) | (1 << 2) | 0  # type=control, subtype=RTS(0xB)
+        frame = struct.pack("<H", fc_val) + struct.pack("<H", 0)
+        frame += _mac("aa:aa:aa:aa:aa:aa") + _mac("bb:bb:bb:bb:bb:bb")
+        data = _build_radiotap() + frame
+        packet = parse_80211_frame(data, interface="wlan0mon")
+        self.assertEqual(packet["proto"], "wifi-ctrl")
+        self.assertEqual(packet["wifi_subtype"], "ctrl-rts")
+        self.assertIn("bb:bb:bb:bb:bb:bb", packet["summary"])
+        self.assertIn("aa:aa:aa:aa:aa:aa", packet["summary"])
+
+    def test_action_frame_decodes_category(self):
+        fc_val = (13 << 4) | (0 << 2) | 0  # type=management, subtype=action
+        frame = _build_mgmt_header(13, "aa:aa:aa:aa:aa:aa", "bb:bb:bb:bb:bb:bb", "cc:cc:cc:cc:cc:cc")
+        frame += bytes([4, 0])  # category=4 (public), action=0
+        data = _build_radiotap() + frame
+        packet = parse_80211_frame(data, interface="wlan0mon")
+        self.assertEqual(packet["wifi_subtype"], "action")
+        self.assertEqual(packet["wifi_action_category"], "public")
+        self.assertIn("category=public", packet["summary"])
 
     def test_truncated_frame_returns_none(self):
         data = _build_radiotap() + b"\x00\x00"
@@ -132,6 +179,8 @@ class TestParse80211Frame(unittest.TestCase):
         data = _build_radiotap() + frame + b"\x00\x00\x00\x00"
         packet = parse_80211_frame(data, interface="wlan0mon")
         self.assertEqual(packet["proto"], "wifi-data")
+        self.assertEqual(packet["wifi_ds_status"], "WDS")
+        self.assertEqual(packet["wifi_addr4"], "dd:dd:dd:dd:dd:dd")
 
 
 if __name__ == "__main__":

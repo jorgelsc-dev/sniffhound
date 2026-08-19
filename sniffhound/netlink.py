@@ -20,16 +20,22 @@ parsing, and not a third-party library. It's a no-op (returns False) on any
 system without `nmcli` on PATH, e.g. systemd-networkd/plain-wpa_supplicant
 setups, or when NetworkManager isn't managing the interface at all.
 
-Known remaining limitation: on a machine running a standalone system-wide
+A second, related case: a machine running a standalone system-wide
 `wpa_supplicant.service` *alongside* NetworkManager (seen on this project's
 own Kali dev box — common on pentesting-oriented setups that keep it enabled
-for other WiFi tooling), that second daemon can independently reassociate
+for other WiFi tooling) has that second daemon independently reassociating
 the interface even after NetworkManager has released it, reverting the mode
-switch the same way. Fixing that would mean stopping/restarting a systemd
-service around every toggle, which is a meaningfully bigger, riskier
-intervention (a crash mid-toggle could leave the service stopped) — left as
-a documented limitation rather than handled automatically; a user who hits
-this needs to stop that service themselves before enabling monitor mode.
+switch the same way NetworkManager did. `set_wpa_supplicant_active` closes
+that gap the same way: `systemctl stop wpa_supplicant.service` before the
+mode switch, `systemctl start wpa_supplicant.service` after reverting to
+managed mode. This *is* a meaningfully bigger intervention than the nmcli
+call above — a crash mid-toggle (not a clean `set_monitor_mode(enabled=False)`
+call, e.g. `kill -9`) leaves the service stopped and the user without WiFi
+until they run `sudo systemctl start wpa_supplicant` themselves, since
+nothing can run cleanup code after SIGKILL. `emergency_wifi_restore`
+(sniffer.py) covers every path that *can* run cleanup code (clean exit,
+SIGINT, SIGTERM, the web "disable" call) via `atexit`; SIGKILL is the one
+case no process can protect itself against, in any language.
 """
 
 from __future__ import annotations
@@ -253,6 +259,38 @@ def set_networkmanager_managed(interface: str, managed: bool) -> bool:
         return False
 
 
+def set_wpa_supplicant_active(active: bool) -> bool:
+    """Best-effort: stop (or restart) the standalone system-wide
+    `wpa_supplicant.service` around a monitor-mode toggle.
+
+    See the module docstring — on a box running this service alongside
+    NetworkManager, it reassociates the interface on its own even after
+    NetworkManager has let go, reverting the mode switch within seconds.
+    `systemctl stop/start` is idempotent (stopping an already-inactive unit,
+    or starting an already-active one, is a harmless no-op), so this can be
+    called unconditionally on both the enable and disable path without first
+    checking current state.
+
+    Returns True if `systemctl` ran and succeeded; False if `systemctl` isn't
+    on PATH, the unit doesn't exist, or the call failed — always safe to
+    ignore, since systems without a standalone wpa_supplicant service (most
+    desktop NetworkManager setups) don't need this at all.
+    """
+    systemctl = shutil.which("systemctl")
+    if not systemctl:
+        return False
+    try:
+        result = subprocess.run(
+            [systemctl, "start" if active else "stop", "wpa_supplicant.service"],
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
 def is_wireless_interface(interface: str) -> bool:
     if not interface:
         return False
@@ -277,9 +315,13 @@ def set_monitor_mode(interface: str, *, enabled: bool) -> None:
     if enabled:
         # Release the device from NetworkManager *before* touching it, so it
         # doesn't reassociate and silently revert the mode switch once the
-        # interface comes back up below.
-        if set_networkmanager_managed(interface, False):
-            time.sleep(0.3)  # give NM a moment to actually let go
+        # interface comes back up below. Stop a standalone wpa_supplicant
+        # service the same way - either one alone can fight the mode switch
+        # back to managed within seconds (see module docstring).
+        released_nm = set_networkmanager_managed(interface, False)
+        stopped_wpa = set_wpa_supplicant_active(False)
+        if released_nm or stopped_wpa:
+            time.sleep(0.3)  # give them a moment to actually let go
 
     set_interface_up(interface, False)
 
@@ -311,7 +353,8 @@ def set_monitor_mode(interface: str, *, enabled: bool) -> None:
     set_interface_up(interface, True)
 
     if not enabled:
-        # Hand the device back so NetworkManager resumes normal operation —
-        # it will auto-reconnect using its saved profile, same as before the
-        # interface was ever touched.
+        # Hand the device back so NetworkManager and/or wpa_supplicant resume
+        # normal operation - either will auto-reconnect using its saved
+        # profile, same as before the interface was ever touched.
         set_networkmanager_managed(interface, True)
+        set_wpa_supplicant_active(True)

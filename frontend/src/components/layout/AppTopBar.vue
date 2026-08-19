@@ -54,6 +54,7 @@
           :aria-label="shutdownPending ? 'Stopping...' : 'Stop App'"
           @click="$emit('shutdown-app')"
         >
+          <v-icon icon="mdi-power" />
           <v-tooltip activator="parent" location="bottom">
             {{ shutdownPending ? "Stopping..." : "Stop App" }}
           </v-tooltip>

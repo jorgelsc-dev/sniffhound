@@ -50,6 +50,7 @@
             color="secondary"
             aria-label="Columns"
           >
+            <v-icon icon="mdi-table-column" />
             <v-tooltip activator="parent" location="bottom">Columns</v-tooltip>
           </v-btn>
         </template>
