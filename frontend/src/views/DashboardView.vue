@@ -48,7 +48,7 @@
                     {{ snifferSummary }}
                   </div>
                 </div>
-                <v-chip size="small" :color="snifferChipColor" variant="tonal">
+                <v-chip size="small" :color="snifferChipColor" variant="tonal" :prepend-icon="snifferStatusIcon">
                   {{ snifferStatusLabel }}
                 </v-chip>
               </div>
@@ -72,7 +72,7 @@
                     {{ honeypotSummary }}
                   </div>
                 </div>
-                <v-chip size="small" :color="honeypotChipColor" variant="tonal">
+                <v-chip size="small" :color="honeypotChipColor" variant="tonal" :prepend-icon="honeypotStatusIcon">
                   {{ honeypotStatusLabel }}
                 </v-chip>
               </div>
@@ -386,6 +386,11 @@ export default {
       if (this.snifferRuntime.running) return "success";
       return "secondary";
     },
+    snifferStatusIcon() {
+      if (this.snifferBlocked) return "mdi-alert-circle-outline";
+      if (this.snifferRuntime.running) return "mdi-play-circle-outline";
+      return "mdi-stop-circle-outline";
+    },
     snifferPacketsSeen() {
       return Number(this.snifferRuntime.packets_seen || 0);
     },
@@ -424,6 +429,9 @@ export default {
     },
     honeypotChipColor() {
       return this.honeypotRuntime.running ? "warning" : "secondary";
+    },
+    honeypotStatusIcon() {
+      return this.honeypotRuntime.running ? "mdi-play-circle-outline" : "mdi-stop-circle-outline";
     },
     honeypotListenersLabel() {
       const listeners = Array.isArray(this.honeypotRuntime.listeners) ? this.honeypotRuntime.listeners : [];

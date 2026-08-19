@@ -37,13 +37,14 @@
           </div>
         </div>
         <div class="d-flex align-center ga-2">
-          <v-chip size="small" :color="engineChipColor" variant="tonal">
+          <v-chip size="small" :color="engineChipColor" variant="tonal" :prepend-icon="engineStatusIcon">
             {{ engineStatusLabel }}
           </v-chip>
           <v-btn
             size="small"
             :color="engineActionColor"
             variant="outlined"
+            :prepend-icon="engineActionIcon"
             :loading="runtimeSubmitting"
             @click="toggleEngine"
           >
@@ -96,13 +97,13 @@
     </v-row>
 
     <div class="d-flex flex-wrap ga-2 mt-2">
-      <v-chip size="small" color="warning" variant="tonal">
+      <v-chip size="small" color="warning" variant="tonal" prepend-icon="mdi-access-point-check">
         Listeners: {{ listenerCount }}
       </v-chip>
-      <v-chip size="small" variant="outlined">
+      <v-chip size="small" variant="outlined" prepend-icon="mdi-table-eye">
         Traffic rows: {{ filteredPackets.length }}
       </v-chip>
-      <v-chip size="small" variant="outlined">
+      <v-chip size="small" variant="outlined" prepend-icon="mdi-content-save-check-outline">
         Response rows: {{ filteredBanners.length }}
       </v-chip>
     </div>
@@ -300,11 +301,17 @@ export default {
     engineChipColor() {
       return this.runtime.running ? "success" : "secondary";
     },
+    engineStatusIcon() {
+      return this.runtime.running ? "mdi-play-circle-outline" : "mdi-stop-circle-outline";
+    },
     engineActionLabel() {
       return this.runtime.running ? "Stop" : "Start";
     },
     engineActionColor() {
       return this.runtime.running ? "warning" : "primary";
+    },
+    engineActionIcon() {
+      return this.runtime.running ? "mdi-stop" : "mdi-play";
     },
     metricCards() {
       const packets = this.packets;

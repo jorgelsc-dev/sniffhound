@@ -502,5 +502,63 @@ class TestNewMonitorsAreStatelessExceptPortScan(unittest.TestCase):
         self.assertEqual(stateful_ids, detector_ids)
 
 
+class TestWifiVisibilityMonitors(unittest.TestCase):
+    """Regression coverage for the WiFi rule monitors added alongside the
+    richer wifi.py decoding - the two pre-existing WiFi monitors are both
+    stateful and only fire on an actual attack pattern (a flood, or a rogue
+    AP), so an ordinary capture window with no attacker present used to
+    produce nothing at all in Monitor Traffic. These give visibility into
+    ordinary 802.11 management traffic itself."""
+
+    def setUp(self):
+        self.monitors = [normalize_monitor(item, allow_source=True) for item in DEFAULT_MONITORS]
+
+    def _tags(self, summary: str) -> set[str]:
+        packet = _packet(proto="wifi-mgmt", payload_text=summary, summary=summary, payload_len=len(summary))
+        return {hit["tag"] for hit in evaluate_packet(packet, self.monitors)}
+
+    def test_beacon_is_tagged(self):
+        self.assertIn(
+            "wifi-beacon",
+            self._tags("802.11 beacon SSID='HomeNet' BSSID=aa:bb:cc:dd:ee:ff channel=6 security=WPA2/WPA3"),
+        )
+
+    def test_probe_request_is_tagged(self):
+        self.assertIn("wifi-probe-request", self._tags("802.11 probe-req SSID='<wildcard>' from aa:bb:cc:dd:ee:ff"))
+
+    def test_open_network_beacon_is_tagged(self):
+        tags = self._tags("802.11 beacon SSID='FreeWiFi' BSSID=aa:bb:cc:dd:ee:ff channel=6 security=open")
+        self.assertIn("wifi-open-network", tags)
+        self.assertIn("wifi-beacon", tags)  # both fire on the same beacon
+
+    def test_protected_beacon_is_not_flagged_open(self):
+        tags = self._tags("802.11 beacon SSID='HomeNet' BSSID=aa:bb:cc:dd:ee:ff channel=6 security=WPA2/WPA3")
+        self.assertNotIn("wifi-open-network", tags)
+
+    def test_deauth_event_is_tagged(self):
+        self.assertIn("wifi-deauth-event", self._tags("802.11 deauth BSSID=aa:bb:cc:dd:ee:ff reason=7"))
+
+    def test_disassoc_event_is_tagged(self):
+        self.assertIn("wifi-deauth-event", self._tags("802.11 disassoc BSSID=aa:bb:cc:dd:ee:ff reason=8"))
+
+    def test_client_association_is_tagged(self):
+        self.assertIn(
+            "wifi-client-association",
+            self._tags("802.11 assoc-req SSID='HomeNet' BSSID=aa:bb:cc:dd:ee:ff security=WPA2/WPA3"),
+        )
+
+    def test_action_frame_is_tagged(self):
+        self.assertIn("wifi-action-frame", self._tags("802.11 action category=public action=0 BSSID=?"))
+
+    def test_data_frame_is_not_tagged_by_any_new_wifi_monitor(self):
+        packet = _packet(
+            proto="wifi-data",
+            payload_text="802.11 QoS data aa:aa:aa:aa:aa:aa -> bb:bb:bb:bb:bb:bb [STA->AP] (encrypted)",
+            summary="802.11 QoS data aa:aa:aa:aa:aa:aa -> bb:bb:bb:bb:bb:bb [STA->AP] (encrypted)",
+        )
+        tags = {hit["tag"] for hit in evaluate_packet(packet, self.monitors)}
+        self.assertFalse({t for t in tags if t.startswith("wifi-")})
+
+
 if __name__ == "__main__":
     unittest.main()

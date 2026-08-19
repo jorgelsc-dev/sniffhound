@@ -101,19 +101,19 @@
       </v-row>
 
       <div class="d-flex flex-wrap ga-2 mb-4">
-        <v-chip size="small" variant="tonal" color="info">
+        <v-chip size="small" variant="tonal" color="info" prepend-icon="mdi-lan-check">
           Selected: {{ selectedInterfacesLabel }}
         </v-chip>
-        <v-chip size="small" variant="outlined">
+        <v-chip size="small" variant="outlined" prepend-icon="mdi-access-point-network">
           Active interfaces: {{ activeInterfacesLabel }}
         </v-chip>
-        <v-chip size="small" variant="outlined">
+        <v-chip size="small" variant="outlined" prepend-icon="mdi-table-eye">
           Visible rows: {{ filteredPackets.length }}
         </v-chip>
-        <v-chip size="small" variant="outlined" color="info">
+        <v-chip size="small" variant="outlined" color="info" prepend-icon="mdi-download-network-outline">
           Captured: {{ runtime.packets_seen || 0 }}
         </v-chip>
-        <v-chip size="small" variant="outlined" color="success">
+        <v-chip size="small" variant="outlined" color="success" prepend-icon="mdi-database-check">
           Stored (detected): {{ runtime.packets_stored || 0 }}
         </v-chip>
         <v-btn
@@ -136,13 +136,14 @@
             </div>
           </div>
           <div class="d-flex align-center ga-2">
-            <v-chip size="small" :color="engineChipColor" variant="tonal">
+            <v-chip size="small" :color="engineChipColor" variant="tonal" :prepend-icon="engineStatusIcon">
               {{ engineStatusLabel }}
             </v-chip>
             <v-btn
               size="small"
               :color="engineActionColor"
               variant="outlined"
+              :prepend-icon="engineActionIcon"
               :loading="runtimeSubmitting"
               @click="toggleEngine"
             >
@@ -163,7 +164,12 @@
               Select one or more interfaces to listen on. Leave it empty to sniff every visible interface.
             </div>
           </div>
-          <v-chip size="small" :color="snifferBlocked ? 'error' : 'info'" variant="outlined">
+          <v-chip
+            size="small"
+            :color="snifferBlocked ? 'error' : 'info'"
+            variant="outlined"
+            :prepend-icon="snifferBlocked ? 'mdi-alert-circle-outline' : 'mdi-lan-check'"
+          >
             {{ selectedInterfacesLabel }}
           </v-chip>
         </div>
@@ -210,7 +216,12 @@
               adapter's current channel is captured — there is no channel hopping.
             </div>
           </div>
-          <v-chip size="small" :color="wifiState.enabled ? 'success' : 'secondary'" variant="tonal">
+          <v-chip
+            size="small"
+            :color="wifiState.enabled ? 'success' : 'secondary'"
+            variant="tonal"
+            :prepend-icon="wifiState.enabled ? 'mdi-wifi' : 'mdi-wifi-off'"
+          >
             {{ wifiState.enabled ? "Monitoring" : "Off" }}
           </v-chip>
         </div>
@@ -414,11 +425,19 @@ export default {
       if (this.runtime.running) return "success";
       return "secondary";
     },
+    engineStatusIcon() {
+      if (this.snifferBlocked) return "mdi-alert-circle-outline";
+      if (this.runtime.running) return "mdi-play-circle-outline";
+      return "mdi-stop-circle-outline";
+    },
     engineActionLabel() {
       return this.runtime.running ? "Stop" : "Start";
     },
     engineActionColor() {
       return this.runtime.running ? "warning" : "primary";
+    },
+    engineActionIcon() {
+      return this.runtime.running ? "mdi-stop" : "mdi-play";
     },
     snifferErrorSummary() {
       const entries = this.runtime.errors && typeof this.runtime.errors === "object"

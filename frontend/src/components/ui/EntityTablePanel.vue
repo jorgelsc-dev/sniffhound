@@ -44,13 +44,13 @@
         <template #activator="{ props: menuProps }">
           <v-btn
             v-bind="menuProps"
-            icon="mdi-table-column"
+            icon="mdi-view-column-outline"
             size="small"
             variant="outlined"
             color="secondary"
             aria-label="Columns"
           >
-            <v-icon icon="mdi-table-column" />
+            <v-icon icon="mdi-view-column-outline" />
             <v-tooltip activator="parent" location="bottom">Columns</v-tooltip>
           </v-btn>
         </template>
