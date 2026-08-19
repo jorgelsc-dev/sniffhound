@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from "vue-router";
 import { appBaseUrl } from "../utils/runtimeEnv";
 
 const routes = [
+  { path: "/__filtertest", name: "filtertest", component: () => import("../views/__FilterTestView.vue") },
   { path: "/", name: "dashboard", component: () => import("../views/DashboardView.vue") },
   { path: "/radar", name: "radar", component: () => import("../views/RadarView.vue") },
   { path: "/investigate", name: "investigate", component: () => import("../views/InvestigateView.vue") },

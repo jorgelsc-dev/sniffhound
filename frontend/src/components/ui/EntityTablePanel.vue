@@ -39,6 +39,28 @@
         />
       </v-col>
     </v-row>
+
+    <div v-if="valueFilters.length" class="d-flex flex-wrap align-center ga-2 mb-3">
+      <span class="text-caption text-medium-emphasis">Filters:</span>
+      <v-chip
+        v-for="(vf, index) in valueFilters"
+        :key="`vf-${index}-${vf.key}-${vf.value}`"
+        size="small"
+        variant="tonal"
+        :color="vf.mode === 'exclude' ? 'error' : 'success'"
+        :prepend-icon="vf.mode === 'exclude' ? 'mdi-minus-circle-outline' : 'mdi-plus-circle-outline'"
+        closable
+        class="value-filter-chip"
+        @click="toggleValueFilterMode(index)"
+        @click:close="removeValueFilter(index)"
+      >
+        {{ vf.label || vf.key }}: {{ vf.value }}
+        <v-tooltip activator="parent" location="bottom">
+          Click to switch to {{ vf.mode === "exclude" ? "include" : "exclude" }}
+        </v-tooltip>
+      </v-chip>
+      <v-btn size="small" variant="text" color="secondary" @click="clearValueFilters">Clear all</v-btn>
+    </div>
     <div class="d-flex justify-end mb-2">
       <v-menu :close-on-content-click="false" location="bottom end">
         <template #activator="{ props: menuProps }">
@@ -112,13 +134,38 @@
           :key="`slot-${column.key}`"
           v-slot:[column.itemSlotName]="slotProps"
         >
-          <slot
-            :name="`cell-${column.key}`"
-            :item="slotProps.item"
-            :value="resolveValue(slotProps.item, column)"
+          <div
+            class="cell-filter-wrap"
+            :class="{ 'cell-filter-wrap--filterable': isFilterableColumn(column, slotProps.item) }"
           >
-            {{ formatValue(slotProps.item, column) }}
-          </slot>
+            <span class="cell-filter-wrap__content">
+              <slot
+                :name="`cell-${column.key}`"
+                :item="slotProps.item"
+                :value="resolveValue(slotProps.item, column)"
+              >
+                {{ formatValue(slotProps.item, column) }}
+              </slot>
+            </span>
+            <span v-if="isFilterableColumn(column, slotProps.item)" class="cell-filter-wrap__actions">
+              <button
+                type="button"
+                class="cell-filter-btn cell-filter-btn--include"
+                aria-label="Filter for value"
+                @click.stop="addValueFilter(column, slotProps.item, 'include')"
+              >
+                <v-icon icon="mdi-plus" size="12" />
+              </button>
+              <button
+                type="button"
+                class="cell-filter-btn cell-filter-btn--exclude"
+                aria-label="Filter out value"
+                @click.stop="addValueFilter(column, slotProps.item, 'exclude')"
+              >
+                <v-icon icon="mdi-minus" size="12" />
+              </button>
+            </span>
+          </div>
         </template>
 
         <template v-if="expandableRows" #expanded-row="{ columns, item }">
@@ -242,6 +289,7 @@ export default {
       tableSearchQuery: "",
       tableFilterValues: {},
       visibleColumnKeys: [],
+      valueFilters: [],
     };
   },
   computed: {
@@ -287,11 +335,35 @@ export default {
       const activeFilters = this.resolvedFilterDefinitions.filter((definition) => {
         return normalizeSearchText(this.tableFilterValues[definition.key]);
       });
+      // Kibana/Grafana-style include/exclude pills. Multiple "include" pins
+      // on the *same* field are OR'd together (e.g. "proto: tcp OR udp"),
+      // different fields are AND'd, and "exclude" pins always AND (each one
+      // narrows further) - matches how Kibana's pinned filters behave.
+      const includeGroups = new Map();
+      const excludeFilters = [];
+      this.valueFilters.forEach((vf) => {
+        if (vf.mode === "exclude") {
+          excludeFilters.push(vf);
+        } else {
+          if (!includeGroups.has(vf.key)) includeGroups.set(vf.key, []);
+          includeGroups.get(vf.key).push(vf);
+        }
+      });
       return this.normalizedRows.filter((item) => {
         if (query && !matchesSearch(query, this.resolveSearchValues(item))) {
           return false;
         }
-        return activeFilters.every((definition) => this.matchesFilterDefinition(item, definition));
+        if (!activeFilters.every((definition) => this.matchesFilterDefinition(item, definition))) {
+          return false;
+        }
+        for (const [key, filters] of includeGroups) {
+          const cellValue = normalizeSearchText(getByPath(item, key));
+          if (!filters.some((f) => normalizeSearchText(f.value) === cellValue)) return false;
+        }
+        for (const vf of excludeFilters) {
+          if (normalizeSearchText(getByPath(item, vf.key)) === normalizeSearchText(vf.value)) return false;
+        }
+        return true;
       });
     },
     pageCount() {
@@ -371,6 +443,13 @@ export default {
       this.syncExpandedRows();
     },
     tableFilterValues: {
+      deep: true,
+      handler() {
+        this.currentPage = 1;
+        this.syncExpandedRows();
+      },
+    },
+    valueFilters: {
       deep: true,
       handler() {
         this.currentPage = 1;
@@ -509,6 +588,41 @@ export default {
       } catch (err) {
         return JSON.stringify({ error: err && err.message ? err.message : "Unable to serialize row" }, null, 2);
       }
+    },
+    isFilterableColumn(column, item) {
+      if (!column || !column.key) return false;
+      if (column.key === "actions" || column.key === "data-table-expand") return false;
+      if (column.noFilter) return false;
+      const value = this.resolveValue(item, column);
+      if (value === null || value === undefined || value === "") return false;
+      if (Array.isArray(value) || typeof value === "object") return false;
+      return true;
+    },
+    addValueFilter(column, item, mode) {
+      const key = column.key;
+      const value = String(this.resolveValue(item, column));
+      const label = column.label || key;
+      const existingIndex = this.valueFilters.findIndex((f) => f.key === key && f.value === value);
+      if (existingIndex >= 0) {
+        if (this.valueFilters[existingIndex].mode === mode) {
+          this.valueFilters.splice(existingIndex, 1); // same pill clicked again - toggle off
+        } else {
+          this.valueFilters[existingIndex].mode = mode;
+        }
+        return;
+      }
+      this.valueFilters.push({ key, value, mode, label });
+    },
+    toggleValueFilterMode(index) {
+      const filter = this.valueFilters[index];
+      if (!filter) return;
+      filter.mode = filter.mode === "exclude" ? "include" : "exclude";
+    },
+    removeValueFilter(index) {
+      this.valueFilters.splice(index, 1);
+    },
+    clearValueFilters() {
+      this.valueFilters = [];
     },
     formatValue(item, column) {
       const value = this.resolveValue(item, column);
@@ -649,6 +763,65 @@ export default {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.cell-filter-wrap {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cell-filter-wrap__content {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.cell-filter-wrap__actions {
+  display: inline-flex;
+  gap: 2px;
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.cell-filter-wrap--filterable:hover .cell-filter-wrap__actions,
+.cell-filter-wrap__actions:focus-within {
+  opacity: 1;
+}
+
+.cell-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  color: rgba(229, 241, 252, 0.92);
+}
+
+.cell-filter-btn--include {
+  background: rgba(53, 230, 177, 0.24);
+}
+
+.cell-filter-btn--include:hover {
+  background: rgba(53, 230, 177, 0.46);
+}
+
+.cell-filter-btn--exclude {
+  background: rgba(255, 99, 99, 0.24);
+}
+
+.cell-filter-btn--exclude:hover {
+  background: rgba(255, 99, 99, 0.46);
+}
+
+.value-filter-chip {
+  cursor: pointer;
 }
 
 .column-picker-menu {
