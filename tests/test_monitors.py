@@ -6,7 +6,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from sniffhound.monitors import DEFAULT_MONITORS, describe_match, evaluate_packet, normalize_monitor
+from sniffhound.monitors import (
+    DEFAULT_MONITORS,
+    describe_match,
+    evaluate_packet,
+    load_builtin_monitors,
+    normalize_monitor,
+)
 from sniffhound.sniffer import Sniffer
 from sniffhound.store import SniffStore
 
@@ -30,6 +36,43 @@ def _packet(**overrides) -> dict:
     }
     base.update(overrides)
     return base
+
+
+class TestLoadBuiltinMonitors(unittest.TestCase):
+    """load_builtin_monitors() prefers sniffhound/data/default_monitors.json
+    (see scripts/import_et_open_monitors.py) over the smaller hand-written
+    DEFAULT_MONITORS list, but silently falls back to DEFAULT_MONITORS on
+    *any* exception while reading/normalizing that file - a single bad
+    entry would otherwise take the other ~900+ down with it. Pin the
+    guarantees that make that safe."""
+
+    def test_loads_at_least_a_thousand_monitors(self):
+        monitors = load_builtin_monitors()
+        self.assertGreaterEqual(len(monitors), 1000)
+
+    def test_did_not_silently_fall_back_to_the_small_default_list(self):
+        # If default_monitors.json failed to parse/normalize, every builtin
+        # would come back with source="builtin" but the *count* would match
+        # len(DEFAULT_MONITORS) exactly (currently ~90) instead of ~1000 -
+        # that's the actual failure mode this guards, not just "is it a
+        # round number".
+        monitors = load_builtin_monitors()
+        self.assertGreater(len(monitors), len(DEFAULT_MONITORS))
+
+    def test_every_builtin_monitor_has_a_unique_id(self):
+        monitors = load_builtin_monitors()
+        ids = [item["id"] for item in monitors]
+        self.assertEqual(len(ids), len(set(ids)))
+
+    def test_every_builtin_monitor_is_already_normalized(self):
+        # normalize_monitor() must be idempotent on load_builtin_monitors()'s
+        # own output - re-normalizing (as store.py does when seeding/saving)
+        # must not raise or change the result.
+        for monitor in load_builtin_monitors():
+            renormalized = normalize_monitor(dict(monitor), allow_source=True)
+            self.assertEqual(renormalized["id"], monitor["id"])
+            self.assertIn(monitor["action"]["severity"], {"critical", "high", "medium", "low", "info"})
+            self.assertIn(monitor["mode"], {"rule", "regex", "stateful"})
 
 
 class TestNormalizeMonitor(unittest.TestCase):

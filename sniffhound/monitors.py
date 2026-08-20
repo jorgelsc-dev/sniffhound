@@ -1183,20 +1183,27 @@ def normalize_monitor(item: dict, allow_source: bool = False) -> dict:
     return normalized
 
 
-def monitor_matches_packet(monitor: dict, packet: dict) -> bool:
-    return rule_matches_packet(monitor, packet)
+def monitor_matches_packet(monitor: dict, packet: dict, *, packet_text: str | None = None) -> bool:
+    return rule_matches_packet(monitor, packet, packet_text=packet_text)
 
 
 def evaluate_packet(packet: dict, monitors: list[dict]) -> list[dict]:
+    # `monitors` is expected pre-sorted by (priority, name) - store.list_monitors()
+    # already orders that way in SQL, and this is called once per captured
+    # packet against every enabled monitor (up to hundreds), so re-sorting
+    # here on every call would be pure waste. packet_text (a string
+    # join + lower() over several fields) is likewise built once per packet
+    # rather than once per monitor - see rule_matches_packet.
     matches = []
-    for monitor in sorted(monitors, key=lambda item: (safe_int(item.get("priority", 100), 100), str(item.get("name") or ""))):
+    packet_text = build_packet_text(packet)
+    for monitor in monitors:
         if str(monitor.get("mode") or "").strip().lower() == "stateful":
             # Stateful monitors have no declarative match logic to evaluate here —
             # they're driven by anomaly.AnomalyEngine, which runs separately and
             # unconditionally in Sniffer._store_packet.
             continue
         try:
-            if not monitor_matches_packet(monitor, packet):
+            if not monitor_matches_packet(monitor, packet, packet_text=packet_text):
                 continue
         except Exception:
             continue

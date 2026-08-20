@@ -1,10 +1,34 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 import json
 
 from .runtime_paths import resolve_data_file
 from .utils import normalize_protocol_name, unique_ordered, safe_int
+
+
+# Compiled-pattern cache, keyed by pattern text, shared by every ruleset/
+# monitor regex check. CPython's own `re` module already memoizes compiled
+# patterns internally, but that cache is process-global, shared by every
+# unrelated regex call in the app, and capped small (512 entries by
+# default) - with hundreds of distinct monitor/ruleset patterns evaluated
+# on every captured packet, it thrashes constantly. This cache is scoped to
+# just those patterns and, in practice, converges to one entry per distinct
+# pattern and then stays stable for the life of the process. `None` is
+# cached too, so a pattern that fails to compile isn't retried every packet.
+_COMPILED_REGEX_CACHE: dict[str, "re.Pattern | None"] = {}
+
+
+def _compiled_regex(pattern: str):
+    if pattern in _COMPILED_REGEX_CACHE:
+        return _COMPILED_REGEX_CACHE[pattern]
+    try:
+        compiled = re.compile(pattern, re.IGNORECASE)
+    except re.error:
+        compiled = None
+    _COMPILED_REGEX_CACHE[pattern] = compiled
+    return compiled
 
 
 DEFAULT_RULESETS = [
@@ -180,14 +204,19 @@ def build_packet_text(packet: dict) -> str:
     ).lower()
 
 
-def rule_matches_packet(rule: dict, packet: dict) -> bool:
+def rule_matches_packet(rule: dict, packet: dict, *, packet_text: str | None = None) -> bool:
     if not rule or not rule.get("enabled", True):
         return False
     match = rule.get("match") if isinstance(rule.get("match"), dict) else {}
     proto = normalize_protocol_name(packet.get("proto"))
-    packet_text = build_packet_text(packet)
+    # Cheap protocol/port/length checks below run first and short-circuit
+    # most non-matches, so packet_text (a string join + lower() over six
+    # fields) is only built when a payload_contains/payload_regex check
+    # actually needs it - and only once, even if the caller is evaluating
+    # hundreds of rules against the same packet (see classify_packet /
+    # sniffhound.monitors.evaluate_packet, which compute it once per packet
+    # and pass it in).
     payload_hex = str(packet.get("payload_hex") or "").lower()
-    payload_length = safe_int(packet.get("payload_len", 0), 0)
     packet_length = safe_int(packet.get("length", 0), 0)
 
     protocols = [normalize_protocol_name(item) for item in match.get("protocols", []) if str(item).strip()]
@@ -218,18 +247,26 @@ def rule_matches_packet(rule: dict, packet: dict) -> bool:
         return False
 
     needles = [str(item).lower() for item in match.get("payload_contains", []) if str(item).strip()]
+    prefix_hex = [str(item).lower().replace("0x", "") for item in match.get("payload_prefix_hex", []) if str(item).strip()]
+    regexes = [str(item).strip() for item in match.get("payload_regex", []) if str(item).strip()]
+    if needles or regexes:
+        if packet_text is None:
+            packet_text = build_packet_text(packet)
+
     if needles and not any(needle in packet_text for needle in needles):
         return False
 
-    prefix_hex = [str(item).lower().replace("0x", "") for item in match.get("payload_prefix_hex", []) if str(item).strip()]
     if prefix_hex and not any(payload_hex.startswith(prefix) for prefix in prefix_hex):
         return False
 
-    regexes = [str(item).strip() for item in match.get("payload_regex", []) if str(item).strip()]
     if regexes:
-        import re
-
-        if not any(re.search(pattern, packet_text, re.IGNORECASE) for pattern in regexes):
+        matched_any = False
+        for pattern in regexes:
+            compiled = _compiled_regex(pattern)
+            if compiled is not None and compiled.search(packet_text):
+                matched_any = True
+                break
+        if not matched_any:
             return False
 
     min_length = safe_int(match.get("min_length", 0), 0)
@@ -256,8 +293,9 @@ def rule_matches_packet(rule: dict, packet: dict) -> bool:
 
 def classify_packet(packet: dict, rulesets: list[dict]) -> list[dict]:
     matches = []
+    packet_text = build_packet_text(packet)
     for rule in sorted(rulesets, key=lambda item: (safe_int(item.get("priority", 100), 100), str(item.get("name") or ""))):
-        if rule_matches_packet(rule, packet):
+        if rule_matches_packet(rule, packet, packet_text=packet_text):
             action = rule.get("action") if isinstance(rule.get("action"), dict) else {}
             matches.append(
                 {
