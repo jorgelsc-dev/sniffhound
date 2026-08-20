@@ -15,6 +15,7 @@ const routes = [
   },
   { path: "/honeypot", name: "honeypot", component: () => import("../views/HoneypotView.vue") },
   { path: "/monitors", name: "monitors", component: () => import("../views/MonitorsView.vue") },
+  { path: "/settings", name: "settings", component: () => import("../views/SettingsView.vue") },
   { path: "/targets", redirect: "/" },
   { path: "/sessions", redirect: "/" },
   { path: "/intel", redirect: "/investigate" },

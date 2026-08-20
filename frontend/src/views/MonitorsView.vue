@@ -26,112 +26,20 @@
     <v-alert v-if="error" type="error" variant="tonal" class="mt-6">
       {{ error }}
     </v-alert>
-    <v-alert v-if="configError" type="error" variant="tonal" class="mt-4">
-      {{ configError }}
-    </v-alert>
 
-    <v-card variant="tonal" class="pa-4 mt-6 mb-4 filter-card">
-      <div class="d-flex align-start justify-space-between flex-wrap ga-3">
-        <div>
-          <div class="text-subtitle-2 font-weight-medium">Store only detected traffic</div>
-          <div class="text-caption text-medium-emphasis mt-1">
-            When enabled (recommended), packets that don't match any enabled monitor are never
-            written to SQLite — they're still counted live but not persisted or shown in
-            history/analytics. Turn this off to fall back to persisting everything captured.
-          </div>
-        </div>
-        <v-switch
-          :model-value="filterEnabled"
-          :loading="configSubmitting"
-          color="primary"
-          hide-details
-          inset
-          @update:model-value="toggleFilter"
-        />
-      </div>
-    </v-card>
-
-    <div class="d-flex justify-end mb-3">
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreateDialog">
-        New monitor
+    <div class="d-flex justify-end mt-6 mb-3">
+      <v-btn
+        size="small"
+        variant="text"
+        color="primary"
+        prepend-icon="mdi-cog-outline"
+        to="/settings?section=detection"
+      >
+        Manage monitors &amp; persistence filter
       </v-btn>
     </div>
 
-    <EntityTablePanel
-      title="Detection monitors"
-      subtitle="Built-in monitors can be enabled/disabled but not edited or removed. Custom monitors can be edited or removed. Each monitor's own traffic table is below, under Monitor Traffic."
-      v-model:live-enabled="liveRefreshEnabled"
-      :live-refresh="true"
-      :rows="monitors"
-      :columns="columns"
-      :loading="loading"
-      :error="error"
-      :last-updated="lastUpdated"
-      search-enabled
-      search-label="Search monitors"
-      search-placeholder="Name, tag, description..."
-      :page-size="25"
-      empty-text="No monitors defined yet"
-      @refresh="load"
-    >
-      <template #cell-mode="{ value }">
-        <v-chip size="x-small" :color="modeColor(value)" variant="tonal">
-          {{ modeLabel(value) }}
-        </v-chip>
-      </template>
-      <template #cell-severity="{ item }">
-        <v-chip size="x-small" :color="severityColor(item.action && item.action.severity)" variant="tonal">
-          {{ (item.action && item.action.severity) || "info" }}
-        </v-chip>
-      </template>
-      <template #cell-match_summary="{ item }">
-        <span class="match-summary">{{ matchSummary(item) }}</span>
-      </template>
-      <template #cell-source="{ item }">
-        <v-chip size="x-small" :color="item.source === 'builtin' ? 'secondary' : 'success'" variant="tonal">
-          {{ item.source === "builtin" ? "Built-in" : "Custom" }}
-        </v-chip>
-      </template>
-      <template #cell-enabled="{ item }">
-        <v-switch
-          :model-value="item.enabled"
-          :disabled="isBusy(item.id)"
-          color="primary"
-          density="compact"
-          hide-details
-          inset
-          @update:model-value="(value) => toggleEnabled(item, value)"
-        />
-      </template>
-      <template #cell-actions="{ item }">
-        <div class="row-actions">
-          <v-btn
-            v-if="item.source !== 'builtin'"
-            size="small"
-            variant="tonal"
-            color="primary"
-            prepend-icon="mdi-pencil"
-            :disabled="isBusy(item.id)"
-            @click="openEditDialog(item)"
-          >
-            Edit
-          </v-btn>
-          <v-btn
-            v-if="item.source !== 'builtin'"
-            size="small"
-            variant="tonal"
-            color="error"
-            prepend-icon="mdi-delete"
-            :loading="isBusy(item.id)"
-            @click="removeMonitor(item)"
-          >
-            Delete
-          </v-btn>
-        </div>
-      </template>
-    </EntityTablePanel>
-
-    <div class="d-flex align-center justify-space-between flex-wrap ga-2 mt-6 mb-3">
+    <div class="d-flex align-center justify-space-between flex-wrap ga-2 mt-2 mb-3">
       <div>
         <div class="text-h6">Monitor Traffic</div>
         <div class="text-caption text-medium-emphasis">
@@ -269,155 +177,6 @@
         {{ formatTimestamp(value) }}
       </template>
     </EntityTablePanel>
-
-    <v-dialog v-model="dialogOpen" max-width="720">
-      <v-card rounded="xl" class="pa-2">
-        <v-card-title class="text-h6">
-          {{ editingId ? "Edit monitor" : "New monitor" }}
-        </v-card-title>
-        <v-card-text>
-          <v-alert v-if="formError" type="error" variant="tonal" density="comfortable" class="mb-4">
-            {{ formError }}
-          </v-alert>
-
-          <v-row dense>
-            <v-col cols="12" md="8">
-              <v-text-field v-model.trim="form.name" label="Name" variant="outlined" density="comfortable" />
-            </v-col>
-            <v-col cols="12" md="4">
-              <v-text-field
-                v-model.number="form.priority"
-                type="number"
-                label="Priority"
-                hint="Lower runs first"
-                persistent-hint
-                variant="outlined"
-                density="comfortable"
-              />
-            </v-col>
-            <v-col cols="12">
-              <v-text-field
-                v-model.trim="form.description"
-                label="Description"
-                variant="outlined"
-                density="comfortable"
-              />
-            </v-col>
-            <v-col cols="12" sm="6">
-              <v-select
-                v-model="form.severity"
-                :items="severityOptions"
-                label="Severity"
-                variant="outlined"
-                density="comfortable"
-              />
-            </v-col>
-            <v-col cols="12" sm="6">
-              <v-text-field
-                v-model.trim="form.tag"
-                label="Tag"
-                hint="Short label attached to stored packets"
-                persistent-hint
-                variant="outlined"
-                density="comfortable"
-              />
-            </v-col>
-          </v-row>
-
-          <v-btn-toggle v-model="form.mode" mandatory color="primary" class="mode-toggle my-4">
-            <v-btn value="rule">Rule builder</v-btn>
-            <v-btn value="regex">Regex</v-btn>
-          </v-btn-toggle>
-
-          <div v-if="form.mode === 'rule'">
-            <v-row dense>
-              <v-col cols="12" sm="6">
-                <v-select
-                  v-model="form.protocols"
-                  :items="protocolOptions"
-                  label="Protocols"
-                  multiple
-                  chips
-                  closable-chips
-                  clearable
-                  variant="outlined"
-                  density="comfortable"
-                />
-              </v-col>
-              <v-col cols="12" sm="6">
-                <v-combobox
-                  v-model="form.ports"
-                  label="Ports"
-                  hint="Matches source or destination port"
-                  persistent-hint
-                  multiple
-                  chips
-                  closable-chips
-                  clearable
-                  variant="outlined"
-                  density="comfortable"
-                />
-              </v-col>
-              <v-col cols="12">
-                <v-combobox
-                  v-model="form.payloadContains"
-                  label="Payload contains"
-                  hint="Case-insensitive plain-text substrings"
-                  persistent-hint
-                  multiple
-                  chips
-                  closable-chips
-                  clearable
-                  variant="outlined"
-                  density="comfortable"
-                />
-              </v-col>
-              <v-col cols="12" sm="6">
-                <v-text-field
-                  v-model.number="form.minLength"
-                  type="number"
-                  label="Min packet length"
-                  variant="outlined"
-                  density="comfortable"
-                />
-              </v-col>
-              <v-col cols="12" sm="6">
-                <v-text-field
-                  v-model.number="form.maxLength"
-                  type="number"
-                  label="Max packet length"
-                  variant="outlined"
-                  density="comfortable"
-                />
-              </v-col>
-            </v-row>
-          </div>
-
-          <div v-else>
-            <v-combobox
-              v-model="form.payloadRegex"
-              label="Regex patterns"
-              hint="Enter, then press Enter to add another pattern. Any pattern matching flags this packet."
-              persistent-hint
-              multiple
-              chips
-              closable-chips
-              clearable
-              variant="outlined"
-              density="comfortable"
-              :error-messages="regexErrors"
-            />
-          </div>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="dialogOpen = false">Cancel</v-btn>
-          <v-btn color="primary" variant="tonal" :loading="formSubmitting" @click="submitForm">
-            Save monitor
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
   </div>
 </template>
 
@@ -434,43 +193,7 @@ const DOMAIN_SOURCE_LABELS = {
   http_host: "HTTP Host",
 };
 
-const PROTOCOL_OPTIONS = [
-  "tcp",
-  "udp",
-  "icmp",
-  "icmpv6",
-  "arp",
-  "sctp",
-  "modbus",
-  "dnp3",
-  "snmp",
-  "syslog",
-  "tftp",
-  "radius",
-  "mqtt",
-  "wifi-mgmt",
-  "wifi-ctrl",
-  "wifi-data",
-];
-const SEVERITY_OPTIONS = ["info", "low", "medium", "high", "critical"];
 const REFRESH_EVENT_TYPES = new Set(["packet", "stats_update", "runtime_mode"]);
-
-function emptyForm() {
-  return {
-    name: "",
-    description: "",
-    priority: 100,
-    severity: "medium",
-    tag: "",
-    mode: "rule",
-    protocols: [],
-    ports: [],
-    payloadContains: [],
-    minLength: null,
-    maxLength: null,
-    payloadRegex: [],
-  };
-}
 
 export default {
   name: "MonitorsView",
@@ -486,26 +209,6 @@ export default {
       error: "",
       lastUpdated: "",
       monitors: [],
-      filterEnabled: true,
-      configSubmitting: false,
-      configError: "",
-      busyIds: {},
-      dialogOpen: false,
-      editingId: "",
-      form: emptyForm(),
-      formError: "",
-      formSubmitting: false,
-      protocolOptions: PROTOCOL_OPTIONS,
-      severityOptions: SEVERITY_OPTIONS,
-      columns: [
-        { key: "name", label: "Name" },
-        { key: "mode", label: "Mode" },
-        { key: "match_summary", label: "Match", sortable: false },
-        { key: "severity", label: "Severity" },
-        { key: "source", label: "Source" },
-        { key: "enabled", label: "Enabled", sortable: false },
-        { key: "actions", label: "", sortable: false, width: 200 },
-      ],
       domains: [],
       domainsLoading: false,
       domainsError: "",
@@ -588,10 +291,6 @@ export default {
           colorClass: "text-warning",
         },
       ];
-    },
-    regexErrors() {
-      const invalid = (this.form.payloadRegex || []).filter((pattern) => !this.isValidRegex(pattern));
-      return invalid.length ? [`Invalid regex: ${invalid.join(", ")}`] : [];
     },
   },
   mounted() {
@@ -699,12 +398,6 @@ export default {
           this.ipsLoading = false;
         });
     },
-    isBusy(id) {
-      return Boolean(this.busyIds[id]);
-    },
-    setBusy(id, value) {
-      this.busyIds = { ...this.busyIds, [id]: value };
-    },
     severityColor(value) {
       const severity = String(value || "info").trim().toLowerCase();
       if (severity === "critical") return "error";
@@ -725,179 +418,6 @@ export default {
       if (mode === "stateful") return "warning";
       return "primary";
     },
-    matchSummary(item) {
-      const match = item.match || {};
-      const parts = [];
-      if (match.protocols && match.protocols.length) parts.push(match.protocols.join("/").toUpperCase());
-      if (match.ports && match.ports.length) parts.push(`ports ${match.ports.join(",")}`);
-      if (match.eth_types && match.eth_types.length) {
-        parts.push(`eth 0x${match.eth_types.map((value) => Number(value).toString(16)).join(",0x")}`);
-      }
-      if (match.payload_contains && match.payload_contains.length) {
-        parts.push(`contains "${match.payload_contains.join('", "')}"`);
-      }
-      if (match.payload_regex && match.payload_regex.length) {
-        parts.push(`regex ${match.payload_regex.length === 1 ? match.payload_regex[0] : `${match.payload_regex.length} patterns`}`);
-      }
-      if (match.min_length) parts.push(`>=${match.min_length}B`);
-      if (match.max_length) parts.push(`<=${match.max_length}B`);
-      if (match.min_payload_text_length) parts.push(`>=${match.min_payload_text_length} readable chars`);
-      return parts.length ? parts.join(" · ") : "-";
-    },
-    isValidRegex(pattern) {
-      try {
-        new RegExp(pattern);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    toggleFilter(value) {
-      this.configSubmitting = true;
-      this.configError = "";
-      this.store
-        .setMonitorConfig({ filter_enabled: Boolean(value) })
-        .then((payload) => {
-          this.filterEnabled = Boolean(payload && payload.filter_enabled);
-        })
-        .catch((err) => {
-          this.configError = (err && err.message) || "Failed to update the persistence filter";
-        })
-        .finally(() => {
-          this.configSubmitting = false;
-        });
-    },
-    toggleEnabled(item, value) {
-      // Uses the dedicated toggle endpoint (not saveMonitor) so this works
-      // for builtin monitors too - they stay read-only for everything
-      // else (name/match/action can't be edited or deleted), but flipping
-      // enabled doesn't change what the rule does, only whether it runs.
-      this.setBusy(item.id, true);
-      this.store
-        .toggleMonitorEnabled(item.id, Boolean(value))
-        .then(() => this.load())
-        .catch((err) => {
-          this.error = (err && err.message) || "Failed to update monitor";
-        })
-        .finally(() => {
-          this.setBusy(item.id, false);
-        });
-    },
-    toPayload(item) {
-      return {
-        name: item.name,
-        description: item.description,
-        priority: item.priority,
-        enabled: item.enabled,
-        mode: item.mode,
-        match: item.match,
-        action: item.action,
-      };
-    },
-    removeMonitor(item) {
-      if (item.source === "builtin") return;
-      const confirmed = typeof window !== "undefined" ? window.confirm(`Delete monitor "${item.name}"?`) : true;
-      if (!confirmed) return;
-      this.setBusy(item.id, true);
-      this.store
-        .deleteMonitor(item.id)
-        .then(() => this.load())
-        .catch((err) => {
-          this.error = (err && err.message) || "Failed to delete monitor";
-        })
-        .finally(() => {
-          this.setBusy(item.id, false);
-        });
-    },
-    openCreateDialog() {
-      this.editingId = "";
-      this.form = emptyForm();
-      this.formError = "";
-      this.dialogOpen = true;
-    },
-    openEditDialog(item) {
-      const match = item.match || {};
-      const action = item.action || {};
-      this.editingId = item.id;
-      this.form = {
-        name: item.name || "",
-        description: item.description || "",
-        priority: item.priority || 100,
-        severity: action.severity || "medium",
-        tag: action.tag || "",
-        mode: item.mode === "regex" ? "regex" : "rule",
-        protocols: Array.isArray(match.protocols) ? [...match.protocols] : [],
-        ports: Array.isArray(match.ports) ? match.ports.map(String) : [],
-        payloadContains: Array.isArray(match.payload_contains) ? [...match.payload_contains] : [],
-        minLength: match.min_length || null,
-        maxLength: match.max_length || null,
-        payloadRegex: Array.isArray(match.payload_regex) ? [...match.payload_regex] : [],
-      };
-      this.formError = "";
-      this.dialogOpen = true;
-    },
-    buildMatchPayload() {
-      if (this.form.mode === "regex") {
-        const patterns = (this.form.payloadRegex || []).map((item) => String(item || "").trim()).filter(Boolean);
-        return { payload_regex: patterns };
-      }
-      const ports = (this.form.ports || [])
-        .map((item) => Number(item))
-        .filter((value) => Number.isFinite(value) && value > 0);
-      const contains = (this.form.payloadContains || []).map((item) => String(item || "").trim()).filter(Boolean);
-      return {
-        protocols: [...(this.form.protocols || [])],
-        ports,
-        payload_contains: contains,
-        min_length: Number(this.form.minLength) || 0,
-        max_length: Number(this.form.maxLength) || 0,
-      };
-    },
-    submitForm() {
-      this.formError = "";
-      const name = String(this.form.name || "").trim();
-      if (!name) {
-        this.formError = "Name is required";
-        return;
-      }
-      if (this.form.mode === "regex") {
-        const patterns = (this.form.payloadRegex || []).map((item) => String(item || "").trim()).filter(Boolean);
-        if (!patterns.length) {
-          this.formError = "Add at least one regex pattern";
-          return;
-        }
-        if (patterns.some((pattern) => !this.isValidRegex(pattern))) {
-          this.formError = "One or more regex patterns are invalid";
-          return;
-        }
-      }
-      const payload = {
-        id: this.editingId || undefined,
-        name,
-        description: String(this.form.description || "").trim(),
-        priority: Number(this.form.priority) || 100,
-        mode: this.form.mode,
-        match: this.buildMatchPayload(),
-        action: {
-          severity: this.form.severity,
-          tag: String(this.form.tag || "").trim(),
-          label: name,
-        },
-      };
-      this.formSubmitting = true;
-      this.store
-        .saveMonitor(payload)
-        .then(() => {
-          this.dialogOpen = false;
-          return this.load();
-        })
-        .catch((err) => {
-          this.formError = (err && err.message) || "Failed to save monitor";
-        })
-        .finally(() => {
-          this.formSubmitting = false;
-        });
-    },
     focusMonitorFromQuery() {
       const target = String((this.$route.query && this.$route.query.monitor) || "").trim();
       if (!target) return;
@@ -914,21 +434,15 @@ export default {
     load(options = {}) {
       if (!options.silent) this.loading = true;
       this.error = "";
-      return Promise.allSettled([this.store.listMonitors(), this.store.getMonitorConfig()])
-        .then(([monitorsRes, configRes]) => {
-          if (monitorsRes.status === "fulfilled") {
-            this.monitors = this.store.extractArray(monitorsRes.value);
-          } else {
-            this.monitors = [];
-            this.error = (monitorsRes.reason && monitorsRes.reason.message) || "Failed to load monitors";
-          }
-          if (configRes.status === "fulfilled") {
-            this.filterEnabled = Boolean(configRes.value && configRes.value.filter_enabled);
-            this.configError = "";
-          } else {
-            this.configError = (configRes.reason && configRes.reason.message) || "Failed to load persistence filter state";
-          }
+      return this.store
+        .listMonitors()
+        .then((payload) => {
+          this.monitors = this.store.extractArray(payload);
           this.lastUpdated = new Date().toLocaleTimeString();
+        })
+        .catch((err) => {
+          this.monitors = [];
+          this.error = (err && err.message) || "Failed to load monitors";
         })
         .finally(() => {
           this.loading = false;
@@ -952,24 +466,8 @@ export default {
   opacity: 0.92;
 }
 
-.filter-card {
-  border-radius: 16px;
-}
-
 .monitor-traffic-panels {
   border-radius: 16px;
   overflow: hidden;
-}
-
-.mode-toggle {
-  width: 100%;
-}
-
-.match-summary {
-  display: inline-block;
-  max-width: 420px;
-  overflow-wrap: anywhere;
-  font-family: var(--font-mono);
-  font-size: 0.85rem;
 }
 </style>

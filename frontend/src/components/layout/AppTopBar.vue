@@ -43,6 +43,18 @@
       <div class="status-rail">
         <NotificationBell />
         <v-btn
+          icon="mdi-cog-outline"
+          variant="text"
+          size="small"
+          density="comfortable"
+          class="settings-btn"
+          to="/settings"
+          aria-label="Settings"
+        >
+          <v-icon icon="mdi-cog-outline" />
+          <v-tooltip activator="parent" location="bottom">Settings</v-tooltip>
+        </v-btn>
+        <v-btn
           icon="mdi-power"
           color="error"
           variant="tonal"

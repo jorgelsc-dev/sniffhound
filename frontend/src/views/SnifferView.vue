@@ -123,7 +123,16 @@
           prepend-icon="mdi-target-account"
           to="/monitors"
         >
-          Manage detection monitors
+          View detection monitors
+        </v-btn>
+        <v-btn
+          size="small"
+          variant="text"
+          color="primary"
+          prepend-icon="mdi-cog-outline"
+          to="/settings?section=capture"
+        >
+          Configure interfaces
         </v-btn>
       </div>
 
@@ -152,124 +161,6 @@
             {{ engineActionLabel }}
           </v-btn>
         </template>
-      </DataPanel>
-
-      <DataPanel
-        title="Capture Interfaces"
-        subtitle="Select one or more interfaces to listen on. Leave it empty to sniff every visible interface."
-        variant="tonal"
-        collapsible
-        :count="selectedSnifferInterfaces.length || snifferInterfaceOptions.length"
-        count-label="interfaces"
-        class="mb-4 interface-card"
-      >
-        <template #header-actions>
-          <v-chip
-            size="small"
-            :color="snifferBlocked ? 'error' : 'info'"
-            variant="outlined"
-            :prepend-icon="snifferBlocked ? 'mdi-alert-circle-outline' : 'mdi-lan-check'"
-          >
-            {{ selectedInterfacesLabel }}
-          </v-chip>
-        </template>
-
-        <v-row dense class="mt-2">
-          <v-col cols="12" md="8">
-            <v-select
-              :model-value="selectedSnifferInterfaces"
-              :items="snifferInterfaceOptions"
-              label="Interfaces"
-              item-title="label"
-              item-value="value"
-              variant="outlined"
-              density="comfortable"
-              hide-details="auto"
-              multiple
-              chips
-              clearable
-              closable-chips
-              :loading="interfaceSubmitting"
-              :disabled="!snifferInterfaceOptions.length"
-              :error-messages="interfaceError ? [interfaceError] : []"
-              @update:model-value="updateSnifferInterfaces"
-            />
-          </v-col>
-          <v-col cols="12" md="4">
-            <div class="interface-status">
-              {{ snifferInterfaceStatus }}
-            </div>
-            <div class="text-caption text-medium-emphasis mt-2">
-              {{ snifferInterfaceHint }}
-            </div>
-          </v-col>
-        </v-row>
-      </DataPanel>
-
-      <DataPanel
-        title="WiFi Monitor Mode"
-        subtitle="Captures raw 802.11 management frames (beacons, probe requests/responses, deauth/disassoc, auth) on a wireless adapter switched into monitor mode. Only the adapter's current channel is captured — there is no channel hopping."
-        variant="tonal"
-        collapsible
-        default-collapsed
-        :count="wifiInterfaceOptions.length"
-        count-label="wireless interfaces"
-        class="mb-4 wifi-card"
-      >
-        <template #header-actions>
-          <v-chip
-            size="small"
-            :color="wifiState.enabled ? 'success' : 'secondary'"
-            variant="tonal"
-            :prepend-icon="wifiState.enabled ? 'mdi-wifi' : 'mdi-wifi-off'"
-          >
-            {{ wifiState.enabled ? "Monitoring" : "Off" }}
-          </v-chip>
-        </template>
-
-        <v-alert type="warning" variant="tonal" density="comfortable" class="mt-3">
-          Enabling this switches the adapter out of normal (managed) mode, which disconnects its
-          regular network/internet connectivity while monitor mode stays active. Turn it back off
-          to reconnect.
-        </v-alert>
-
-        <v-row dense class="mt-2" align="center">
-          <v-col cols="12" md="6">
-            <v-select
-              v-model="wifiSelectedInterface"
-              :items="wifiInterfaceOptions"
-              label="Wireless interface"
-              variant="outlined"
-              density="comfortable"
-              hide-details="auto"
-              :disabled="wifiState.enabled || !wifiInterfaceOptions.length"
-            />
-          </v-col>
-          <v-col cols="12" md="6" class="d-flex align-center ga-3">
-            <v-switch
-              :model-value="wifiState.enabled"
-              :loading="wifiSubmitting"
-              :disabled="!wifiState.enabled && !wifiSelectedInterface"
-              color="warning"
-              hide-details
-              inset
-              @update:model-value="toggleWifiMonitor"
-            />
-            <span class="text-caption text-medium-emphasis">
-              {{ wifiState.enabled ? `Monitoring on ${wifiState.interface}` : "Monitor mode disabled" }}
-            </span>
-          </v-col>
-        </v-row>
-
-        <v-alert v-if="wifiError" type="error" variant="tonal" density="comfortable" class="mt-3">
-          {{ wifiError }}
-        </v-alert>
-        <v-alert v-else-if="wifiState.error" type="error" variant="tonal" density="comfortable" class="mt-3">
-          {{ wifiState.error }}
-        </v-alert>
-        <v-alert v-if="!wifiInterfaceOptions.length" type="info" variant="tonal" density="comfortable" class="mt-3">
-          No wireless interfaces detected on this machine.
-        </v-alert>
       </DataPanel>
 
       <EntityTablePanel
@@ -375,13 +266,8 @@ export default {
       lastUpdated: "",
       liveRefreshEnabled: true,
       packets: [],
-      interfaceSubmitting: false,
-      interfaceError: "",
       runtimeSubmitting: false,
       runtimeError: "",
-      wifiSubmitting: false,
-      wifiError: "",
-      wifiSelectedInterface: "",
       filters: {
         query: "",
         proto: "",
@@ -514,50 +400,11 @@ export default {
       if (!values.length) return "all visible";
       return values.join(", ");
     },
-    selectedSnifferInterfaces() {
-      const values = Array.isArray(this.runtime.selected_interfaces) ? this.runtime.selected_interfaces : [];
-      return [...new Set(values.map((item) => String(item || "").trim()).filter(Boolean))];
-    },
-    snifferInterfaceOptions() {
-      const values = Array.isArray(this.runtime.available_interfaces) ? this.runtime.available_interfaces : [];
-      return uniqueSorted(values).map((value) => ({ label: value, value }));
-    },
     activeInterfacesLabel() {
       const values = Array.isArray(this.runtime.interfaces) ? this.runtime.interfaces : [];
       if (!values.length) return "none";
       if (values.length === 1) return values[0];
       return `${values.length} active`;
-    },
-    snifferInterfaceStatus() {
-      const active = Array.isArray(this.runtime.interfaces)
-        ? this.runtime.interfaces.map((item) => String(item || "").trim()).filter(Boolean)
-        : [];
-      const state = String(this.runtime.capture_state || "").trim().toLowerCase();
-      if (state === "blocked") {
-        return `Capture is blocked on ${active.length || this.selectedSnifferInterfaces.length || 0} interfaces.`;
-      }
-      if (state === "running") {
-        if (active.length === 1) return `Listening on ${active[0]}.`;
-        if (active.length > 1) return `Listening on ${active.length} interfaces.`;
-        return "Listening on all visible interfaces.";
-      }
-      if (!this.selectedSnifferInterfaces.length) {
-        return "Ready to listen on every visible interface.";
-      }
-      return `Ready to listen on ${this.selectedInterfacesLabel}.`;
-    },
-    snifferInterfaceHint() {
-      if (!this.snifferInterfaceOptions.length) {
-        return "No interfaces have been reported yet. Refresh to rediscover them.";
-      }
-      return "An empty selection means SniffHound will listen on every visible interface.";
-    },
-    wifiState() {
-      return this.runtime.wifi && typeof this.runtime.wifi === "object" ? this.runtime.wifi : {};
-    },
-    wifiInterfaceOptions() {
-      const values = Array.isArray(this.wifiState.eligible_interfaces) ? this.wifiState.eligible_interfaces : [];
-      return uniqueSorted(values);
     },
     filteredPackets() {
       const query = String(this.filters.query || "").trim().toLowerCase();
@@ -656,47 +503,6 @@ export default {
           this.runtimeSubmitting = false;
         });
     },
-    updateSnifferInterfaces(value) {
-      const normalized = Array.isArray(value)
-        ? [...new Set(value.map((item) => String(item || "").trim()).filter(Boolean))]
-        : [];
-      if (this.interfaceSubmitting) {
-        return;
-      }
-      const current = [...this.selectedSnifferInterfaces].sort();
-      const incoming = [...normalized].sort();
-      if (incoming.length === current.length && incoming.every((item, index) => item === current[index])) {
-        return;
-      }
-      this.interfaceError = "";
-      this.interfaceSubmitting = true;
-      this.store
-        .setSnifferInterfaces(normalized)
-        .catch((err) => {
-          this.interfaceError = err && err.message ? err.message : "Failed to update interfaces";
-        })
-        .finally(() => {
-          this.interfaceSubmitting = false;
-        });
-    },
-    toggleWifiMonitor(value) {
-      if (this.wifiSubmitting) return;
-      const enabled = Boolean(value);
-      if (enabled && !this.wifiSelectedInterface) {
-        this.wifiError = "Select a wireless interface first";
-        return;
-      }
-      this.wifiError = "";
-      this.wifiSubmitting = true;
-      this.store
-        .setWifiMonitor(enabled, enabled ? this.wifiSelectedInterface : "")
-        .catch((err) => {
-          this.wifiError = (err && err.message) || `Failed to ${enabled ? "enable" : "disable"} WiFi monitor mode`;
-        })
-        .finally(() => {
-          this.wifiSubmitting = false;
-        });
-    },
     handleWsRefresh(event) {
       if (!this.liveRefreshEnabled) return;
       const eventType = String((event && event.type) || "").trim().toLowerCase();
@@ -712,7 +518,6 @@ export default {
     load(options = {}) {
       if (!options.silent) this.loading = true;
       this.error = "";
-      this.interfaceError = "";
       return Promise.allSettled([
         this.store.fetchJsonPromise("/ports/?mode=sniffer&limit=600"),
         this.store.initRuntime(),
@@ -738,10 +543,6 @@ export default {
 
 <style scoped>
 .metric-card {
-  border-radius: 16px;
-}
-
-.interface-card {
   border-radius: 16px;
 }
 
@@ -777,14 +578,4 @@ export default {
   white-space: nowrap;
 }
 
-.interface-status {
-  min-height: 44px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  border: 1px solid rgba(118, 191, 232, 0.16);
-  background: linear-gradient(180deg, rgba(10, 18, 29, 0.82), rgba(9, 15, 24, 0.76));
-  color: rgba(229, 239, 249, 0.88);
-  font-size: 0.92rem;
-  line-height: 1.45;
-}
 </style>
