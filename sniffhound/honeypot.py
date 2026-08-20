@@ -70,12 +70,15 @@ from .honeypot_ports import (  # noqa: F401 - re-exported, used throughout this 
     VNC_PORTS,
 )
 
+from .settings import DATA_DIR
+
 LOG_MAX_BYTES = 10 * 1024 * 1024
 LOG_BACKUP_COUNT = 5
-LOG_FILE = Path("honeypot.log")
-EVENT_DB_FILE = Path("honeypot_events.db")
-CERT_FILE = Path("honeypot_cert.pem")
-KEY_FILE = Path("honeypot_key.pem")
+LOG_FILE = DATA_DIR / "honeypot.log"
+EVENT_DB_FILE = DATA_DIR / "honeypot_events.db"
+CERT_FILE = DATA_DIR / "honeypot_cert.pem"
+KEY_FILE = DATA_DIR / "honeypot_key.pem"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 BIND_HOST = "0.0.0.0"
 READ_TIMEOUT_SECONDS = 6

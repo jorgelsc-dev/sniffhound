@@ -16,6 +16,7 @@ BIN_DIR="$PACKAGE_ROOT/usr/bin"
 DOC_DIR="$PACKAGE_ROOT/usr/share/doc/$PACKAGE_NAME"
 LAUNCHER_SOURCE="$ROOT_DIR/scripts/deb_launcher.py"
 WRAPPER_SOURCE="$ROOT_DIR/scripts/deb_wrapper.sh"
+POSTRM_SOURCE="$ROOT_DIR/scripts/deb_postrm.sh"
 
 require_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -34,6 +35,10 @@ if [[ ! -f "$LAUNCHER_SOURCE" ]]; then
 fi
 if [[ ! -f "$WRAPPER_SOURCE" ]]; then
   echo "Missing wrapper template: $WRAPPER_SOURCE" >&2
+  exit 1
+fi
+if [[ ! -f "$POSTRM_SOURCE" ]]; then
+  echo "Missing postrm template: $POSTRM_SOURCE" >&2
   exit 1
 fi
 
@@ -81,6 +86,7 @@ EOF
 
 install -m 0644 "$LAUNCHER_SOURCE" "$INSTALL_ROOT/launcher.py"
 install -m 0755 "$WRAPPER_SOURCE" "$BIN_DIR/sniffhound"
+install -m 0755 "$POSTRM_SOURCE" "$DEBIAN_DIR/postrm"
 install -m 0644 README.md "$DOC_DIR/README.md"
 install -m 0644 LICENSE "$DOC_DIR/LICENSE"
 

@@ -31,7 +31,20 @@ def _as_bool(value, default: bool = False) -> bool:
 
 HOST = str(_env("SNIFFHOUND_HOST", _env("HOST", "127.0.0.1"))).strip() or "127.0.0.1"
 PORT = _as_int(_env("SNIFFHOUND_PORT", _env("PORT", "45678")), 45678)
-DB_PATH = str(_env("SNIFFHOUND_DB_PATH", "SniffHound.db")).strip() or "SniffHound.db"
+
+
+def default_data_dir() -> Path:
+    xdg_data_home = str(_env("XDG_DATA_HOME", "")).strip()
+    base = Path(xdg_data_home) if xdg_data_home else Path.home() / ".local" / "share"
+    return base / "sniffhound"
+
+
+# Fixed per-user data directory (XDG-style) rather than the process cwd, so
+# uninstall tooling (see scripts/build_deb.sh's postrm) has one known
+# location to purge instead of guessing at whatever cwd sniffhound was last
+# run from.
+DATA_DIR = Path(str(_env("SNIFFHOUND_DATA_DIR", "")).strip() or default_data_dir())
+DB_PATH = str(_env("SNIFFHOUND_DB_PATH", "")).strip() or str(DATA_DIR / "SniffHound.db")
 DEBUG = _as_bool(_env("SNIFFHOUND_DEBUG", "1"), default=True)
 RUNTIME_MODE = str(_env("SNIFFHOUND_RUNTIME_MODE", _env("SNIFFHOUND_MODE", "sniffer"))).strip().lower() or "sniffer"
 
