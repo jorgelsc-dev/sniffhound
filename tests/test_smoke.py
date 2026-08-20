@@ -749,6 +749,68 @@ class SmokeTests(unittest.TestCase):
             command = manage_module._build_capture_relaunch_command("/tmp/x.sock", "tok", 1000)
         self.assertFalse(any(entry.startswith("PYTHONPATH=") for entry in command))
 
+    def test_manage_capture_relaunch_command_forwards_data_dir(self):
+        # Every SNIFFHOUND_* var present in os.environ is forwarded verbatim
+        # to the sudo-relaunched capture child. Pin this for
+        # SNIFFHOUND_DATA_DIR specifically (main() sets it via
+        # os.environ.setdefault() before spawning, see the test below) - a
+        # future refactor to an allowlist could easily forget it and
+        # silently reintroduce the two-databases bug this fixes.
+        import sniffhound.manage as manage_module
+
+        with patch.dict(
+            os.environ, {"SNIFFHOUND_DATA_DIR": "/home/example/.local/share/sniffhound"}, clear=False
+        ):
+            command = manage_module._build_capture_relaunch_command("/tmp/x.sock", "tok", 1000)
+        self.assertIn("SNIFFHOUND_DATA_DIR=/home/example/.local/share/sniffhound", command)
+
+    def test_manage_main_pins_data_dir_before_spawning_capture_child(self):
+        # Regression test: the capture child is relaunched via `sudo`,
+        # which resets HOME to root's home by default. DATA_DIR (and so
+        # DB_PATH, honeypot log/db/certs - see settings.py/honeypot.py)
+        # defaults to Path.home()/.local/share/sniffhound, so without
+        # pinning SNIFFHOUND_DATA_DIR explicitly before spawning, the
+        # unprivileged web process and the privileged capture child would
+        # silently compute two different paths - captured traffic would be
+        # persisted somewhere the web process never reads from, and every
+        # table/catalog view would stay empty despite live capture (and
+        # notifications) working fine over the IPC/WebSocket path.
+        import sniffhound.app as app_module
+        import sniffhound.manage as manage_module
+        from sniffhound.settings import DATA_DIR
+
+        fake_process = _FakeCaptureProcess()
+        observed = {}
+
+        def _capture_spawn(ipc_socket, ipc_token):
+            observed["data_dir"] = os.environ.get("SNIFFHOUND_DATA_DIR")
+            return fake_process
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SNIFFHOUND_DATA_DIR", None)
+            with patch.object(manage_module, "HOST", "127.0.0.1"), patch.object(
+                manage_module, "PORT", 45678
+            ), patch.object(
+                manage_module, "_select_listen_port", return_value=45678
+            ), patch.object(
+                manage_module, "_spawn_capture_child", side_effect=_capture_spawn
+            ), patch.object(
+                manage_module, "_stop_capture_child"
+            ), patch.object(
+                manage_module, "_print_startup_banner"
+            ), patch.object(
+                app_module, "connect_capture_service", return_value=True
+            ), patch.object(
+                app_module, "bootstrap_capture"
+            ), patch.object(
+                app_module, "shutdown_capture"
+            ), patch.object(
+                app_module.app, "run", side_effect=KeyboardInterrupt
+            ):
+                manage_module.main()
+
+        self.assertEqual(observed.get("data_dir"), str(DATA_DIR))
+
     def test_manage_refuses_to_spawn_capture_child_without_sudo(self):
         # manage.py (the web process) never elevates itself anymore - it
         # only needs `sudo` to spawn the privileged capture child. Actual

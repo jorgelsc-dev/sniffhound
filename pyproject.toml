@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sniffhound"
-version = "0.1.0"
+version = "0.25.2"
 description = "SniffHound is a native Python network sniffer with SQLite persistence, live stats, and a wsbuilder-backed frontend."
 readme = "README.md"
 requires-python = ">=3.12"

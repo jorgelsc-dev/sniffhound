@@ -17,7 +17,7 @@ from pathlib import Path
 
 from .ipc import generate_ipc_token
 from .process_control import request_process_shutdown, reset_process_shutdown_request
-from .settings import DB_PATH, HOST, PORT, resolve_ipc_socket, resolve_ipc_token
+from .settings import DATA_DIR, DB_PATH, HOST, PORT, resolve_ipc_socket, resolve_ipc_token
 
 try:
     import readline
@@ -682,6 +682,15 @@ def main():
     ipc_token = resolve_ipc_token() or generate_ipc_token()
     os.environ["SNIFFHOUND_IPC_SOCKET"] = ipc_socket
     os.environ["SNIFFHOUND_IPC_TOKEN"] = ipc_token
+    # DATA_DIR (and so the default DB_PATH, honeypot log/db/certs - see
+    # settings.py and honeypot.py) defaults to this process's home
+    # directory. The capture child below is relaunched via `sudo`, which
+    # resets HOME to root's home by default, so without pinning this
+    # explicitly the two processes would silently compute two different
+    # paths and the privileged child would persist captured traffic where
+    # the web process never looks. setdefault() so an operator-provided
+    # SNIFFHOUND_DATA_DIR/SNIFFHOUND_DB_PATH still wins.
+    os.environ.setdefault("SNIFFHOUND_DATA_DIR", str(DATA_DIR))
 
     # Import (and so construct sniffhound.app's SniffStore, as this
     # unprivileged user) *before* spawning the privileged capture child.
