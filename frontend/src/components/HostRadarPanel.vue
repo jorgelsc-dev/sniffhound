@@ -137,6 +137,29 @@
               <animate attributeName="r" values="2;10;2" :dur="arc.duration" :begin="arc.begin" repeatCount="indefinite" />
               <animate attributeName="opacity" values="0;0.24;0" :dur="arc.duration" :begin="arc.begin" repeatCount="indefinite" />
             </circle>
+            <circle
+              v-for="arc in arcPaths"
+              :key="`trace-glow-${arc.id}`"
+              :r="arc.traceRadius * 2.85"
+              :fill="arc.traceGlow"
+              class="host-radar-trace host-radar-trace--glow"
+              :opacity="arc.traceGlowOpacity"
+              :filter="`url(#${nodeGlowFilterId})`"
+            >
+              <animateMotion :dur="arc.duration" :begin="arc.begin" repeatCount="indefinite" :path="arc.d" />
+            </circle>
+            <circle
+              v-for="arc in arcPaths"
+              :key="`trace-${arc.id}`"
+              :r="arc.traceRadius"
+              :fill="arc.traceColor"
+              :stroke="arc.traceStroke"
+              stroke-width="0.58"
+              class="host-radar-trace"
+              :opacity="arc.traceOpacity"
+            >
+              <animateMotion :dur="arc.duration" :begin="arc.begin" repeatCount="indefinite" :path="arc.d" />
+            </circle>
           </g>
 
           <g v-if="layoutNodes.length" class="host-radar-nodes">
@@ -212,7 +235,6 @@
                 :transform="`translate(${node.haloRadius * 0.72}, ${-node.haloRadius * 0.72})`"
               >
                 <title>{{ node.alertCount }} {{ node.alertSeverity }} alert{{ node.alertCount === 1 ? '' : 's' }} on {{ node.ip }}</title>
-                <circle r="9.4" :fill="node.alertGlow" class="host-radar-alert-badge__pulse" />
                 <circle r="6.6" :fill="node.alertFill" :stroke="node.alertRing" stroke-width="1.1" />
                 <text
                   text-anchor="middle"
@@ -454,12 +476,12 @@ function scopeTheme(scope, emphasis = 0) {
 function severityBadgeTheme(severity) {
   const normalized = String(severity || "").trim().toLowerCase();
   if (normalized === "critical" || normalized === "high") {
-    return { fill: "#ff647a", glow: "rgba(255, 100, 122, 0.55)", ring: "rgba(255, 189, 199, 0.9)" };
+    return { fill: "#ff647a", ring: "rgba(255, 189, 199, 0.9)" };
   }
   if (normalized === "medium") {
-    return { fill: "#f5bb62", glow: "rgba(245, 187, 98, 0.5)", ring: "rgba(255, 224, 173, 0.9)" };
+    return { fill: "#f5bb62", ring: "rgba(255, 224, 173, 0.9)" };
   }
-  return { fill: "#4b8fff", glow: "rgba(75, 143, 255, 0.5)", ring: "rgba(178, 205, 255, 0.9)" };
+  return { fill: "#4b8fff", ring: "rgba(178, 205, 255, 0.9)" };
 }
 
 export default {
@@ -725,7 +747,6 @@ export default {
             alertCount,
             alertSeverity: alertCount > 0 ? String(alertInfo.severity || "").trim().toLowerCase() : "",
             alertFill: alertTheme ? alertTheme.fill : "",
-            alertGlow: alertTheme ? alertTheme.glow : "",
             alertRing: alertTheme ? alertTheme.ring : "",
           };
         })
@@ -795,6 +816,11 @@ export default {
             strokeWidth: strength,
             strokeOpacity: laneOpacity,
             glowOpacity: link.activeNow ? 0.18 : Math.max(0.06, laneOpacity * 0.38),
+            traceRadius: Math.max(2.4, Math.min(4.2, 2.1 + (Math.log2((link.packets || 0) + 1) * 0.34))),
+            traceGlow: palette.glow,
+            traceStroke: "rgba(236, 246, 255, 0.88)",
+            traceOpacity: link.activeNow ? 0.98 : Math.max(0.46, laneOpacity * 0.96),
+            traceGlowOpacity: link.activeNow ? 0.34 : Math.max(0.16, laneOpacity * 0.54),
             duration: `${(2.7 + ((index % 5) * 0.22)).toFixed(2)}s`,
             begin: `${(index % 7) * 0.15}s`,
             markerEnd: link.activeNow ? `url(#${this.attackMarkerId})` : "",
@@ -1606,25 +1632,14 @@ export default {
   pointer-events: none;
 }
 
-.host-radar-alert-badge__pulse {
-  animation: host-radar-alert-pulse 1.8s ease-in-out infinite;
-  transform-origin: center;
-}
-
-@keyframes host-radar-alert-pulse {
-  0%, 100% {
-    opacity: 0.55;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.18;
-    transform: scale(1.45);
-  }
-}
-
 .host-radar-flow {
   stroke-dasharray: 10 13;
   animation: host-radar-flow 2.8s linear infinite;
+}
+
+.host-radar-trace {
+  pointer-events: none;
+  mix-blend-mode: screen;
 }
 
 .host-radar-node {

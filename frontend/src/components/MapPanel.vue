@@ -160,14 +160,6 @@
         </template>
 
         <template v-else>
-          <ellipse
-            :cx="globeCenterX"
-            :cy="globeCenterY + (globeRadius * 0.92)"
-            :rx="globeRadius * 0.9"
-            :ry="globeRadius * 0.18"
-            fill="rgba(10, 18, 28, 0.82)"
-            opacity="0.82"
-          />
           <circle
             :cx="globeCenterX"
             :cy="globeCenterY"
@@ -184,20 +176,6 @@
             stroke-width="1.1"
           />
           <g :clip-path="`url(#${globeClipId})`">
-            <ellipse
-              :cx="globeCenterX + (globeRadius * 0.24)"
-              :cy="globeCenterY + (globeRadius * 0.08)"
-              :rx="globeRadius * 0.86"
-              :ry="globeRadius * 0.96"
-              fill="rgba(1, 8, 18, 0.34)"
-            />
-            <ellipse
-              :cx="globeCenterX - (globeRadius * 0.28)"
-              :cy="globeCenterY - (globeRadius * 0.36)"
-              :rx="globeRadius * 0.5"
-              :ry="globeRadius * 0.34"
-              fill="rgba(146, 245, 255, 0.1)"
-            />
             <g class="map-graticule">
               <path
                 v-for="path in globeLatitudePaths"
