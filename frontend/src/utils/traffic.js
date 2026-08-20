@@ -148,3 +148,35 @@ export function uniqueSorted(values) {
     (left, right) => left.localeCompare(right)
   );
 }
+
+function widthFor(value, maxValue) {
+  return maxValue > 0 ? Math.max(10, Math.round((value / maxValue) * 100)) : 0;
+}
+
+// Ranks rows by a numeric field (already one row per entity, e.g. a catalog
+// with its own hit_count) rather than counting occurrences.
+export function topSeriesByValue(rows, labelFn, valueFn, limit = 6) {
+  const ordered = (Array.isArray(rows) ? rows : [])
+    .map((row) => ({ label: String(labelFn(row) || "").trim(), value: Number(valueFn(row)) || 0 }))
+    .filter((item) => item.label)
+    .sort((left, right) => right.value - left.value || left.label.localeCompare(right.label))
+    .slice(0, limit);
+  const maxValue = ordered.length ? Math.max(...ordered.map((item) => item.value)) : 0;
+  return ordered.map((item) => ({ ...item, width: widthFor(item.value, maxValue) }));
+}
+
+// Sums a numeric field per category (e.g. total hits per source/method).
+export function groupSumSeries(rows, groupFn, valueFn, limit = 6) {
+  const totals = new Map();
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const label = String(groupFn(row) || "").trim();
+    if (!label) return;
+    totals.set(label, (totals.get(label) || 0) + (Number(valueFn(row)) || 0));
+  });
+  const ordered = [...totals.entries()]
+    .map(([label, value]) => ({ label, value }))
+    .sort((left, right) => right.value - left.value || left.label.localeCompare(right.label))
+    .slice(0, limit);
+  const maxValue = ordered.length ? Math.max(...ordered.map((item) => item.value)) : 0;
+  return ordered.map((item) => ({ ...item, width: widthFor(item.value, maxValue) }));
+}

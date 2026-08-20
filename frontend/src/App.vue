@@ -127,6 +127,9 @@ export default {
         { label: "Sniffer", to: "/sniffer", icon: "mdi-ethernet" },
         { label: "Honeypot", to: "/honeypot", icon: "mdi-shield-bug" },
         { label: "Monitors", to: "/monitors", icon: "mdi-target-account" },
+        { label: "Domains", to: "/domains", icon: "mdi-web" },
+        { label: "Paths", to: "/paths", icon: "mdi-routes" },
+        { label: "IPs", to: "/ips", icon: "mdi-ip-network" },
       ],
     };
   },

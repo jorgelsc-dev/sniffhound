@@ -43,19 +43,21 @@
       <div>
         <div class="text-h6">Monitor Traffic</div>
         <div class="text-caption text-medium-emphasis">
-          One table per monitor, generated automatically — expand any monitor to filter/search its
-          matched packets and see its stats and charts.
+          One table per monitor with matched traffic, generated automatically — a monitor appears here
+          as soon as it has at least one match. Expand any monitor to filter/search its matched
+          packets and see its stats and charts.
         </div>
       </div>
     </div>
 
     <v-expansion-panels
+      v-if="monitorsWithTraffic.length"
       v-model="expandedMonitorPanel"
       variant="accordion"
       class="monitor-traffic-panels mb-6"
     >
       <v-expansion-panel
-        v-for="monitor in monitors"
+        v-for="monitor in monitorsWithTraffic"
         :id="`monitor-row-${monitor.id}`"
         :key="monitor.id"
         :value="monitor.id"
@@ -63,7 +65,6 @@
         <v-expansion-panel-title>
           <div class="d-flex align-center flex-wrap ga-2">
             <v-chip
-              v-if="monitor.match_count > 0"
               size="x-small"
               color="info"
               variant="tonal"
@@ -93,105 +94,29 @@
       </v-expansion-panel>
     </v-expansion-panels>
 
-    <EntityTablePanel
-      title="Domains"
-      subtitle="Domains observed via DNS lookups, HTTP Host headers, and TLS SNI. Only populated while the matching monitors are enabled."
-      class="mt-6"
-      v-model:live-enabled="liveRefreshEnabled"
-      :live-refresh="true"
-      :rows="domains"
-      :columns="domainColumns"
-      :loading="domainsLoading"
-      :error="domainsError"
-      :last-updated="domainsLastUpdated"
-      search-enabled
-      search-label="Search domains"
-      search-placeholder="Domain, source, IP..."
-      :page-size="25"
-      empty-text="No domains observed yet"
-      @refresh="loadDomains"
-    >
-      <template #cell-source="{ value }">
-        <v-chip size="x-small" :color="domainSourceColor(value)" variant="tonal">
-          {{ domainSourceLabel(value) }}
-        </v-chip>
-      </template>
-      <template #cell-last_seen="{ value }">
-        {{ formatTimestamp(value) }}
-      </template>
-    </EntityTablePanel>
+    <v-alert v-else type="info" variant="tonal" density="comfortable" class="mb-6">
+      No monitor has matched any traffic yet. Monitors show up here automatically as soon as they
+      have at least one match.
+    </v-alert>
 
-    <EntityTablePanel
-      title="Paths"
-      subtitle="HTTP request paths observed on traffic that matched the HTTP requests monitor."
-      class="mt-6"
-      v-model:live-enabled="liveRefreshEnabled"
-      :live-refresh="true"
-      :rows="paths"
-      :columns="pathColumns"
-      :loading="pathsLoading"
-      :error="pathsError"
-      :last-updated="pathsLastUpdated"
-      search-enabled
-      search-label="Search paths"
-      search-placeholder="Path, host, method, IP..."
-      :page-size="25"
-      empty-text="No HTTP paths observed yet"
-      @refresh="loadPaths"
-    >
-      <template #cell-method="{ value }">
-        <v-chip size="x-small" color="primary" variant="tonal">{{ value }}</v-chip>
-      </template>
-      <template #cell-last_seen="{ value }">
-        {{ formatTimestamp(value) }}
-      </template>
-    </EntityTablePanel>
-
-    <EntityTablePanel
-      title="IPs"
-      subtitle="Distinct source/destination IPs seen in stored (detected) traffic."
-      class="mt-6 mb-6"
-      v-model:live-enabled="liveRefreshEnabled"
-      :live-refresh="true"
-      :rows="ips"
-      :columns="ipColumns"
-      :loading="ipsLoading"
-      :error="ipsError"
-      :last-updated="ipsLastUpdated"
-      search-enabled
-      search-label="Search IPs"
-      search-placeholder="IP address..."
-      :page-size="25"
-      empty-text="No IPs observed yet"
-      @refresh="loadIps"
-    >
-      <template #cell-private="{ item }">
-        <v-chip size="x-small" :color="item.private ? 'secondary' : 'warning'" variant="tonal">
-          {{ item.private ? "Private" : "Public" }}
-        </v-chip>
-      </template>
-      <template #cell-first_seen="{ value }">
-        {{ formatTimestamp(value) }}
-      </template>
-      <template #cell-last_seen="{ value }">
-        {{ formatTimestamp(value) }}
-      </template>
-    </EntityTablePanel>
+    <div class="d-flex flex-wrap ga-2 mb-6">
+      <v-btn size="small" variant="tonal" color="info" prepend-icon="mdi-web" to="/domains">
+        Domains catalog
+      </v-btn>
+      <v-btn size="small" variant="tonal" color="info" prepend-icon="mdi-routes" to="/paths">
+        Paths catalog
+      </v-btn>
+      <v-btn size="small" variant="tonal" color="info" prepend-icon="mdi-ip-network" to="/ips">
+        IPs catalog
+      </v-btn>
+    </div>
   </div>
 </template>
 
 <script>
 import store from "../state/appStore";
 import ViewHeader from "../components/ui/ViewHeader.vue";
-import EntityTablePanel from "../components/ui/EntityTablePanel.vue";
 import MonitorMatchesPanel from "../components/monitors/MonitorMatchesPanel.vue";
-import { formatTimestamp, matchesSearch } from "../utils/traffic";
-
-const DOMAIN_SOURCE_LABELS = {
-  dns: "DNS",
-  tls_sni: "TLS SNI",
-  http_host: "HTTP Host",
-};
 
 const REFRESH_EVENT_TYPES = new Set(["packet", "stats_update", "runtime_mode"]);
 
@@ -199,7 +124,6 @@ export default {
   name: "MonitorsView",
   components: {
     ViewHeader,
-    EntityTablePanel,
     MonitorMatchesPanel,
   },
   data() {
@@ -209,42 +133,6 @@ export default {
       error: "",
       lastUpdated: "",
       monitors: [],
-      domains: [],
-      domainsLoading: false,
-      domainsError: "",
-      domainsLastUpdated: "",
-      domainColumns: [
-        { key: "name", label: "Domain" },
-        { key: "source", label: "Source" },
-        { key: "ip", label: "Last IP" },
-        { key: "port", label: "Port" },
-        { key: "proto", label: "Proto" },
-        { key: "hit_count", label: "Hits" },
-        { key: "last_seen", label: "Last seen" },
-      ],
-      paths: [],
-      pathsLoading: false,
-      pathsError: "",
-      pathsLastUpdated: "",
-      pathColumns: [
-        { key: "method", label: "Method" },
-        { key: "path", label: "Path" },
-        { key: "host", label: "Host" },
-        { key: "ip", label: "Last IP" },
-        { key: "hit_count", label: "Hits" },
-        { key: "last_seen", label: "Last seen" },
-      ],
-      ips: [],
-      ipsLoading: false,
-      ipsError: "",
-      ipsLastUpdated: "",
-      ipColumns: [
-        { key: "ip", label: "IP" },
-        { key: "private", label: "Scope", sortable: false },
-        { key: "hit_count", label: "Hits" },
-        { key: "first_seen", label: "First seen" },
-        { key: "last_seen", label: "Last seen" },
-      ],
       liveRefreshEnabled: true,
       wsRefreshTimer: null,
       stopTableRefreshSubscription: null,
@@ -252,6 +140,9 @@ export default {
     };
   },
   computed: {
+    monitorsWithTraffic() {
+      return this.monitors.filter((item) => Number(item.match_count) > 0);
+    },
     metricCards() {
       const monitors = this.monitors;
       const enabled = monitors.filter((item) => item.enabled).length;
@@ -295,9 +186,6 @@ export default {
   },
   mounted() {
     this.load().then(() => this.focusMonitorFromQuery());
-    this.loadDomains();
-    this.loadPaths();
-    this.loadIps();
     this.stopTableRefreshSubscription = this.store.subscribeTableRefresh(this.handleWsRefresh);
   },
   watch: {
@@ -318,8 +206,6 @@ export default {
     }
   },
   methods: {
-    matchesSearch,
-    formatTimestamp,
     handleWsRefresh(event) {
       if (!this.liveRefreshEnabled) return;
       const eventType = String((event && event.type) || "").trim().toLowerCase();
@@ -327,76 +213,10 @@ export default {
       if (this.wsRefreshTimer) return;
       this.wsRefreshTimer = setTimeout(() => {
         this.wsRefreshTimer = null;
-        const silent = { silent: true };
-        Promise.allSettled([
-          this.load(silent),
-          this.loadDomains(silent),
-          this.loadPaths(silent),
-          this.loadIps(silent),
-        ]).catch(() => {
+        this.load({ silent: true }).catch(() => {
           // keep current data on transient refresh errors
         });
       }, 10000);
-    },
-    domainSourceLabel(value) {
-      return DOMAIN_SOURCE_LABELS[value] || value || "unknown";
-    },
-    domainSourceColor(value) {
-      if (value === "dns") return "info";
-      if (value === "tls_sni") return "success";
-      if (value === "http_host") return "primary";
-      return "secondary";
-    },
-    loadDomains(options = {}) {
-      if (!options.silent) this.domainsLoading = true;
-      this.domainsError = "";
-      return this.store
-        .listDomains({ limit: 500 })
-        .then((payload) => {
-          this.domains = this.store.extractArray(payload);
-          this.domainsLastUpdated = new Date().toLocaleTimeString();
-        })
-        .catch((err) => {
-          this.domains = [];
-          this.domainsError = (err && err.message) || "Failed to load domains";
-        })
-        .finally(() => {
-          this.domainsLoading = false;
-        });
-    },
-    loadPaths(options = {}) {
-      if (!options.silent) this.pathsLoading = true;
-      this.pathsError = "";
-      return this.store
-        .listPaths({ limit: 500 })
-        .then((payload) => {
-          this.paths = this.store.extractArray(payload);
-          this.pathsLastUpdated = new Date().toLocaleTimeString();
-        })
-        .catch((err) => {
-          this.paths = [];
-          this.pathsError = (err && err.message) || "Failed to load paths";
-        })
-        .finally(() => {
-          this.pathsLoading = false;
-        });
-    },
-    loadIps(options = {}) {
-      if (!options.silent) this.ipsLoading = true;
-      this.ipsError = "";
-      return this.store
-        .listIpCatalog({ limit: 500 })
-        .then((payload) => {
-          this.ips = this.store.extractArray(payload);
-          this.ipsLastUpdated = new Date().toLocaleTimeString();
-        })
-        .catch((err) => {
-          this.ips = [];
-          this.ipsError = (err && err.message) || "Failed to load IPs";
-        })
-        .finally(() => {
-          this.ipsLoading = false;
-        });
     },
     severityColor(value) {
       const severity = String(value || "info").trim().toLowerCase();
