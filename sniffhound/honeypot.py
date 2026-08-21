@@ -70,7 +70,7 @@ from .honeypot_ports import (  # noqa: F401 - re-exported, used throughout this 
     VNC_PORTS,
 )
 
-from .settings import DATA_DIR
+from .settings import DATA_DIR, PAYLOAD_TEXT_MAX_CHARS
 
 LOG_MAX_BYTES = 10 * 1024 * 1024
 LOG_BACKUP_COUNT = 5
@@ -79,6 +79,34 @@ EVENT_DB_FILE = DATA_DIR / "honeypot_events.db"
 CERT_FILE = DATA_DIR / "honeypot_cert.pem"
 KEY_FILE = DATA_DIR / "honeypot_key.pem"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+EVENT_DB_TABLES = ("connection_events", "tls_sessions", "dns_queries")
+
+
+def clear_honeypot_events() -> dict:
+    """Deletes every row from the honeypot's own event-detail database
+    (honeypot_events.db - connection_events/tls_sessions/dns_queries),
+    separate from SniffStore's packets/tags which
+    sniffhound.store.SniffStore.clear_detections(scope="honeypot") already
+    handles. Opens its own short-lived connection rather than requiring a
+    live HoneypotEngine instance, since honeypot mode may not be the
+    currently active runtime mode when an operator wants to clear this
+    history."""
+    counts = {table: 0 for table in EVENT_DB_TABLES}
+    if not EVENT_DB_FILE.exists():
+        return counts
+    conn = sqlite3.connect(EVENT_DB_FILE)
+    try:
+        for table in EVENT_DB_TABLES:
+            try:
+                cursor = conn.execute(f"DELETE FROM {table}")
+            except sqlite3.OperationalError:
+                continue  # table not created yet - honeypot mode never ran
+            counts[table] = max(0, cursor.rowcount)
+        conn.commit()
+    finally:
+        conn.close()
+    return counts
 
 BIND_HOST = "0.0.0.0"
 READ_TIMEOUT_SECONDS = 6
@@ -906,7 +934,7 @@ class HoneypotEngine:
         meta: dict[str, Any] | None = None,
     ) -> dict:
         payload = _normalize_payload(data)
-        payload_text = bytes_to_text_preview(payload, limit=400)
+        payload_text = bytes_to_text_preview(payload, limit=PAYLOAD_TEXT_MAX_CHARS)
         listener_ip = self.bind_host if self.bind_host not in {"0.0.0.0", "::"} else "127.0.0.1"
         packet = {
             "session_id": self._session_id(),
@@ -931,10 +959,10 @@ class HoneypotEngine:
             "icmp_type": 0,
             "icmp_code": 0,
             "arp_opcode": 0,
-            "summary": normalize_text(summary or banner_text or f"{protocol.upper()} honeypot", limit=400),
-            "payload_text": normalize_text(payload_text, limit=400),
+            "summary": normalize_text(summary or banner_text or f"{protocol.upper()} honeypot", limit=PAYLOAD_TEXT_MAX_CHARS),
+            "payload_text": normalize_text(payload_text, limit=PAYLOAD_TEXT_MAX_CHARS),
             "payload_hex": bytes_to_hex_preview(payload),
-            "banner_text": normalize_text(banner_text or summary or payload_text, limit=400),
+            "banner_text": normalize_text(banner_text or summary or payload_text, limit=PAYLOAD_TEXT_MAX_CHARS),
             "tags": [
                 {"key": "mode", "value": "honeypot"},
                 {"key": "service", "value": normalize_protocol_name(protocol)},

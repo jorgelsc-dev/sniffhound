@@ -54,7 +54,16 @@
       </template>
     </DataPanel>
 
-    <div class="d-flex justify-end mt-2 mb-2">
+    <div class="d-flex justify-end mt-2 mb-2 ga-2">
+      <v-btn
+        size="small"
+        variant="text"
+        color="error"
+        prepend-icon="mdi-delete-sweep-outline"
+        @click="clearDialog = true"
+      >
+        Clear alerts
+      </v-btn>
       <v-btn
         size="small"
         variant="text"
@@ -65,6 +74,24 @@
         Manage listeners
       </v-btn>
     </div>
+
+    <v-dialog v-model="clearDialog" max-width="420">
+      <v-card class="pa-4">
+        <div class="text-h6 mb-3">Clear alerts?</div>
+        <div class="text-caption text-medium-emphasis mb-3">
+          Deletes every stored honeypot hit (inbound traffic, responses, and the TLS/DNS event
+          detail behind them). Listener definitions and their enabled/disabled state are untouched.
+          This can't be undone.
+        </div>
+        <v-alert v-if="clearError" type="error" variant="tonal" density="comfortable" class="mb-3">
+          {{ clearError }}
+        </v-alert>
+        <div class="d-flex justify-end ga-2">
+          <v-btn variant="text" @click="clearDialog = false">Cancel</v-btn>
+          <v-btn color="error" variant="flat" :loading="clearing" @click="confirmClear">Clear alerts</v-btn>
+        </div>
+      </v-card>
+    </v-dialog>
 
     <MonitorMatchesPanel :monitor="honeypotHitsMonitor" class="mt-4 mb-2" />
 
@@ -267,6 +294,9 @@ export default {
       banners: [],
       runtimeSubmitting: false,
       runtimeError: "",
+      clearDialog: false,
+      clearing: false,
+      clearError: "",
       filters: {
         query: "",
         proto: "",
@@ -485,6 +515,22 @@ export default {
         })
         .finally(() => {
           this.runtimeSubmitting = false;
+        });
+    },
+    confirmClear() {
+      this.clearing = true;
+      this.clearError = "";
+      this.store
+        .clearDetections("honeypot")
+        .then(() => this.load())
+        .then(() => {
+          this.clearDialog = false;
+        })
+        .catch((err) => {
+          this.clearError = (err && err.message) || "Failed to clear alerts";
+        })
+        .finally(() => {
+          this.clearing = false;
         });
     },
     statusColor(value) {

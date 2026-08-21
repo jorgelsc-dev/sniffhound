@@ -11,12 +11,13 @@ from dataclasses import dataclass, field
 from . import netlink
 from .anomaly import AnomalyEngine
 from .logger import get_capture_logger
-from .monitors import ensure_monitor_index, evaluate_packet, indexed_monitors_by_id
+from .monitors import RuleAlertThrottle, ensure_monitor_index, evaluate_packet, indexed_monitors_by_id
 from .rulesets import classify_packet
 from .settings import (
     CAPTURE_BUFFER_BYTES,
     CAPTURE_POLL_TIMEOUT,
     CAPTURE_PROMISCUOUS,
+    PAYLOAD_TEXT_MAX_CHARS,
 )
 from .utils import (
     bytes_to_hex_preview,
@@ -485,6 +486,7 @@ class Sniffer:
         self._ruleset_cache_at = 0.0
         self._last_stats_broadcast_at = 0.0
         self._anomaly = AnomalyEngine()
+        self._rule_throttle = RuleAlertThrottle()
         self._wifi_stop_event = threading.Event()
         self._wifi_thread: threading.Thread | None = None
         self._wifi_lock = threading.RLock()
@@ -933,6 +935,8 @@ class Sniffer:
         matches = classify_packet(packet, rulesets)
         monitors, filter_enabled = self._get_monitor_context()
         monitor_hits = evaluate_packet(packet, monitors) if filter_enabled else []
+        if monitor_hits:
+            monitor_hits = self._rule_throttle.filter(monitor_hits, packet.get("src_ip"))
         # Anomaly detectors run unconditionally, regardless of filter_enabled —
         # a rate/state-based detector that only ever saw already-matched
         # traffic could never build a useful baseline.
@@ -1923,7 +1927,7 @@ class Sniffer:
         # the payload is actually mostly-printable to begin with.
         if not is_printable_payload(payload):
             return ""
-        text = bytes_to_text_preview(payload)
+        text = bytes_to_text_preview(payload, limit=PAYLOAD_TEXT_MAX_CHARS)
         if text:
             packet["state"] = "open"
         return text
@@ -1931,7 +1935,7 @@ class Sniffer:
     def _classify_tcp_banner(self, packet: dict, payload: bytes) -> str:
         src_port = safe_int(packet.get("src_port"), 0)
         dst_port = safe_int(packet.get("dst_port"), 0)
-        text = bytes_to_text_preview(payload)
+        text = bytes_to_text_preview(payload, limit=PAYLOAD_TEXT_MAX_CHARS)
         if payload.startswith(b"\x16\x03"):
             return "TLS handshake"
         if text.startswith("HTTP/1."):
@@ -1951,7 +1955,7 @@ class Sniffer:
     def _classify_udp_banner(self, packet: dict, payload: bytes) -> str:
         src_port = safe_int(packet.get("src_port"), 0)
         dst_port = safe_int(packet.get("dst_port"), 0)
-        text = bytes_to_text_preview(payload)
+        text = bytes_to_text_preview(payload, limit=PAYLOAD_TEXT_MAX_CHARS)
         if src_port == 53 or dst_port == 53:
             return "DNS message"
         if src_port == 67 or dst_port == 67 or src_port == 68 or dst_port == 68:

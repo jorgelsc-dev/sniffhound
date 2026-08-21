@@ -59,6 +59,19 @@ CAPTURE_SNAPLEN = max(64, _as_int(_env("SNIFFHOUND_SNAPLEN", "65535"), 65535))
 CAPTURE_POLL_TIMEOUT = max(0.05, _as_float(_env("SNIFFHOUND_POLL_TIMEOUT", "0.5"), 0.5))
 CAPTURE_BUFFER_BYTES = max(65536, _as_int(_env("SNIFFHOUND_CAPTURE_BUFFER_BYTES", "524288"), 524288))
 
+# Ceiling for the decoded payload_text/summary/banner_text stored per packet
+# (sniffer.py's _interpret_payload/_classify_*_banner and store.py's
+# register_packet both apply this, so a packet's stored preview can't be
+# silently re-truncated by a smaller limit further down the pipeline). Raised
+# from the old 240/400-char UI-preview limits, which were cutting off
+# real single-frame captures (e.g. a full set of HTTP response headers) well
+# before anything useful was visible. A standard Ethernet frame's payload
+# tops out around 1460 bytes, so 4096 comfortably covers any realistic
+# single non-jumbo frame in full while still bounding the per-packet text
+# blob every monitor's regex/contains check runs against on the live
+# capture thread (rulesets.build_packet_text joins this in on every packet).
+PAYLOAD_TEXT_MAX_CHARS = max(240, _as_int(_env("SNIFFHOUND_PAYLOAD_TEXT_MAX_CHARS", "4096"), 4096))
+
 WIFI_INTERFACE = str(_env("SNIFFHOUND_WIFI_INTERFACE", "")).strip()
 ICMP_FLOOD_WINDOW_SECONDS = max(1, _as_int(_env("SNIFFHOUND_ICMP_FLOOD_WINDOW_SECONDS", "5"), 5))
 ICMP_FLOOD_THRESHOLD = max(1, _as_int(_env("SNIFFHOUND_ICMP_FLOOD_THRESHOLD", "30"), 30))
@@ -75,6 +88,15 @@ BRUTE_FORCE_THRESHOLD = max(1, _as_int(_env("SNIFFHOUND_BRUTE_FORCE_THRESHOLD", 
 DNS_QUERY_FLOOD_WINDOW_SECONDS = max(1, _as_int(_env("SNIFFHOUND_DNS_QUERY_FLOOD_WINDOW_SECONDS", "10"), 10))
 DNS_QUERY_FLOOD_THRESHOLD = max(1, _as_int(_env("SNIFFHOUND_DNS_QUERY_FLOOD_THRESHOLD", "60"), 60))
 DHCP_ROGUE_SERVER_COOLDOWN_SECONDS = max(1, _as_int(_env("SNIFFHOUND_DHCP_ROGUE_SERVER_COOLDOWN_SECONDS", "60"), 60))
+
+# Per-signature rate limit for rule/regex-mode monitors at medium severity
+# and up (Suricata's `threshold`/`detection_filter` equivalent) - the same
+# (monitor, source) pair won't re-alert more than once per this window, no
+# matter how many matching packets arrive in between. Deliberately excludes
+# "info"/"low" monitors (DNS/HTTP/TLS-SNI/discovery/protocol-seen/...),
+# which must keep firing on every match since Domains/Paths/Radar and
+# similar catalogs depend on that. See monitors.RuleAlertThrottle.
+MONITOR_ALERT_COOLDOWN_SECONDS = max(1, _as_int(_env("SNIFFHOUND_MONITOR_ALERT_COOLDOWN_SECONDS", "45"), 45))
 
 DEFAULT_RULESET_FILE = str(_env("SNIFFHOUND_RULESET_FILE", "default_rulesets.json")).strip()
 MONITOR_FILTER_DEFAULT = _as_bool(_env("SNIFFHOUND_MONITOR_FILTER_DEFAULT", "1"), default=True)

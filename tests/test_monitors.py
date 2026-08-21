@@ -467,8 +467,12 @@ class TestSnifferGatedPersistence(unittest.TestCase):
         self.assertEqual(self.store.list_packets_by_monitor("builtin-credentials"), [])
 
     def test_monitor_match_counts_only_includes_matched_monitors(self):
+        # Different src_ip on each packet - RuleAlertThrottle (see
+        # monitors.py) rate-limits repeat medium+ severity hits from the
+        # *same* source, so two hits from the same source within the
+        # cooldown window would otherwise only count once here.
         self.sniffer._store_packet(self._base_packet(dst_port=3389))
-        self.sniffer._store_packet(self._base_packet(dst_port=3389, dst_ip="10.0.0.50"))
+        self.sniffer._store_packet(self._base_packet(dst_port=3389, src_ip="10.0.0.6", dst_ip="10.0.0.50"))
         counts = self.store.monitor_match_counts()
         self.assertEqual(counts.get("builtin-admin-ports"), 2)
         self.assertNotIn("builtin-credentials", counts)

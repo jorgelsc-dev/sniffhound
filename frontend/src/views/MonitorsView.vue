@@ -27,7 +27,17 @@
       {{ error }}
     </v-alert>
 
-    <div class="d-flex justify-end mt-6 mb-3">
+    <div class="d-flex justify-end mt-6 mb-3 ga-2">
+      <v-btn
+        size="small"
+        variant="text"
+        color="error"
+        prepend-icon="mdi-delete-sweep-outline"
+        :disabled="!monitorsWithTraffic.length"
+        @click="clearDialog = true"
+      >
+        Clear alerts
+      </v-btn>
       <v-btn
         size="small"
         variant="text"
@@ -38,6 +48,24 @@
         Manage monitors &amp; persistence filter
       </v-btn>
     </div>
+
+    <v-dialog v-model="clearDialog" max-width="420">
+      <v-card class="pa-4">
+        <div class="text-h6 mb-3">Clear alerts?</div>
+        <div class="text-caption text-medium-emphasis mb-3">
+          Deletes every stored packet/tag matched by a monitor (sniffer-side traffic only - honeypot
+          hits are cleared separately from the Honeypot view). Monitor definitions and their
+          enabled/disabled state are untouched. This can't be undone.
+        </div>
+        <v-alert v-if="clearError" type="error" variant="tonal" density="comfortable" class="mb-3">
+          {{ clearError }}
+        </v-alert>
+        <div class="d-flex justify-end ga-2">
+          <v-btn variant="text" @click="clearDialog = false">Cancel</v-btn>
+          <v-btn color="error" variant="flat" :loading="clearing" @click="confirmClear">Clear alerts</v-btn>
+        </div>
+      </v-card>
+    </v-dialog>
 
     <div class="d-flex align-center justify-space-between flex-wrap ga-2 mt-2 mb-3">
       <div>
@@ -137,6 +165,9 @@ export default {
       wsRefreshTimer: null,
       stopTableRefreshSubscription: null,
       expandedMonitorPanel: null,
+      clearDialog: false,
+      clearing: false,
+      clearError: "",
     };
   },
   computed: {
@@ -250,6 +281,23 @@ export default {
           el.scrollIntoView({ behavior: "smooth", block: "center" });
         }
       });
+    },
+    confirmClear() {
+      this.clearing = true;
+      this.clearError = "";
+      this.store
+        .clearDetections("monitors")
+        .then(() => {
+          this.clearDialog = false;
+          this.expandedMonitorPanel = null;
+          return this.load();
+        })
+        .catch((err) => {
+          this.clearError = (err && err.message) || "Failed to clear alerts";
+        })
+        .finally(() => {
+          this.clearing = false;
+        });
     },
     load(options = {}) {
       if (!options.silent) this.loading = true;

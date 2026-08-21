@@ -3,9 +3,11 @@ from __future__ import annotations
 import functools
 import re
 import threading
+import time
 from pathlib import Path
 import json
 
+from . import settings
 from .ahocorasick import AhoCorasick
 from .runtime_paths import resolve_data_file
 from .rulesets import build_packet_text, normalize_action, normalize_match, rule_matches_packet
@@ -713,12 +715,24 @@ DEFAULT_MONITORS = [
     {
         "id": "builtin-domain-typosquat-pattern",
         "name": "Typosquat-shaped domain",
-        "description": "Multi-hyphen domain name shape commonly used in typosquatting/phishing campaigns (e.g. brand-login-secure.com).",
+        "description": "Multi-hyphen domain name carrying a login/verify/account-style keyword, commonly used in typosquatting/phishing campaigns (e.g. brand-login-secure.com).",
         "enabled": True,
         "priority": 221,
         "source": "builtin",
         "mode": "regex",
-        "match": {"payload_regex": [r"\b[a-z0-9]+-[a-z0-9]+-[a-z0-9]+\.(com|net|info|biz|org)\b"]},
+        # Any bare "word-word-word.tld" shape is also just how ordinary
+        # cloud/CDN infrastructure names itself (AWS/Azure/Akamai regional
+        # and service hostnames are almost always multi-hyphen), so matching
+        # that shape alone flagged huge amounts of legitimate traffic. A
+        # phishing-shaped domain specifically sandwiches an
+        # account-action/brand-trust keyword between two other segments;
+        # requiring that keyword is what actually carries the signal.
+        "match": {
+            "payload_regex": [
+                r"\b[a-z0-9]+-(login|signin|secure|verify|verification|account|update|confirm|support"
+                r"|billing|wallet|password|security|banking|invoice|refund)-[a-z0-9]+\.(com|net|info|biz|org)\b"
+            ]
+        },
         "action": {"tag": "domain-typosquat-pattern", "label": "Typosquat-shaped domain", "severity": "low"},
     },
     # --- Web attacks (Suricata WEB-ATTACKS/EXPLOIT-inspired signatures) ---
@@ -835,12 +849,18 @@ DEFAULT_MONITORS = [
     {
         "id": "builtin-crlf-injection",
         "name": "CRLF / HTTP response-splitting attempt",
-        "description": "Encoded or literal CRLF sequence injected into a request, used for HTTP response splitting or header/cookie injection.",
+        "description": "URL-encoded CRLF sequence injected into a request line/parameter, used for HTTP response splitting or header/cookie injection.",
         "enabled": True,
         "priority": 243,
         "source": "builtin",
         "mode": "regex",
-        "match": {"payload_regex": [r"%0d%0a(set-cookie|location):|\r\nset-cookie:"]},
+        # A literal, unencoded "\r\nset-cookie:" is just what every ordinary
+        # HTTP response that sets a session cookie looks like on the wire -
+        # matching it here made this rule fire on nearly all normal web
+        # traffic. The actual injection signature is the *encoded* CRLF
+        # (%0d%0a) landing inside a request, which only happens when an
+        # attacker smuggles it through a URL/parameter.
+        "match": {"payload_regex": [r"%0d%0a(set-cookie|location):"]},
         "action": {"tag": "crlf-injection", "label": "CRLF injection attempt", "severity": "medium"},
     },
     {
@@ -1356,6 +1376,53 @@ def _indexed_candidates(monitors: list[dict], packet_text: str) -> list[dict] | 
         if monitor is not None:
             candidates.append(monitor)
     return candidates
+
+
+class RuleAlertThrottle:
+    """Per-process rate limiter for rule/regex-mode monitor hits - the
+    declarative-match equivalent of Suricata's per-signature `threshold`/
+    `detection_filter` keywords. Without it, any monitor whose match
+    criteria stay true for many packets in the same burst (a scan, a page
+    load pulling in dozens of resources, a chatty flow) re-fires on every
+    single matching packet, which is exactly what made the imported ET Open
+    catalog (scripts/import_et_open_monitors.py) so noisy in practice: a
+    generic-enough signature can match hundreds of times in one capture
+    window with no throttling at all.
+
+    Deliberately scoped to severities "medium" and up: "info"/"low"
+    monitors (DNS/HTTP/TLS-SNI/L2 discovery/protocol-seen/WiFi visibility/
+    ...) are visibility feeds, not alerts - Domains/Paths/Radar and similar
+    catalogs depend on those firing on every single match, not just the
+    first one in a window. Keyed by (monitor, source address) so a genuine
+    attack from one host doesn't suppress the same monitor firing for a
+    different host. State is in-memory only, not persisted across restarts
+    - acceptable for this scope, same tradeoff as anomaly.py's detectors.
+    """
+
+    THROTTLED_SEVERITIES = frozenset({"medium", "high", "critical"})
+
+    def __init__(self, window_seconds: int | None = None):
+        self._window_seconds = window_seconds or settings.MONITOR_ALERT_COOLDOWN_SECONDS
+        self._last_emit: dict[tuple[str, str], float] = {}
+
+    def filter(self, hits: list[dict], source: str = "") -> list[dict]:
+        if not hits:
+            return hits
+        now = time.monotonic()
+        source_key = str(source or "").strip()
+        allowed = []
+        for hit in hits:
+            severity = str(hit.get("severity") or "info").strip().lower()
+            if severity not in self.THROTTLED_SEVERITIES:
+                allowed.append(hit)
+                continue
+            key = (str(hit.get("monitor_id") or hit.get("tag") or ""), source_key)
+            last = self._last_emit.get(key)
+            if last is not None and now - last < self._window_seconds:
+                continue
+            self._last_emit[key] = now
+            allowed.append(hit)
+        return allowed
 
 
 def evaluate_packet(packet: dict, monitors: list[dict]) -> list[dict]:

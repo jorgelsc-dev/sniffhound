@@ -231,8 +231,52 @@ _GENERIC_CONTENT_BLOCKLIST = frozenset(
         "content-disposition", "set-cookie", "x-forwarded-for",
         "<html", "</html>", "<head>", "</head>", "<body", "</body>",
         "<!doctype",
+        # X.509 Subject/Issuer DN field fragments - present in essentially
+        # every real TLS certificate, not just a threat-intel-listed one
+        # (e.g. an SSL-blacklist rule pinned to one malicious cert's Subject
+        # collapses to `ST=` once every other AND'd content is dropped).
+        'st="', 'cn="', 'o="', 'ou="', 'c="', 'l="',
+        # Bare brand/platform words that show up constantly in completely
+        # unrelated, legitimate traffic once stripped of the surrounding
+        # AND'd conditions (protocol, direction, sticky buffer) that made
+        # the original rule specific.
+        "google", "mozilla", "windows", "microsoft", "android", "iphone",
+        "chrome", "firefox", "safari", "yahoo", "login", "admin",
+        "password", "username", "download", "update",
     )
 )
+
+# A single bare dictionary-shaped word (letters only, no digits/punctuation)
+# reads as a plausible "distinctive IOC" in isolation but is exactly the
+# shape of the words that turned out to be the worst false-positive
+# generators in practice (see _GENERIC_CONTENT_BLOCKLIST above) - rather
+# than trying to enumerate every one, treat any sufficiently short bare word
+# as inherently too generic to adapt regardless of what the original rule
+# paired it with.
+_BARE_WORD_RE = re.compile(r"^[A-Za-z]+$")
+_MAX_GENERIC_BARE_WORD_LENGTH = 10
+_MIN_CONTENT_LENGTH = 8
+
+
+def content_is_specific_enough(text: str) -> bool:
+    """Shared specificity gate for a single extracted `content` literal -
+    used both at import time (_best_content, below) and by
+    scripts/curate_default_monitors.py to retroactively re-check content
+    literals that were already converted and written to
+    sniffhound/data/default_monitors.json in an earlier, laxer run."""
+    text = text.strip()
+    # Raised from 6: `!"ST="` (5 chars) and `GOOGLE` (6 chars) - two of the
+    # top false-positive generators found in production traffic - both
+    # cleared the old bar. A short literal is disproportionately likely to
+    # also appear in unrelated, legitimate payloads once it's matched with
+    # no surrounding AND'd conditions or byte offsets.
+    if len(text) < _MIN_CONTENT_LENGTH:
+        return False
+    if _BARE_WORD_RE.fullmatch(text) and len(text) <= _MAX_GENERIC_BARE_WORD_LENGTH:
+        return False
+    if text.lower() in _GENERIC_CONTENT_BLOCKLIST:
+        return False
+    return True
 
 
 def _best_content(pairs: list[tuple[str, str]]) -> str | None:
@@ -244,21 +288,21 @@ def _best_content(pairs: list[tuple[str, str]]) -> str | None:
         if decoded is None:
             continue
         text = decoded.strip()
-        if len(text) < 6:
+        if not content_is_specific_enough(text):
             continue
         candidates.append(text)
     if not candidates:
         return None
     # Longest wins - a longer literal is almost always the more specific,
     # less generic one (a URI path or parameter name vs. a bare SQL/HTML
-    # keyword also present in the same rule's other `content` keywords) -
-    # except for a short list of protocol/markup boilerplate that's
-    # excluded from consideration entirely (see _GENERIC_CONTENT_BLOCKLIST)
-    # so it can never out-rank a rule's actual, shorter IOC just by being
-    # verbose. If every candidate is blocklisted, fall back to the longest
-    # one anyway rather than discarding an otherwise-convertible rule.
-    non_generic = [text for text in candidates if text.strip().lower() not in _GENERIC_CONTENT_BLOCKLIST]
-    return max(non_generic or candidates, key=len)
+    # keyword also present in the same rule's other `content` keywords).
+    # Protocol/markup boilerplate and other generic literals never make it
+    # into `candidates` to begin with (content_is_specific_enough already
+    # excluded them above), so this comparison is only ever between
+    # genuinely distinctive candidates - if a rule's only `content`
+    # keywords were all generic, it's correctly rejected entirely (returns
+    # None) rather than adapted from whatever was left.
+    return max(candidates, key=len)
 
 
 _REGEX_NOISE_RE = re.compile(r"\\[dDwWsSbBAZ]|\[[^\]]*\]|\{[0-9,]*\}|[\^\$\.\*\+\?\|\(\)]")
@@ -267,6 +311,26 @@ _LARGE_QUANTIFIER_RE = re.compile(r"\{(\d+),?\d*\}")
 _LOOKAROUND_RE = re.compile(r"\(\?<?[!=]")
 _MIN_REGEX_SIGNAL_CHARS = 6
 _MIN_LARGE_QUANTIFIER = 20
+# A character class matching more than this many of the 256 possible byte
+# values no longer functions as a narrow alphabet check, regardless of its
+# syntax being technically "a finite class, not a negation". The base64
+# alphabet ([A-Za-z0-9+/], the case this large-quantifier allowance exists
+# for) spans 64 values; give some headroom above that and still reject
+# anything materially wider (e.g. `[\x00-\x7f]`, all 128 ASCII bytes, which
+# is "any byte" in practice for any real-world text/binary payload).
+_MAX_NARROW_CLASS_SPAN = 72
+
+
+def _char_class_span(class_text: str) -> int:
+    """How many of the 256 possible single-byte values a bracket expression
+    like `[\\x00-\\x7f]` actually matches. Uses the real regex engine rather
+    than hand-parsing ranges/escapes so every valid class syntax (hex
+    escapes, multiple ranges, literal `-`/`]`, ...) is handled correctly."""
+    try:
+        compiled = re.compile(class_text)
+    except re.error:
+        return 256
+    return sum(1 for code in range(256) if compiled.fullmatch(chr(code)))
 
 
 def _has_narrow_large_quantifier(pattern: str) -> bool:
@@ -274,8 +338,11 @@ def _has_narrow_large_quantifier(pattern: str) -> bool:
     only actually specific when what's being repeated is a narrow set of
     characters - `[a-zA-Z0-9+/]{1000,}` (base64 alphabet) is a real
     signature, but `[^\\r\\n]{50,}` (literally "50+ characters that aren't
-    a newline") or `.{50,}` matches nearly any non-trivial payload and
-    should never be treated as specific just because the count is large."""
+    a newline"), `.{50,}`, or `[\\x00-\\x7f]{20}` ("20 bytes of anything
+    printable-ish", the exact pattern that turned an ASP webshell rule into
+    a match for ordinary ASP/JSP-shaped text in production) all match
+    nearly any non-trivial payload and should never be treated as specific
+    just because the count is large or the class is technically finite."""
     for match in _LARGE_QUANTIFIER_RE.finditer(pattern):
         if int(match.group(1)) < _MIN_LARGE_QUANTIFIER:
             continue
@@ -296,8 +363,12 @@ def _has_narrow_large_quantifier(pattern: str) -> bool:
                     if depth == 0:
                         break
                 i -= 1
-            if i >= 0 and pattern[i : start].startswith("[^"):
-                continue  # negated character class - broad, not specific
+            if i >= 0:
+                class_text = pattern[i:start]
+                if class_text.startswith("[^"):
+                    continue  # negated character class - broad, not specific
+                if _char_class_span(class_text) > _MAX_NARROW_CLASS_SPAN:
+                    continue  # technically finite, but too wide to be a real narrow alphabet
             return True
         return True
     return False

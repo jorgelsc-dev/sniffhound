@@ -12,7 +12,7 @@ from pathlib import Path
 from .runtime_paths import ensure_data_dir, resolve_data_file
 from .monitors import describe_match, load_builtin_monitors, normalize_monitor
 from .rulesets import load_builtin_rulesets, normalize_ruleset
-from .settings import MONITOR_FILTER_DEFAULT
+from .settings import MONITOR_FILTER_DEFAULT, PAYLOAD_TEXT_MAX_CHARS
 from .utils import (
     bytes_to_hex_preview,
     bytes_to_text_preview,
@@ -688,8 +688,9 @@ class SniffStore:
         return self.get_honeypot_listener(listener_id)
 
     def _seed_new_builtin_monitors(self):
-        """Additive + pruning migration, run on every startup (not just
-        against a brand new DB - see the `count == 0` seeding above):
+        """Additive + pruning + definition-sync migration, run on every
+        startup (not just against a brand new DB - see the `count == 0`
+        seeding above):
 
         - Insert any catalog id that isn't already in the table, by id,
           without touching any existing row - so monitors added in a later
@@ -703,40 +704,78 @@ class SniffStore:
           matching live traffic forever, since a plain additive migration
           only ever adds. Already-stored packets/tags that reference a
           pruned id are untouched (they're the historical record of what
-          it once flagged); only the live definition goes away. Never
-          touches a `source = 'custom'` row - a user's own monitor is never
-          in the generated catalog to begin with, so it can't collide, but
-          the DELETE below is still scoped to `source = 'builtin'` as a
-          second guard.
+          it once flagged); only the live definition goes away.
+        - Sync name/description/priority/mode/match_json/action_json for
+          any *builtin* row whose catalog definition changed since it was
+          seeded (e.g. a false-positive-prone regex/content literal
+          tightened, a severity re-classified - see
+          scripts/curate_default_monitors.py). Deliberately leaves
+          `enabled` untouched: that's the one field a user can have
+          manually flipped (via /api/monitors/toggle) on a builtin
+          monitor, and a catalog update must never silently re-enable or
+          re-disable a row the user already made a call on. Only a fix
+          that ships as a *removed* id (handled by the pruning step above)
+          can retroactively force a monitor off.
+
+        Never touches a `source = 'custom'` row for either the delete or
+        the sync - a user's own monitor is never in the generated catalog
+        to begin with, so it can't collide, but both are still scoped to
+        `source = 'builtin'` as a second guard.
         """
-        cursor = self._conn.execute("SELECT id, source FROM monitors")
-        existing_rows = {str(row["id"]): str(row["source"] or "") for row in cursor.fetchall()}
+        cursor = self._conn.execute(
+            "SELECT id, source, name, description, priority, mode, match_json, action_json FROM monitors"
+        )
+        existing_rows = {str(row["id"]): dict(row) for row in cursor.fetchall()}
 
         catalog = load_builtin_monitors()
         catalog_ids = {str(monitor.get("id") or "").strip() for monitor in catalog if monitor.get("id")}
 
         now = utc_now()
-        rows = []
+        insert_rows = []
+        update_rows = []
         for monitor in catalog:
             monitor_id = str(monitor.get("id") or "").strip()
-            if not monitor_id or monitor_id in existing_rows:
+            if not monitor_id:
                 continue
-            rows.append(
-                (
-                    monitor_id,
-                    str(monitor.get("name") or monitor_id),
-                    str(monitor.get("description") or ""),
-                    1 if monitor.get("enabled", True) else 0,
-                    safe_int(monitor.get("priority", 100), 100),
-                    str(monitor.get("source") or "builtin"),
-                    str(monitor.get("mode") or "rule"),
-                    json_dumps(monitor.get("match") or {}),
-                    json_dumps(monitor.get("action") or {}),
-                    now,
-                    now,
+            name = str(monitor.get("name") or monitor_id)
+            description = str(monitor.get("description") or "")
+            priority = safe_int(monitor.get("priority", 100), 100)
+            mode = str(monitor.get("mode") or "rule")
+            match_json = json_dumps(monitor.get("match") or {})
+            action_json = json_dumps(monitor.get("action") or {})
+
+            existing = existing_rows.get(monitor_id)
+            if existing is None:
+                insert_rows.append(
+                    (
+                        monitor_id,
+                        name,
+                        description,
+                        1 if monitor.get("enabled", True) else 0,
+                        priority,
+                        str(monitor.get("source") or "builtin"),
+                        mode,
+                        match_json,
+                        action_json,
+                        now,
+                        now,
+                    )
                 )
-            )
-        if rows:
+                continue
+            if existing.get("source") != "builtin":
+                continue
+            if (
+                existing.get("name") == name
+                and existing.get("description") == description
+                and safe_int(existing.get("priority"), 100) == priority
+                and existing.get("mode") == mode
+                and existing.get("match_json") == match_json
+                and existing.get("action_json") == action_json
+            ):
+                continue
+            update_rows.append((name, description, priority, mode, match_json, action_json, now, monitor_id))
+
+        if insert_rows:
             # executemany() over one prepared statement instead of one
             # execute() call per row - with thousands of builtin monitors
             # (see scripts/import_et_open_monitors.py) this migration runs
@@ -748,13 +787,22 @@ class SniffStore:
                 (id, name, description, enabled, priority, source, mode, match_json, action_json, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                rows,
+                insert_rows,
+            )
+        if update_rows:
+            self._conn.executemany(
+                """
+                UPDATE monitors
+                SET name = ?, description = ?, priority = ?, mode = ?, match_json = ?, action_json = ?, updated_at = ?
+                WHERE id = ? AND source = 'builtin'
+                """,
+                update_rows,
             )
 
         stale_builtin_ids = [
             monitor_id
-            for monitor_id, source in existing_rows.items()
-            if source == "builtin" and monitor_id not in catalog_ids
+            for monitor_id, row in existing_rows.items()
+            if row.get("source") == "builtin" and monitor_id not in catalog_ids
         ]
         if stale_builtin_ids:
             placeholders = ",".join("?" for _ in stale_builtin_ids)
@@ -763,7 +811,7 @@ class SniffStore:
                 stale_builtin_ids,
             )
 
-        if rows or stale_builtin_ids:
+        if insert_rows or update_rows or stale_builtin_ids:
             self._conn.commit()
 
     def _seed_file_catalogs(self):
@@ -2641,9 +2689,9 @@ class SniffStore:
         now = utc_now()
         rule_hits = packet.get("rule_hits") if isinstance(packet.get("rule_hits"), list) else []
         tags = packet.get("tags") if isinstance(packet.get("tags"), list) else []
-        payload_text = normalize_text(packet.get("payload_text") or "", limit=400)
-        summary_text = normalize_text(packet.get("summary") or "", limit=400)
-        banner_text = normalize_text(packet.get("banner_text") or payload_text, limit=400)
+        payload_text = normalize_text(packet.get("payload_text") or "", limit=PAYLOAD_TEXT_MAX_CHARS)
+        summary_text = normalize_text(packet.get("summary") or "", limit=PAYLOAD_TEXT_MAX_CHARS)
+        banner_text = normalize_text(packet.get("banner_text") or payload_text, limit=PAYLOAD_TEXT_MAX_CHARS)
         payload_hex = str(packet.get("payload_hex") or "")
         length = safe_int(packet.get("length", 0), 0)
         payload_len = safe_int(packet.get("payload_len", 0), 0)
@@ -2856,6 +2904,50 @@ class SniffStore:
                 (overflow,),
             )
             self._conn.commit()
+
+    def clear_detections(self, scope: str = "all") -> dict:
+        """Deletes stored packets/tags/payloads - the underlying data behind
+        the Monitors and Honeypot "hits" tables - so an operator can clear
+        out noise (e.g. right after tuning/disabling noisy monitors) without
+        touching the monitor/listener *definitions* themselves, which live
+        in a separate table this never runs a DELETE against.
+
+        Scoped by `packets.interface`: honeypot traffic is always recorded
+        under an interface starting with "honeypot" (see honeypot.py's
+        `interface=f"honeypot:{port}"`), everything else is sniffer-side
+        traffic. 'all' clears both. Never touches `sessions`, `flows`,
+        `domains`, or `paths` - those are running counters/catalogs, not
+        per-packet detection history, and clearing them out from under an
+        active capture session would desync its own live counters.
+        """
+        scope = str(scope or "all").strip().lower()
+        if scope not in {"all", "honeypot", "sniffer"}:
+            raise ValueError(f"Unknown scope: {scope!r} (expected 'all', 'honeypot', or 'sniffer')")
+
+        if scope == "all":
+            packet_filter = ""
+            params: tuple = ()
+        else:
+            op = "LIKE" if scope == "honeypot" else "NOT LIKE"
+            packet_filter = f"WHERE interface {op} ?"
+            params = ("honeypot%",)
+
+        with self._lock:
+            tags_deleted = self._conn.execute(
+                f"DELETE FROM tags WHERE packet_id IN (SELECT id FROM packets {packet_filter})", params
+            ).rowcount
+            payloads_deleted = self._conn.execute(
+                f"DELETE FROM payloads WHERE packet_id IN (SELECT id FROM packets {packet_filter})", params
+            ).rowcount
+            packets_deleted = self._conn.execute(f"DELETE FROM packets {packet_filter}", params).rowcount
+            self._conn.commit()
+
+        return {
+            "scope": scope,
+            "packets": max(0, packets_deleted),
+            "tags": max(0, tags_deleted),
+            "payloads": max(0, payloads_deleted),
+        }
 
     def read_catalog_file(self, filename: str) -> list[dict]:
         path = resolve_data_file(filename)

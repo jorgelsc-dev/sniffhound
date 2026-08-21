@@ -302,6 +302,13 @@ function listIpCatalog(options) {
   return fetchJsonPromise(`/api/intel/ips/${buildIntelQuery(options)}`);
 }
 
+function clearDetections(scope) {
+  return fetchJsonPromise("/api/data/clear/", {
+    method: "POST",
+    body: JSON.stringify({ scope: String(scope || "all").trim().toLowerCase() }),
+  });
+}
+
 function listMonitorPackets(monitorId, options) {
   const params = new URLSearchParams();
   params.set("monitor_id", monitorId);
@@ -1134,6 +1141,7 @@ export default {
   listPaths,
   listIpCatalog,
   listMonitorPackets,
+  clearDetections,
   reconnectRealtime,
   destroyRealtime,
   subscribeTableRefresh,

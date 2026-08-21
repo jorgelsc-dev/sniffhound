@@ -424,6 +424,7 @@ ENDPOINTS = [
     {"method": "GET", "path": "/api/paths/", "desc": "Searchable catalog of HTTP request paths."},
     {"method": "GET", "path": "/api/intel/ips/", "desc": "Searchable catalog of IPs seen in stored traffic."},
     {"method": "GET", "path": "/api/monitors/packets/", "desc": "Packets that matched a given monitor."},
+    {"method": "POST", "path": "/api/data/clear/", "desc": "Clear stored detection history (packets/tags/payloads, plus honeypot event detail) for a scope: 'monitors', 'honeypot', or 'all'. Never deletes monitor/listener definitions."},
 ]
 
 _STATIC_ROUTES_REGISTERED = False
@@ -1777,6 +1778,27 @@ def monitor_matched_packets(request):
     limit = _normalize_limit(request.query.get("limit"), default=200)
     offset = _normalize_offset(request.query.get("offset"))
     return store.list_packets_by_monitor(monitor_id, search=search, limit=limit, offset=offset)
+
+
+@app.api("/api/data/clear/", methods=("POST",))
+def clear_detections_api(request):
+    payload = _read_json_body(request)
+    scope = str(payload.get("scope") or "all").strip().lower()
+    # The frontend's Monitors view calls this "monitors" (it only ever
+    # shows sniffer-side traffic - honeypot hits live in their own view);
+    # SniffStore.clear_detections uses "sniffer" for that same half.
+    store_scope = "sniffer" if scope == "monitors" else scope
+    if store_scope not in {"all", "honeypot", "sniffer"}:
+        raise ValueError("scope must be 'monitors', 'honeypot', or 'all'")
+    result = store.clear_detections(store_scope)
+    if store_scope in ("all", "honeypot"):
+        # Lazy import - sniffhound.honeypot must never load as a side effect
+        # of importing sniffhound.app/sniffhound.store (see
+        # honeypot_ports.py's own note on this), only when actually needed.
+        from .honeypot import clear_honeypot_events
+
+        result["honeypot_events"] = clear_honeypot_events()
+    return result
 
 
 def _apply_api_auth_guards():
