@@ -13,8 +13,8 @@
         Capture
       </v-tab>
       <v-tab value="honeypot">
-        <v-icon icon="mdi-shield-bug" start />
-        Honeypot Listeners
+        <v-icon icon="mdi-server-security" start />
+        Service Listeners
       </v-tab>
       <v-tab value="detection">
         <v-icon icon="mdi-target-account" start />
@@ -616,7 +616,7 @@ export default {
       wifiError: "",
       wifiSelectedInterface: "",
 
-      // Honeypot listeners
+      // Service listeners
       listeners: [],
       listenersError: "",
       listenerTogglePending: "",
@@ -776,7 +776,7 @@ export default {
           this.wifiSubmitting = false;
         });
     },
-    // Honeypot listeners
+    // Service listeners
     filterListenerRows(value, query, item) {
       const needle = String(query || "").trim().toLowerCase();
       if (!needle) return true;

@@ -696,11 +696,11 @@ class SniffStore:
           without touching any existing row - so monitors added in a later
           release reach already-populated databases too.
         - Remove any *builtin* row whose id is no longer in the current
-          catalog. scripts/import_et_open_monitors.py's output can and does
-          change between runs as its quality filters improve (a pattern
+          catalog. The bundled catalog can and does change between
+          releases as quality filters improve (a pattern
           that turned out to be a false-positive magnet, or too broad to
           be a meaningful signature at all) - without this, a row seeded by
-          an earlier, buggier generator run would sit in the table and keep
+          an earlier, broader catalog would sit in the table and keep
           matching live traffic forever, since a plain additive migration
           only ever adds. Already-stored packets/tags that reference a
           pruned id are untouched (they're the historical record of what
@@ -708,8 +708,8 @@ class SniffStore:
         - Sync name/description/priority/mode/match_json/action_json for
           any *builtin* row whose catalog definition changed since it was
           seeded (e.g. a false-positive-prone regex/content literal
-          tightened, a severity re-classified - see
-          scripts/curate_default_monitors.py). Deliberately leaves
+          tightened, or a severity re-classified by the native catalog
+          builder). Deliberately leaves
           `enabled` untouched: that's the one field a user can have
           manually flipped (via /api/monitors/toggle) on a builtin
           monitor, and a catalog update must never silently re-enable or
@@ -718,7 +718,7 @@ class SniffStore:
           can retroactively force a monitor off.
 
         Never touches a `source = 'custom'` row for either the delete or
-        the sync - a user's own monitor is never in the generated catalog
+        the sync - a user's own monitor is never in the bundled catalog
         to begin with, so it can't collide, but both are still scoped to
         `source = 'builtin'` as a second guard.
         """
@@ -778,8 +778,7 @@ class SniffStore:
         if insert_rows:
             # executemany() over one prepared statement instead of one
             # execute() call per row - with thousands of builtin monitors
-            # (see scripts/import_et_open_monitors.py) this migration runs
-            # on every single startup (not just the first), so the
+            # this migration runs on every single startup (not just the first), so the
             # per-statement overhead of a Python-level loop adds up fast.
             self._conn.executemany(
                 """
@@ -1115,9 +1114,19 @@ class SniffStore:
                 params.append(interface_value)
         mode_value = str(mode or "").strip().lower()
         if mode_value == "honeypot":
-            clauses.append("(LOWER(interface) = 'honeypot' OR LOWER(interface) LIKE 'honeypot:%')")
+            clauses.append(
+                "("
+                "LOWER(interface) = 'honeypot' OR LOWER(interface) LIKE 'honeypot:%' OR "
+                "LOWER(interface) = 'service' OR LOWER(interface) LIKE 'service:%'"
+                ")"
+            )
         elif mode_value == "sniffer":
-            clauses.append("(LOWER(interface) != 'honeypot' AND LOWER(interface) NOT LIKE 'honeypot:%')")
+            clauses.append(
+                "("
+                "LOWER(interface) != 'honeypot' AND LOWER(interface) NOT LIKE 'honeypot:%' AND "
+                "LOWER(interface) != 'service' AND LOWER(interface) NOT LIKE 'service:%'"
+                ")"
+            )
         if search:
             needle = f"%{str(search).strip().lower()}%"
             clauses.append(
@@ -1208,9 +1217,19 @@ class SniffStore:
                 params.append(interface_value)
         mode_value = str(mode or "").strip().lower()
         if mode_value == "honeypot":
-            clauses.append("(LOWER(COALESCE(p.interface, '')) = 'honeypot' OR LOWER(COALESCE(p.interface, '')) LIKE 'honeypot:%')")
+            clauses.append(
+                "("
+                "LOWER(COALESCE(p.interface, '')) = 'honeypot' OR LOWER(COALESCE(p.interface, '')) LIKE 'honeypot:%' OR "
+                "LOWER(COALESCE(p.interface, '')) = 'service' OR LOWER(COALESCE(p.interface, '')) LIKE 'service:%'"
+                ")"
+            )
         elif mode_value == "sniffer":
-            clauses.append("(LOWER(COALESCE(p.interface, '')) != 'honeypot' AND LOWER(COALESCE(p.interface, '')) NOT LIKE 'honeypot:%')")
+            clauses.append(
+                "("
+                "LOWER(COALESCE(p.interface, '')) != 'honeypot' AND LOWER(COALESCE(p.interface, '')) NOT LIKE 'honeypot:%' AND "
+                "LOWER(COALESCE(p.interface, '')) != 'service' AND LOWER(COALESCE(p.interface, '')) NOT LIKE 'service:%'"
+                ")"
+            )
         if search:
             needle = f"%{str(search).strip().lower()}%"
             clauses.append(
@@ -2907,15 +2926,15 @@ class SniffStore:
 
     def clear_detections(self, scope: str = "all") -> dict:
         """Deletes stored packets/tags/payloads - the underlying data behind
-        the Monitors and Honeypot "hits" tables - so an operator can clear
+        the Monitors and inbound-service "hits" tables - so an operator can clear
         out noise (e.g. right after tuning/disabling noisy monitors) without
         touching the monitor/listener *definitions* themselves, which live
         in a separate table this never runs a DELETE against.
 
-        Scoped by `packets.interface`: honeypot traffic is always recorded
-        under an interface starting with "honeypot" (see honeypot.py's
-        `interface=f"honeypot:{port}"`), everything else is sniffer-side
-        traffic. 'all' clears both. Never touches `sessions`, `flows`,
+        Scoped by `packets.interface`: listener traffic is recorded under
+        the current "service:" prefix, while older rows may still use the
+        legacy "honeypot:" prefix. Everything else is sniffer-side traffic.
+        'all' clears both. Never touches `sessions`, `flows`,
         `domains`, or `paths` - those are running counters/catalogs, not
         per-packet detection history, and clearing them out from under an
         active capture session would desync its own live counters.
@@ -2927,10 +2946,12 @@ class SniffStore:
         if scope == "all":
             packet_filter = ""
             params: tuple = ()
+        elif scope == "honeypot":
+            packet_filter = "WHERE interface LIKE ? OR interface = ? OR interface LIKE ? OR interface = ?"
+            params = ("honeypot%", "honeypot", "service:%", "service")
         else:
-            op = "LIKE" if scope == "honeypot" else "NOT LIKE"
-            packet_filter = f"WHERE interface {op} ?"
-            params = ("honeypot%",)
+            packet_filter = "WHERE interface NOT LIKE ? AND interface != ? AND interface NOT LIKE ? AND interface != ?"
+            params = ("honeypot%", "honeypot", "service:%", "service")
 
         with self._lock:
             tags_deleted = self._conn.execute(

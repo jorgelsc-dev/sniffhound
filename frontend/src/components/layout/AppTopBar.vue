@@ -15,7 +15,7 @@
         <div class="brand-copy">
           <div class="text-subtitle-1 font-weight-bold">SniffHound</div>
           <div class="text-caption text-medium-emphasis">
-            Telemetry capture &amp; honeypot control
+            Telemetry capture &amp; service listeners
           </div>
         </div>
       </div>
@@ -41,6 +41,38 @@
       <v-spacer />
 
       <div class="status-rail">
+        <div class="runtime-actions" aria-label="Runtime controls">
+          <v-btn
+            :icon="snifferActionIcon"
+            :color="snifferActionColor"
+            variant="tonal"
+            size="small"
+            density="comfortable"
+            class="runtime-action-btn"
+            :loading="runtimeSubmitting === 'sniffer'"
+            :disabled="runtimeControlsDisabled || runtimeSubmitting === 'services'"
+            :aria-label="snifferActionLabel"
+            @click="toggleRuntime('sniffer')"
+          >
+            <v-icon :icon="snifferActionIcon" />
+            <v-tooltip activator="parent" location="bottom">{{ snifferActionLabel }}</v-tooltip>
+          </v-btn>
+          <v-btn
+            :icon="servicesActionIcon"
+            :color="servicesActionColor"
+            variant="tonal"
+            size="small"
+            density="comfortable"
+            class="runtime-action-btn"
+            :loading="runtimeSubmitting === 'services'"
+            :disabled="runtimeControlsDisabled || runtimeSubmitting === 'sniffer'"
+            :aria-label="servicesActionLabel"
+            @click="toggleRuntime('services')"
+          >
+            <v-icon :icon="servicesActionIcon" />
+            <v-tooltip activator="parent" location="bottom">{{ servicesActionLabel }}</v-tooltip>
+          </v-btn>
+        </div>
         <NotificationBell />
         <v-btn
           icon="mdi-cog-outline"
@@ -141,7 +173,49 @@ export default {
     },
   },
   emits: ["open-auth", "open-drawer", "shutdown-app"],
+  data() {
+    return {
+      runtimeSubmitting: "",
+    };
+  },
   computed: {
+    runtime() {
+      const runtime = store.state.runtime || {};
+      return runtime && typeof runtime === "object" ? runtime : {};
+    },
+    snifferRuntime() {
+      return this.runtime.sniffer && typeof this.runtime.sniffer === "object" ? this.runtime.sniffer : {};
+    },
+    servicesRuntime() {
+      return this.runtime.honeypot && typeof this.runtime.honeypot === "object" ? this.runtime.honeypot : {};
+    },
+    runtimeControlsDisabled() {
+      return Boolean(this.authRequired && this.authStatus !== "authenticated");
+    },
+    snifferRunning() {
+      return Boolean(this.snifferRuntime.running);
+    },
+    servicesRunning() {
+      return Boolean(this.servicesRuntime.running);
+    },
+    snifferActionLabel() {
+      return this.snifferRunning ? "Stop Sniffer" : "Start Sniffer";
+    },
+    snifferActionIcon() {
+      return this.snifferRunning ? "mdi-stop" : "mdi-play";
+    },
+    snifferActionColor() {
+      return this.snifferRunning ? "warning" : "primary";
+    },
+    servicesActionLabel() {
+      return this.servicesRunning ? "Stop Services" : "Start Services";
+    },
+    servicesActionIcon() {
+      return this.servicesRunning ? "mdi-stop" : "mdi-play";
+    },
+    servicesActionColor() {
+      return this.servicesRunning ? "warning" : "success";
+    },
     authStateLabel() {
       if (!this.authRequired) return "Auth Open";
       if (this.authStatus === "authenticated") return "Auth Ready";
@@ -163,7 +237,7 @@ export default {
     runtimeStateLabel() {
       const runtime = store.state.runtime || {};
       const mode = String(runtime.mode || store.state.runtimeMode || "").trim().toLowerCase();
-      if (mode === "honeypot") return "Mode: Honeypot";
+      if (mode === "honeypot") return "Mode: Services";
       return "Mode: Sniffer";
     },
     runtimeStateColor() {
@@ -175,7 +249,7 @@ export default {
     runtimeStateIcon() {
       const runtime = store.state.runtime || {};
       const mode = String(runtime.mode || store.state.runtimeMode || "").trim().toLowerCase();
-      if (mode === "honeypot") return "mdi-shield-bug";
+      if (mode === "honeypot") return "mdi-server-security";
       return "mdi-database-outline";
     },
     wsStateLabel() {
@@ -201,6 +275,25 @@ export default {
       if (value === "locked") return "mdi-lock-outline";
       if (value === "error") return "mdi-access-point-off";
       return "mdi-access-point-off";
+    },
+  },
+  methods: {
+    toggleRuntime(kind) {
+      if (this.runtimeSubmitting || this.runtimeControlsDisabled) return;
+      const isServices = kind === "services";
+      const mode = isServices ? "honeypot" : "sniffer";
+      const action = (isServices ? this.servicesRunning : this.snifferRunning) ? "stop" : "start";
+      this.runtimeSubmitting = kind;
+      store
+        .controlRuntimeMode(mode, action)
+        .catch((error) => {
+          if (typeof window !== "undefined" && error && error.message) {
+            window.alert(error.message);
+          }
+        })
+        .finally(() => {
+          this.runtimeSubmitting = "";
+        });
     },
   },
 };
@@ -337,6 +430,20 @@ export default {
   gap: 10px;
   min-width: 0;
   flex-wrap: wrap;
+}
+
+.runtime-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px;
+  border: 1px solid rgba(var(--brand-sky-rgb), 0.16);
+  border-radius: 999px;
+  background: rgba(5, 10, 18, 0.36);
+}
+
+.runtime-action-btn {
+  flex: 0 0 auto;
 }
 
 .auth-chip {

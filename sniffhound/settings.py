@@ -29,8 +29,10 @@ def _as_bool(value, default: bool = False) -> bool:
     return raw in {"1", "true", "yes", "on", "y"}
 
 
+DEFAULT_PORT = 45678
+
 HOST = str(_env("SNIFFHOUND_HOST", _env("HOST", "127.0.0.1"))).strip() or "127.0.0.1"
-PORT = _as_int(_env("SNIFFHOUND_PORT", _env("PORT", "45678")), 45678)
+PORT = _as_int(_env("SNIFFHOUND_PORT", str(DEFAULT_PORT)), DEFAULT_PORT)
 
 
 def default_data_dir() -> Path:
@@ -90,13 +92,15 @@ DNS_QUERY_FLOOD_THRESHOLD = max(1, _as_int(_env("SNIFFHOUND_DNS_QUERY_FLOOD_THRE
 DHCP_ROGUE_SERVER_COOLDOWN_SECONDS = max(1, _as_int(_env("SNIFFHOUND_DHCP_ROGUE_SERVER_COOLDOWN_SECONDS", "60"), 60))
 
 # Per-signature rate limit for rule/regex-mode monitors at medium severity
-# and up (Suricata's `threshold`/`detection_filter` equivalent) - the same
-# (monitor, source) pair won't re-alert more than once per this window, no
+# and up - the same (monitor, source) pair won't re-alert more than once
+# per this window, no
 # matter how many matching packets arrive in between. Deliberately excludes
 # "info"/"low" monitors (DNS/HTTP/TLS-SNI/discovery/protocol-seen/...),
 # which must keep firing on every match since Domains/Paths/Radar and
 # similar catalogs depend on that. See monitors.RuleAlertThrottle.
 MONITOR_ALERT_COOLDOWN_SECONDS = max(1, _as_int(_env("SNIFFHOUND_MONITOR_ALERT_COOLDOWN_SECONDS", "45"), 45))
+MONITOR_MAX_REGEX_PATTERNS = max(1, _as_int(_env("SNIFFHOUND_MONITOR_MAX_REGEX_PATTERNS", "8"), 8))
+MONITOR_MAX_REGEX_LENGTH = max(128, _as_int(_env("SNIFFHOUND_MONITOR_MAX_REGEX_LENGTH", "2048"), 2048))
 
 DEFAULT_RULESET_FILE = str(_env("SNIFFHOUND_RULESET_FILE", "default_rulesets.json")).strip()
 MONITOR_FILTER_DEFAULT = _as_bool(_env("SNIFFHOUND_MONITOR_FILTER_DEFAULT", "1"), default=True)

@@ -3,8 +3,8 @@
 Exists so `sniffhound.monitors.evaluate_packet` can check tens of thousands
 of `payload_contains` literals against one packet's text in a single pass
 over that text, instead of one `needle in haystack` scan per monitor - the
-same reason real IDS engines (Suricata/Snort) use a multi-pattern matcher
-for their "fast pattern" content keyword. No third-party dependency (see
+same reason production-grade IDS engines use a multi-pattern matcher for
+their "fast pattern" content keyword. No third-party dependency (see
 CLAUDE.md's near-zero-dependency policy) - this is a straightforward,
 well-known construction: a trie of the patterns plus failure links so a
 mismatch resumes from the longest matching suffix instead of restarting.

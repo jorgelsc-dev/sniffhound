@@ -138,7 +138,7 @@
 
       <DataPanel
         title="Sniffer Engine"
-        subtitle="Only one engine (Sniffer or Honeypot) runs at a time. Starting this one stops the other."
+        subtitle="Only one engine runs at a time. Starting this one stops service listeners."
         variant="tonal"
         collapsible
         :count="runtime.packets_seen || 0"
@@ -150,16 +150,6 @@
           <v-chip size="small" :color="engineChipColor" variant="tonal" :prepend-icon="engineStatusIcon">
             {{ engineStatusLabel }}
           </v-chip>
-          <v-btn
-            size="small"
-            :color="engineActionColor"
-            variant="outlined"
-            :prepend-icon="engineActionIcon"
-            :loading="runtimeSubmitting"
-            @click="toggleEngine"
-          >
-            {{ engineActionLabel }}
-          </v-btn>
         </template>
       </DataPanel>
 
@@ -266,7 +256,6 @@ export default {
       lastUpdated: "",
       liveRefreshEnabled: true,
       packets: [],
-      runtimeSubmitting: false,
       runtimeError: "",
       filters: {
         query: "",
@@ -318,15 +307,6 @@ export default {
       if (this.snifferBlocked) return "mdi-alert-circle-outline";
       if (this.runtime.running) return "mdi-play-circle-outline";
       return "mdi-stop-circle-outline";
-    },
-    engineActionLabel() {
-      return this.runtime.running ? "Stop" : "Start";
-    },
-    engineActionColor() {
-      return this.runtime.running ? "warning" : "primary";
-    },
-    engineActionIcon() {
-      return this.runtime.running ? "mdi-stop" : "mdi-play";
     },
     snifferErrorSummary() {
       const entries = this.runtime.errors && typeof this.runtime.errors === "object"
@@ -488,20 +468,6 @@ export default {
       if (state === "filtered" || state === "blocked") return "warning";
       if (state === "closed") return "error";
       return "secondary";
-    },
-    toggleEngine() {
-      if (this.runtimeSubmitting) return;
-      const action = this.runtime.running ? "stop" : "start";
-      this.runtimeError = "";
-      this.runtimeSubmitting = true;
-      this.store
-        .controlRuntimeMode("sniffer", action)
-        .catch((err) => {
-          this.runtimeError = (err && err.message) || `Failed to ${action} the sniffer`;
-        })
-        .finally(() => {
-          this.runtimeSubmitting = false;
-        });
     },
     handleWsRefresh(event) {
       if (!this.liveRefreshEnabled) return;

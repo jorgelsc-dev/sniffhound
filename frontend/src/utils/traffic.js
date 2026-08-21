@@ -4,7 +4,12 @@ export function normalizeProto(value) {
 
 export function isHoneypotInterface(value) {
   const normalized = String(value || "").trim().toLowerCase();
-  return normalized === "honeypot" || normalized.startsWith("honeypot:");
+  return (
+    normalized === "honeypot" ||
+    normalized.startsWith("honeypot:") ||
+    normalized === "service" ||
+    normalized.startsWith("service:")
+  );
 }
 
 export function isHoneypotRow(row) {

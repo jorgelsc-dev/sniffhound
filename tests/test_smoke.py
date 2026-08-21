@@ -704,10 +704,28 @@ class SmokeTests(unittest.TestCase):
     def test_manage_candidate_ports_scan_requested_block(self):
         import sniffhound.manage as manage_module
 
+        candidates = manage_module._candidate_ports(45678)
+
         self.assertEqual(
-            manage_module._candidate_ports(45678),
+            candidates[:10],
             (45678, 45670, 45671, 45672, 45673, 45674, 45675, 45676, 45677, 45679),
         )
+        self.assertEqual(len(candidates), manage_module.FALLBACK_PORT_SCAN_SIZE)
+        self.assertIn(45769, candidates)
+
+    def test_settings_default_port_ignores_generic_port_env(self):
+        import sniffhound.settings as settings_module
+
+        with patch.dict(os.environ, {"PORT": "12345"}, clear=False):
+            os.environ.pop("SNIFFHOUND_PORT", None)
+            settings_module = importlib.reload(settings_module)
+            self.assertEqual(settings_module.PORT, 45678)
+
+        with patch.dict(os.environ, {"SNIFFHOUND_PORT": "45679", "PORT": "12345"}, clear=False):
+            settings_module = importlib.reload(settings_module)
+            self.assertEqual(settings_module.PORT, 45679)
+
+        importlib.reload(settings_module)
 
     def test_manage_main_creates_web_store_before_spawning_capture_child(self):
         # Both processes open the same SQLite file; whichever one creates
@@ -1346,7 +1364,7 @@ class SmokeTests(unittest.TestCase):
                 app_module.store.register_packet(
                     {
                         "session_id": 12,
-                        "interface": "honeypot:53",
+                        "interface": "service:53",
                         "direction": "inbound",
                         "proto": "udp",
                         "src_ip": "203.0.113.50",
@@ -1356,7 +1374,7 @@ class SmokeTests(unittest.TestCase):
                         "summary": "DNS message",
                         "payload_text": "query example.com",
                         "banner_text": "DNS message",
-                        "tags": [{"key": "mode", "value": "honeypot"}],
+                        "tags": [{"key": "mode", "value": "service"}],
                     }
                 )
 
@@ -1366,12 +1384,12 @@ class SmokeTests(unittest.TestCase):
 
                 self.assertEqual(response.status, 200)
                 self.assertEqual(len(payload), 1)
-                self.assertEqual(payload[0]["interface"], "honeypot:53")
+                self.assertEqual(payload[0]["interface"], "service:53")
                 self.assertEqual(payload[0]["direction"], "inbound")
                 self.assertEqual(payload[0]["src_ip"], "203.0.113.50")
                 self.assertEqual(payload[0]["dst_ip"], "127.0.0.1")
                 self.assertEqual(payload[0]["response_plain"], "DNS message")
-                self.assertEqual(payload[0]["tags"][0]["value"], "honeypot")
+                self.assertEqual(payload[0]["tags"][0]["value"], "service")
                 app_module.store.close()
             finally:
                 if previous_db is None:

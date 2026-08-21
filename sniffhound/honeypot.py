@@ -10,6 +10,7 @@ import subprocess
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from email.utils import formatdate
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
@@ -74,10 +75,10 @@ from .settings import DATA_DIR, PAYLOAD_TEXT_MAX_CHARS
 
 LOG_MAX_BYTES = 10 * 1024 * 1024
 LOG_BACKUP_COUNT = 5
-LOG_FILE = DATA_DIR / "honeypot.log"
-EVENT_DB_FILE = DATA_DIR / "honeypot_events.db"
-CERT_FILE = DATA_DIR / "honeypot_cert.pem"
-KEY_FILE = DATA_DIR / "honeypot_key.pem"
+LOG_FILE = DATA_DIR / "service_listener.log"
+EVENT_DB_FILE = DATA_DIR / "service_events.db"
+CERT_FILE = DATA_DIR / "service_cert.pem"
+KEY_FILE = DATA_DIR / "service_key.pem"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 EVENT_DB_TABLES = ("connection_events", "tls_sessions", "dns_queries")
@@ -122,56 +123,56 @@ FAVICON_ICO = bytes.fromhex(
 )
 
 TCP_BANNERS: dict[int, str | bytes] = {
-    21: "220 ProFTPD 1.3.5 Server (Honeypot)\r\n",
+    21: "220 ProFTPD 1.3.5 Server ready\r\n",
     22: "SSH-2.0-OpenSSH_8.2p1 Ubuntu-4ubuntu0.3\r\n",
-    23: "Debian GNU/Linux 12 honeypot ttyS0\r\nlogin: ",
-    25: "220 smtp.honeypot.local ESMTP Postfix\r\n",
-    53: "DNS over TCP Honeypot Ready\r\n",
-    110: "+OK POP3 Honeypot Server Ready\r\n",
+    23: "Debian GNU/Linux 12 ttyS0\r\nlogin: ",
+    25: "220 mx01.local ESMTP Postfix\r\n",
+    53: "DNS service ready\r\n",
+    110: "+OK Dovecot ready.\r\n",
     139: b"\x00\x00\x00\x85\xffSMBr\x00\x00\x00\x00\x18\x01\x28\x00",
-    143: "* OK IMAP4rev1 Honeypot Service Ready\r\n",
-    389: "LDAP Honeypot Service Ready\r\n",
+    143: "* OK [CAPABILITY IMAP4rev1 LITERAL+ SASL-IR IDLE AUTH=PLAIN] Dovecot ready.\r\n",
+    389: "LDAP service ready\r\n",
     445: b"\x00\x00\x00\x90\xffSMBr\x00\x00\x00\x00\x18\x53\xc8",
-    554: "RTSP/1.0 200 OK\r\nServer: Live555-Honeypot\r\n\r\n",
-    587: "220 smtp.honeypot.local ESMTP Submission Ready\r\n",
-    990: "220 FTPS Honeypot Service Ready\r\n",
-    993: "* OK IMAP4rev1 Honeypot over TLS Ready\r\n",
-    995: "+OK POP3 Honeypot over TLS Ready\r\n",
-    2049: "NFS server honeypot ready\r\n",
-    2121: "220 FTP Honeypot Ready\r\n",
-    3306: b"\x19\x00\x00\x00\x0a8.0.30-honeypot\x00\x01\x00\x00\x00abcdefgh\x00",
+    554: "RTSP/1.0 200 OK\r\nServer: Live555 Streaming Media v2018.08.28\r\n\r\n",
+    587: "220 mx01.local ESMTP Postfix\r\n",
+    990: "220 ProFTPD 1.3.5 Server ready\r\n",
+    993: "* OK [CAPABILITY IMAP4rev1 LITERAL+ SASL-IR IDLE AUTH=PLAIN] Dovecot ready.\r\n",
+    995: "+OK Dovecot ready.\r\n",
+    2049: "NFS service ready\r\n",
+    2121: "220 ProFTPD 1.3.5 Server ready\r\n",
+    3306: b"\x19\x00\x00\x00\x0a8.0.30-0ubuntu0.20.04.2\x00\x01\x00\x00\x00abcdefgh\x00",
     3389: b"\x03\x00\x00\x13\x0e\xd0\x00\x00\x124\x00\x02\x00\x08\x00\x02\x00\x00\x00",
-    5432: "POSTGRES 13.0 Honeypot\r\n",
+    5432: "PostgreSQL 13.0\r\n",
     5671: b"AMQP\x00\x00\x09\x01",
     5672: b"AMQP\x00\x00\x09\x01",
     5900: b"RFB 003.008\n",
     6379: b"-NOAUTH Authentication required.\r\n",
     8000: "HTTP/1.1 200 OK\r\nServer: nginx/1.18.0\r\n\r\n",
-    8080: "HTTP/1.1 200 OK\r\nServer: Apache/2.4.46 (Honeypot)\r\n\r\n",
+    8080: "HTTP/1.1 200 OK\r\nServer: Apache/2.4.46 (Ubuntu)\r\n\r\n",
     8888: "HTTP/1.1 200 OK\r\nServer: Caddy/2.7.0\r\n\r\n",
     9200: "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n",
-    9443: "HTTP/1.1 200 OK\r\nServer: nginx/1.18.0 (TLS)\r\n\r\n",
+    9443: "HTTP/1.1 200 OK\r\nServer: nginx/1.18.0\r\n\r\n",
     11211: "STAT pid 2134\r\nEND\r\n",
     27017: "It looks like you are trying to access MongoDB over HTTP on the native driver port.\n",
 }
 
 UDP_BANNERS: dict[int, str | bytes] = {
     53: b"\x00\x00\x81\x80\x00\x01\x00\x01\x00\x00\x00\x00",
-    67: "DHCP Honeypot Service",
-    68: "DHCP Client Honeypot",
-    69: "TFTP Honeypot",
-    123: "NTPv4 Server (Honeypot)",
-    137: "NetBIOS Name Service Honeypot",
-    138: "NetBIOS Datagram Service Honeypot",
-    161: "public\nHoneypot SNMPv1 Server",
-    500: "ISAKMP Honeypot Response",
-    514: "<13>honeypot syslog ack",
-    520: "RIP Honeypot Response",
-    1812: "RADIUS Access-Reject (Honeypot)",
-    1813: "RADIUS Accounting-Response (Honeypot)",
-    4500: "IKEv2 Honeypot Response",
-    1900: "HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=1800\r\nSERVER: UPnP/1.0 Honeypot\r\n\r\n",
-    5060: "SIP/2.0 200 OK\r\nServer: Asterisk PBX Honeypot\r\n\r\n",
+    67: "DHCP Service",
+    68: "DHCP Client",
+    69: "TFTP Server",
+    123: "NTPv4 Server",
+    137: "NetBIOS Name Service",
+    138: "NetBIOS Datagram Service",
+    161: "public\nSNMPv1 Server",
+    500: "ISAKMP Response",
+    514: "<13>syslog accepted",
+    520: "RIP Response",
+    1812: "RADIUS Access-Reject",
+    1813: "RADIUS Accounting-Response",
+    4500: "IKEv2 Response",
+    1900: "HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=1800\r\nSERVER: UPnP/1.0 Portable SDK\r\n\r\n",
+    5060: "SIP/2.0 200 OK\r\nServer: Asterisk PBX 18.9.0\r\n\r\n",
     5353: b"\x00\x00\x84\x00\x00\x00\x00\x01\x00\x00\x00\x00",
     11211: "STAT version 1.6.9\r\nEND\r\n",
 }
@@ -182,13 +183,16 @@ def _build_logger() -> logging.Logger:
     if logger.handlers:
         return logger
     logger.setLevel(logging.INFO)
-    handler = RotatingFileHandler(
-        LOG_FILE,
-        maxBytes=LOG_MAX_BYTES,
-        backupCount=LOG_BACKUP_COUNT,
-        encoding="utf-8",
-    )
-    handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
+    try:
+        handler = RotatingFileHandler(
+            LOG_FILE,
+            maxBytes=LOG_MAX_BYTES,
+            backupCount=LOG_BACKUP_COUNT,
+            encoding="utf-8",
+        )
+        handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
+    except OSError:
+        handler = logging.NullHandler()
     logger.addHandler(handler)
     logger.propagate = False
     return logger
@@ -248,7 +252,7 @@ def _build_http_response(status_code: int, reason: str, body: bytes, content_typ
     headers = [
         f"HTTP/1.1 {status_code} {reason}",
         "Server: nginx/1.18.0",
-        f"Date: {utc_now()}",
+        f"Date: {formatdate(usegmt=True)}",
         f"Content-Type: {content_type}",
         f"Content-Length: {len(body)}",
         "Connection: close",
@@ -393,20 +397,20 @@ def _build_sip_response(request_data: bytes, addr):
             key, value = line.split(":", 1)
             headers[key.strip().lower()] = value.strip()
 
-    via = headers.get("via", f"SIP/2.0/UDP {addr[0]}:{addr[1]};branch=z9hG4bK-honeypot")
-    from_h = headers.get("from", "<sip:scanner@honeypot.local>")
-    to_h = headers.get("to", "<sip:service@honeypot.local>")
-    call_id = headers.get("call-id", "honeypot-call")
+    via = headers.get("via", f"SIP/2.0/UDP {addr[0]}:{addr[1]};branch=z9hG4bK-524287")
+    from_h = headers.get("from", "<sip:scanner@example.net>")
+    to_h = headers.get("to", "<sip:service@example.net>")
+    call_id = headers.get("call-id", "call-000001")
     cseq = headers.get("cseq", "1 OPTIONS")
 
     return (
         "SIP/2.0 200 OK\r\n"
         f"Via: {via}\r\n"
         f"From: {from_h}\r\n"
-        f"To: {to_h};tag=hp1234\r\n"
+        f"To: {to_h};tag=as5f3a2c1\r\n"
         f"Call-ID: {call_id}\r\n"
         f"CSeq: {cseq}\r\n"
-        "Server: Asterisk PBX Honeypot\r\n"
+        "Server: Asterisk PBX 18.9.0\r\n"
         "Content-Length: 0\r\n\r\n"
     ).encode("utf-8")
 
@@ -421,7 +425,7 @@ def _build_rtsp_response(request_text: str) -> bytes:
     return (
         "RTSP/1.0 200 OK\r\n"
         f"CSeq: {cseq}\r\n"
-        "Server: Live555-Honeypot\r\n"
+        "Server: Live555 Streaming Media v2018.08.28\r\n"
         "Public: OPTIONS, DESCRIBE, SETUP, TEARDOWN, PLAY, PAUSE\r\n"
         "Content-Length: 0\r\n\r\n"
     ).encode("utf-8")
@@ -499,7 +503,7 @@ class HoneypotEngine:
         row = self.store.create_session(
             {
                 "network": "0.0.0.0/0",
-                "type": "honeypot",
+                "type": "service-listener",
                 "proto": "all",
                 "port_mode": "preset",
                 "port_start": 0,
@@ -507,8 +511,8 @@ class HoneypotEngine:
                 "status": "active",
                 "timesleep": 0.5,
                 "progress": 0.0,
-                "interface": "honeypot",
-                "filter_text": "honeypot mode",
+                "interface": "service",
+                "filter_text": "service listener mode",
             }
         )
         session_id = safe_int(row.get("id"), 0)
@@ -589,7 +593,12 @@ class HoneypotEngine:
             pass
 
     def _event_writer(self):
-        conn = self._ensure_event_db()
+        conn = None
+        try:
+            conn = self._ensure_event_db()
+        except Exception as error:
+            self._set_error("events", str(error))
+            LOGGER.exception("No se pudo abrir la base auxiliar de listeners")
         try:
             while not self._stop_event.is_set() or not self._event_queue.empty():
                 try:
@@ -609,20 +618,22 @@ class HoneypotEngine:
                         meta = item.get("meta") if isinstance(item, dict) else {}
                         if not isinstance(packet, dict):
                             continue
-                        self._insert_event_row(conn, packet, meta if isinstance(meta, dict) else {})
+                        if conn is not None:
+                            self._insert_event_row(conn, packet, meta if isinstance(meta, dict) else {})
                         saved = self.store.register_packet(packet)
                         self._touch_packet(saved or packet)
                         self._broadcast_packet(saved or packet)
                 except Exception:
-                    LOGGER.exception("Error al guardar eventos honeypot")
+                    LOGGER.exception("Error al guardar eventos de listeners")
                 finally:
                     for _ in batch:
                         self._event_queue.task_done()
         finally:
-            try:
-                conn.commit()
-            except Exception:
-                pass
+            if conn is not None:
+                try:
+                    conn.commit()
+                except Exception:
+                    pass
 
     def _insert_event_row(self, conn: sqlite3.Connection, packet: dict, meta: dict):
         payload = _normalize_payload(packet.get("raw_packet") or packet.get("payload_text") or b"")
@@ -757,7 +768,7 @@ class HoneypotEngine:
             self._state.last_event_at = ""
 
         self._session_id()
-        self._writer_thread = threading.Thread(target=self._event_writer, name="sniffhound-honeypot-writer", daemon=True)
+        self._writer_thread = threading.Thread(target=self._event_writer, name="sniffhound-listener-writer", daemon=True)
         self._writer_thread.start()
 
         try:
@@ -775,7 +786,7 @@ class HoneypotEngine:
             if self._spawn_listener(listener["id"], listener["proto"], listener["port"]):
                 started += 1
 
-        LOGGER.info("Honeypot activo en %s con %s listeners", self.bind_host, started)
+        LOGGER.info("Motor de listeners activo en %s con %s listeners", self.bind_host, started)
         return self.snapshot()
 
     def stop(self):
@@ -786,7 +797,7 @@ class HoneypotEngine:
         # each listener thread only notices within its own ~1s accept()/
         # recvfrom() timeout, so joining sequentially (signal, join, signal,
         # join, ...) made total shutdown time scale with the listener count
-        # (dozens of honeypot ports -> tens of seconds, well past the IPC
+        # (dozens of listener ports -> tens of seconds, well past the IPC
         # call timeout). Signalling all of them up front means they all
         # start winding down concurrently and the joins below just wait out
         # the shared ~1s grace period once.
@@ -827,7 +838,7 @@ class HoneypotEngine:
             "-keyout", str(KEY_FILE),
             "-out", str(CERT_FILE),
             "-days", "825",
-            "-subj", "/O=SniffHound/CN=sniffhound-honeypot",
+            "-subj", "/O=Local Services/CN=localhost",
             "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1",
         ]
         try:
@@ -938,7 +949,7 @@ class HoneypotEngine:
         listener_ip = self.bind_host if self.bind_host not in {"0.0.0.0", "::"} else "127.0.0.1"
         packet = {
             "session_id": self._session_id(),
-            "interface": f"honeypot:{port}",
+            "interface": f"service:{port}",
             "direction": "inbound",
             "eth_src": "",
             "eth_dst": "",
@@ -959,36 +970,42 @@ class HoneypotEngine:
             "icmp_type": 0,
             "icmp_code": 0,
             "arp_opcode": 0,
-            "summary": normalize_text(summary or banner_text or f"{protocol.upper()} honeypot", limit=PAYLOAD_TEXT_MAX_CHARS),
+            "summary": normalize_text(summary or banner_text or f"{protocol.upper()} service", limit=PAYLOAD_TEXT_MAX_CHARS),
             "payload_text": normalize_text(payload_text, limit=PAYLOAD_TEXT_MAX_CHARS),
             "payload_hex": bytes_to_hex_preview(payload),
             "banner_text": normalize_text(banner_text or summary or payload_text, limit=PAYLOAD_TEXT_MAX_CHARS),
             "tags": [
-                {"key": "mode", "value": "honeypot"},
+                {"key": "mode", "value": "service"},
                 {"key": "service", "value": normalize_protocol_name(protocol)},
                 {"key": "port", "value": str(port)},
                 # A "monitor"/"monitor_id" pair, same shape Sniffer's monitor
                 # engine emits - this is what the frontend's notifyForPacketEvent
-                # (appStore.js) scans for to pop a toast/notification. Honeypot
+                # (appStore.js) scans for to pop a toast/notification. Listener
                 # traffic never runs through evaluate_packet/AnomalyEngine (a
                 # separate pipeline by design), so this is added directly here
                 # rather than via a DEFAULT_MONITORS catalog entry - there's no
-                # declarative match to toggle, every honeypot hit is inherently
+                # declarative match to toggle, every inbound service hit is inherently
                 # notable. "critical" severity clears NOTIFY_MONITOR_SEVERITIES
                 # so it always toasts, matching the Sniffer-side "alert me"
                 # behavior for high/critical monitors.
-                {"key": "monitor", "value": "Honeypot hit", "severity": "critical"},
-                {"key": "monitor_id", "value": "builtin-honeypot-hit", "severity": "critical"},
+                {"key": "monitor", "value": "Inbound service hit", "severity": "critical"},
+                {"key": "monitor_id", "value": "builtin-inbound-service-hit", "severity": "critical"},
             ],
             "rule_hits": [
-                {"rule_id": "honeypot", "rule_name": "Honeypot", "tag": "honeypot", "label": "Honeypot", "severity": "high"}
+                {
+                    "rule_id": "inbound-service",
+                    "rule_name": "Inbound service",
+                    "tag": "inbound-service",
+                    "label": "Inbound service",
+                    "severity": "high",
+                }
             ],
             "raw_packet": payload,
             "created_at": utc_now(),
             "updated_at": utc_now(),
         }
         if meta:
-            packet["honeypot_meta"] = meta
+            packet["listener_meta"] = meta
             if meta.get("tls"):
                 packet["tags"].append({"key": "tls", "value": "enabled"})
             if meta.get("sni"):
@@ -996,7 +1013,7 @@ class HoneypotEngine:
         return packet
 
     def _emit_packet(self, packet: dict):
-        self._event_queue.put({"packet": packet, "meta": packet.get("honeypot_meta") or {}})
+        self._event_queue.put({"packet": packet, "meta": packet.get("listener_meta") or {}})
 
     def _listen(self, port: int, handler, *, udp: bool = False, stop_event: threading.Event):
         sock_type = socket.SOCK_DGRAM if udp else socket.SOCK_STREAM
@@ -1012,7 +1029,7 @@ class HoneypotEngine:
             if not udp:
                 sock.listen(20)
                 sock.settimeout(1.0)
-                LOGGER.info("TCP honeypot activo en %s:%s", self.bind_host, port)
+                LOGGER.info("TCP listener activo en %s:%s", self.bind_host, port)
                 while not stop_event.is_set():
                     try:
                         client, addr = sock.accept()
@@ -1026,7 +1043,7 @@ class HoneypotEngine:
                     threading.Thread(target=handler, args=(client, addr, port), daemon=True).start()
             else:
                 sock.settimeout(1.0)
-                LOGGER.info("UDP honeypot activo en %s:%s", self.bind_host, port)
+                LOGGER.info("UDP listener activo en %s:%s", self.bind_host, port)
                 while not stop_event.is_set():
                     try:
                         data, addr = sock.recvfrom(MAX_PACKET_SIZE)
@@ -1070,14 +1087,14 @@ class HoneypotEngine:
             thread = threading.Thread(
                 target=self._tcp_listener,
                 args=(port, stop_event, tls_context),
-                name=f"sniffhound-honeypot-tcp-{port}",
+                name=f"sniffhound-listener-tcp-{port}",
                 daemon=True,
             )
         else:
             thread = threading.Thread(
                 target=self._udp_listener,
                 args=(port, stop_event),
-                name=f"sniffhound-honeypot-udp-{port}",
+                name=f"sniffhound-listener-udp-{port}",
                 daemon=True,
             )
         self._listener_stop_events[listener_id] = stop_event
@@ -1189,10 +1206,9 @@ class HoneypotEngine:
             request_line = request_data.split(b"\r\n", 1)[0].decode("utf-8", errors="replace")
             LOGGER.info("%s %s %s -> %s", scheme, addr[0], addr[1], request_line)
         body = (
-            f"<html><head><title>{scheme} Honeypot</title>"
+            "<html><head><title>It works</title>"
             '<link rel="icon" type="image/x-icon" href="/favicon.ico"></head>'
-            f"<body><h1>{scheme} Honeypot</h1><p>Puerto: {port}</p>"
-            "<p>Favicon de prueba activo en /favicon.ico</p></body></html>"
+            "<body><h1>It works</h1><p>Default server page.</p></body></html>"
         ).encode("utf-8")
         response = _build_http_response(200, "OK", body, "text/html; charset=utf-8")
         if request_data:
@@ -1209,14 +1225,14 @@ class HoneypotEngine:
             port=port,
             addr=addr,
             data=request_data or b"(sin datos)",
-            banner_text=f"{scheme} honeypot response",
+            banner_text=f"{scheme} response",
             summary=f"{scheme} response",
             meta=meta,
         )
         self._emit_packet(packet)
 
     def _handle_ftp_service(self, client_sock, addr, port, *, use_tls=False, meta=None):
-        banner = TCP_BANNERS.get(port, "220 FTP Honeypot Ready\r\n")
+        banner = TCP_BANNERS.get(port, "220 ProFTPD 1.3.5 Server ready\r\n")
         _safe_send(client_sock, banner)
         client_sock.settimeout(READ_TIMEOUT_SECONDS)
         saw_data = b""
@@ -1244,14 +1260,14 @@ class HoneypotEngine:
             port=port,
             addr=addr,
             data=saw_data or b"(sin datos)",
-            banner_text="FTP honeypot banner",
+            banner_text="FTP banner",
             summary="FTP session",
             meta=meta,
         )
         self._emit_packet(packet)
 
     def _handle_smtp_service(self, client_sock, addr, port, *, use_tls=False, meta=None):
-        banner = TCP_BANNERS.get(port, "220 smtp.honeypot.local ESMTP Ready\r\n")
+        banner = TCP_BANNERS.get(port, "220 mx01.local ESMTP Postfix\r\n")
         _safe_send(client_sock, banner)
         client_sock.settimeout(READ_TIMEOUT_SECONDS)
         buffer = b""
@@ -1264,12 +1280,12 @@ class HoneypotEngine:
             line = _decode_line(line_bytes)
             if in_data_mode:
                 if line == ".":
-                    _safe_send(client_sock, b"250 2.0.0 Message queued as HP123456\r\n")
+                    _safe_send(client_sock, b"250 2.0.0 Message queued as A1B2C3D4E5\r\n")
                     in_data_mode = False
                 continue
             command = line.split(" ", 1)[0].upper() if line else ""
             if command in {"EHLO", "HELO"}:
-                _safe_send(client_sock, b"250-honeypot.local Hello\r\n250-PIPELINING\r\n250-SIZE 10240000\r\n250-8BITMIME\r\n250 HELP\r\n")
+                _safe_send(client_sock, b"250-mx01.local Hello\r\n250-PIPELINING\r\n250-SIZE 10240000\r\n250-8BITMIME\r\n250 HELP\r\n")
             elif command in {"MAIL", "RCPT", "RSET", "NOOP"}:
                 _safe_send(client_sock, b"250 2.1.0 Ok\r\n")
             elif command == "DATA":
@@ -1287,14 +1303,14 @@ class HoneypotEngine:
             port=port,
             addr=addr,
             data=buffer or b"(sin datos)",
-            banner_text="SMTP honeypot banner",
+            banner_text="SMTP banner",
             summary="SMTP session",
             meta=meta,
         )
         self._emit_packet(packet)
 
     def _handle_pop3_service(self, client_sock, addr, port, *, use_tls=False, meta=None):
-        _safe_send(client_sock, TCP_BANNERS.get(port, "+OK POP3 Honeypot Server Ready\r\n"))
+        _safe_send(client_sock, TCP_BANNERS.get(port, "+OK Dovecot ready.\r\n"))
         client_sock.settimeout(READ_TIMEOUT_SECONDS)
         buffer = b""
         for _ in range(MAX_COMMAND_ROUNDS):
@@ -1316,11 +1332,11 @@ class HoneypotEngine:
                 break
             else:
                 _safe_send(client_sock, b"-ERR Unknown command\r\n")
-        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=buffer or b"(sin datos)", banner_text="POP3 honeypot banner", summary="POP3 session", meta=meta)
+        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=buffer or b"(sin datos)", banner_text="POP3 banner", summary="POP3 session", meta=meta)
         self._emit_packet(packet)
 
     def _handle_imap_service(self, client_sock, addr, port, *, use_tls=False, meta=None):
-        _safe_send(client_sock, TCP_BANNERS.get(port, "* OK IMAP4rev1 Honeypot Service Ready\r\n"))
+        _safe_send(client_sock, TCP_BANNERS.get(port, "* OK [CAPABILITY IMAP4rev1 LITERAL+ SASL-IR IDLE AUTH=PLAIN] Dovecot ready.\r\n"))
         client_sock.settimeout(READ_TIMEOUT_SECONDS)
         buffer = b""
         for _ in range(MAX_COMMAND_ROUNDS):
@@ -1343,11 +1359,11 @@ class HoneypotEngine:
                 break
             else:
                 _safe_send(client_sock, f"{tag} BAD Command not supported\r\n".encode())
-        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=buffer or b"(sin datos)", banner_text="IMAP honeypot banner", summary="IMAP session", meta=meta)
+        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=buffer or b"(sin datos)", banner_text="IMAP banner", summary="IMAP session", meta=meta)
         self._emit_packet(packet)
 
     def _handle_telnet_service(self, client_sock, addr, port, *, meta=None):
-        _safe_send(client_sock, TCP_BANNERS.get(port, "Linux honeypot login: "))
+        _safe_send(client_sock, TCP_BANNERS.get(port, "Debian GNU/Linux 12 ttyS0\r\nlogin: "))
         client_sock.settimeout(READ_TIMEOUT_SECONDS)
         buffer = b""
         username = _recv_line(client_sock)
@@ -1358,7 +1374,7 @@ class HoneypotEngine:
             if password:
                 buffer += password
         _safe_send(client_sock, b"\r\nLogin incorrect\r\nConnection closed by foreign host.\r\n")
-        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=buffer or b"(sin datos)", banner_text="Telnet honeypot banner", summary="Telnet login", meta=meta)
+        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=buffer or b"(sin datos)", banner_text="Telnet banner", summary="Telnet login", meta=meta)
         self._emit_packet(packet)
 
     def _handle_ssh_service(self, client_sock, addr, port, *, meta=None):
@@ -1371,13 +1387,13 @@ class HoneypotEngine:
                 LOGGER.info("SSH packet from %s:%s", addr[0], addr[1])
         except socket.timeout:
             pass
-        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=data or b"(sin datos)", banner_text="SSH honeypot banner", summary="SSH handshake", meta=meta)
+        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=data or b"(sin datos)", banner_text="SSH banner", summary="SSH handshake", meta=meta)
         self._emit_packet(packet)
 
     def _handle_mysql_service(self, client_sock, addr, port, *, meta=None):
         protocol_payload = (
             b"\x0a"
-            b"8.0.30-honeypot\x00"
+            b"8.0.30-0ubuntu0.20.04.2\x00"
             b"\x01\x00\x00\x00"
             b"abcdefgh\x00"
             b"\xff\xf7"
@@ -1399,11 +1415,10 @@ class HoneypotEngine:
                 _safe_send(client_sock, len(payload).to_bytes(3, "little") + b"\x02" + payload)
         except socket.timeout:
             pass
-        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=data or b"(sin datos)", banner_text="MySQL honeypot banner", summary="MySQL handshake", meta=meta)
+        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=data or b"(sin datos)", banner_text="MySQL banner", summary="MySQL handshake", meta=meta)
         self._emit_packet(packet)
 
     def _handle_postgres_service(self, client_sock, addr, port, *, meta=None):
-        _safe_send(client_sock, TCP_BANNERS.get(port, "POSTGRES 13.0 Honeypot\r\n"))
         client_sock.settimeout(READ_TIMEOUT_SECONDS)
         data = b""
         try:
@@ -1415,7 +1430,7 @@ class HoneypotEngine:
                 _safe_send(client_sock, _build_postgres_error_packet())
         except socket.timeout:
             pass
-        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=data or b"(sin datos)", banner_text="PostgreSQL honeypot banner", summary="Postgres handshake", meta=meta)
+        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=data or b"(sin datos)", banner_text="PostgreSQL banner", summary="Postgres handshake", meta=meta)
         self._emit_packet(packet)
 
     def _handle_redis_service(self, client_sock, addr, port, *, meta=None):
@@ -1445,7 +1460,7 @@ class HoneypotEngine:
                 break
             else:
                 _safe_send(client_sock, b"-ERR unknown command\r\n")
-        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=data or b"(sin datos)", banner_text="Redis honeypot banner", summary="Redis session", meta=meta)
+        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=data or b"(sin datos)", banner_text="Redis banner", summary="Redis session", meta=meta)
         self._emit_packet(packet)
 
     def _handle_memcached_service(self, client_sock, addr, port, *, meta=None):
@@ -1471,7 +1486,7 @@ class HoneypotEngine:
                 break
             else:
                 _safe_send(client_sock, b"ERROR\r\n")
-        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=data or b"(sin datos)", banner_text="Memcached honeypot banner", summary="Memcached session", meta=meta)
+        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=data or b"(sin datos)", banner_text="Memcached banner", summary="Memcached session", meta=meta)
         self._emit_packet(packet)
 
     def _handle_vnc_service(self, client_sock, addr, port, *, meta=None):
@@ -1484,7 +1499,7 @@ class HoneypotEngine:
                 _safe_send(client_sock, b"\x01\x01")
         except socket.timeout:
             pass
-        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=data or b"(sin datos)", banner_text="VNC honeypot banner", summary="VNC handshake", meta=meta)
+        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=data or b"(sin datos)", banner_text="VNC banner", summary="VNC handshake", meta=meta)
         self._emit_packet(packet)
 
     def _handle_mqtt_service(self, client_sock, addr, port, *, use_tls=False, meta=None):
@@ -1509,7 +1524,7 @@ class HoneypotEngine:
                 break
             else:
                 _safe_send(client_sock, b"\xd0\x00")
-        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=data or b"(sin datos)", banner_text="MQTT honeypot banner", summary="MQTT session", meta=meta)
+        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=data or b"(sin datos)", banner_text="MQTT banner", summary="MQTT session", meta=meta)
         self._emit_packet(packet)
 
     def _handle_amqp_service(self, client_sock, addr, port, *, use_tls=False, meta=None):
@@ -1522,11 +1537,10 @@ class HoneypotEngine:
                 _safe_send(client_sock, b"AMQP\x00\x00\x09\x01")
         except socket.timeout:
             pass
-        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=data or b"(sin datos)", banner_text="AMQP honeypot banner", summary="AMQP session", meta=meta)
+        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=data or b"(sin datos)", banner_text="AMQP banner", summary="AMQP session", meta=meta)
         self._emit_packet(packet)
 
     def _handle_ldap_service(self, client_sock, addr, port, *, use_tls=False, meta=None):
-        _safe_send(client_sock, TCP_BANNERS.get(port, "LDAP Honeypot Service Ready\r\n"))
         client_sock.settimeout(READ_TIMEOUT_SECONDS)
         data = b""
         try:
@@ -1535,15 +1549,14 @@ class HoneypotEngine:
                 _safe_send(client_sock, _build_ldap_bind_response(data))
         except socket.timeout:
             pass
-        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=data or b"(sin datos)", banner_text="LDAP honeypot banner", summary="LDAP session", meta=meta)
+        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=data or b"(sin datos)", banner_text="LDAP banner", summary="LDAP session", meta=meta)
         self._emit_packet(packet)
 
     def _handle_rtsp_service(self, client_sock, addr, port, *, meta=None):
-        _safe_send(client_sock, TCP_BANNERS.get(port, "RTSP/1.0 200 OK\r\nServer: Live555-Honeypot\r\n\r\n"))
         request = _read_http_request(client_sock)
         if request:
             _safe_send(client_sock, _build_rtsp_response(request.decode("utf-8", errors="replace")))
-        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=request or b"(sin datos)", banner_text="RTSP honeypot banner", summary="RTSP session", meta=meta)
+        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=request or b"(sin datos)", banner_text="RTSP banner", summary="RTSP session", meta=meta)
         self._emit_packet(packet)
 
     def _handle_dns_tcp_service(self, client_sock, addr, port, *, meta=None):
@@ -1575,7 +1588,7 @@ class HoneypotEngine:
             _safe_send(client_sock, len(response_body).to_bytes(2, "big") + response_body)
         except socket.timeout:
             pass
-        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=packet_data or b"(sin datos)", banner_text="DNS honeypot banner", summary="DNS query", meta=meta)
+        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=packet_data or b"(sin datos)", banner_text="DNS query", summary="DNS query", meta=meta)
         self._emit_packet(packet)
 
     def _handle_mongodb_service(self, client_sock, addr, port, *, meta=None):
@@ -1592,11 +1605,11 @@ class HoneypotEngine:
             data = client_sock.recv(MAX_PACKET_SIZE)
         except socket.timeout:
             pass
-        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=data or b"(sin datos)", banner_text="MongoDB honeypot banner", summary="MongoDB session", meta=meta)
+        packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=data or b"(sin datos)", banner_text="MongoDB banner", summary="MongoDB session", meta=meta)
         self._emit_packet(packet)
 
     def _handle_generic_tcp(self, client_sock, addr, port, *, use_tls=False, meta=None):
-        banner = TCP_BANNERS.get(port, "220 Honeypot Service Ready\r\n")
+        banner = TCP_BANNERS.get(port, "220 Service Ready\r\n")
         _safe_send(client_sock, banner)
         client_sock.settimeout(READ_TIMEOUT_SECONDS)
         data = b""
@@ -1627,7 +1640,7 @@ class HoneypotEngine:
             _, questions = _build_dns_response(data, response_ip)
             if questions:
                 meta["dns"] = {"questions": questions, "response_ip": response_ip}
-        packet = self._build_packet(protocol="udp", port=port, addr=addr, data=data, banner_text="UDP honeypot banner", summary="UDP datagram", meta=meta)
+        packet = self._build_packet(protocol="udp", port=port, addr=addr, data=data, banner_text="UDP datagram", summary="UDP datagram", meta=meta)
         self._emit_packet(packet)
 
     def _udp_response_for(self, port: int, data: bytes, addr):
@@ -1649,5 +1662,7 @@ class HoneypotEngine:
             return str(UDP_BANNERS[port]).encode("utf-8")
         if port in MDNS_UDP_PORTS:
             return UDP_BANNERS[5353]
-        banner = UDP_BANNERS.get(port, "Honeypot UDP Service\n")
+        banner = UDP_BANNERS.get(port)
+        if banner is None:
+            return None
         return banner.encode("utf-8") if isinstance(banner, str) else banner

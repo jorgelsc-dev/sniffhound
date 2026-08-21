@@ -116,8 +116,7 @@ class WifiDeauthFloodDetector(_SlidingWindowFloodDetector):
 
 class PortScanDetector:
     """Flags a source that touches many distinct destination ports within a
-    short window — classic TCP/UDP port-scan/reconnaissance behavior
-    (Suricata's SCAN category)."""
+    short window — classic TCP/UDP port-scan/reconnaissance behavior."""
 
     def __init__(self):
         self._window_seconds = settings.PORT_SCAN_WINDOW_SECONDS
@@ -164,7 +163,7 @@ class PortScanDetector:
 class SynFloodDetector(_SlidingWindowFloodDetector):
     """Flags a source sending an unusually high rate of bare TCP SYN
     (connection-initiation, no ACK) packets within a short window — the
-    classic SYN-flood DoS signature (Suricata's DOS category)."""
+    classic SYN-flood DoS signature."""
 
     def __init__(self):
         super().__init__(settings.SYN_FLOOD_WINDOW_SECONDS, settings.SYN_FLOOD_THRESHOLD)
@@ -331,7 +330,7 @@ class AnomalyEngine:
         # keys), so building a full id->monitor map by scanning `monitors`
         # here - as this used to do unconditionally - is O(len(monitors))
         # of wasted work on every single captured packet once that list
-        # gets into the thousands (see scripts/import_et_open_monitors.py).
+        # gets into the thousands (the full builtin catalog size).
         # Sniffer._store_packet passes the id map it already built once per
         # ~2s monitor refresh (monitors.indexed_monitors_by_id) instead;
         # this still falls back to building one here so direct callers

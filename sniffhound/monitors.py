@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import functools
 import re
 import threading
@@ -735,7 +736,7 @@ DEFAULT_MONITORS = [
         },
         "action": {"tag": "domain-typosquat-pattern", "label": "Typosquat-shaped domain", "severity": "low"},
     },
-    # --- Web attacks (Suricata WEB-ATTACKS/EXPLOIT-inspired signatures) ---
+    # --- Web attacks ---
     {
         "id": "builtin-path-traversal",
         "name": "Path traversal attempt",
@@ -896,7 +897,7 @@ DEFAULT_MONITORS = [
         "match": {"payload_regex": [r"class\.module\.classloader"]},
         "action": {"tag": "spring4shell-attempt", "label": "Spring4Shell attempt", "severity": "critical"},
     },
-    # --- Policy violations (Suricata POLICY-inspired) ---
+    # --- Policy violations ---
     {
         "id": "builtin-p2p-bittorrent",
         "name": "BitTorrent / P2P traffic",
@@ -1016,7 +1017,7 @@ DEFAULT_MONITORS = [
         "match": {"payload_regex": [r"\bxn--[a-z0-9-]+\b"]},
         "action": {"tag": "punycode-domain", "label": "Punycode/IDN domain", "severity": "low"},
     },
-    # --- Reconnaissance (Suricata SCAN-inspired, stateful) ---
+    # --- Reconnaissance (stateful) ---
     {
         "id": "builtin-port-scan",
         "name": "Port scan / reconnaissance",
@@ -1131,9 +1132,8 @@ def _default_monitor_path() -> Path:
 
 @functools.lru_cache(maxsize=1)
 def _load_builtin_monitors_cached() -> tuple[dict, ...]:
-    # The packaged default_monitors.json (see
-    # scripts/import_et_open_monitors.py) is read-only, installed data that
-    # never changes for the life of a running process - parsing and
+    # The packaged default_monitors.json is read-only, installed data
+    # that never changes for the life of a running process - parsing and
     # normalizing several thousand entries (a second-plus at this catalog's
     # size) on every single call, including SniffStore._seed_baseline()'s
     # own two calls per startup, is pure waste. Cached as a tuple (an
@@ -1155,7 +1155,7 @@ def _load_builtin_monitors_cached() -> tuple[dict, ...]:
 
 
 def load_builtin_monitors() -> list[dict]:
-    return list(_load_builtin_monitors_cached())
+    return [copy.deepcopy(item) for item in _load_builtin_monitors_cached()]
 
 
 def _validate_match_not_empty(match: dict):
@@ -1181,11 +1181,43 @@ def _validate_match_not_empty(match: dict):
 
 
 def _validate_regex_patterns(match: dict):
-    for pattern in match.get("payload_regex", []):
+    patterns = [str(pattern) for pattern in match.get("payload_regex", []) if str(pattern).strip()]
+    if len(patterns) > settings.MONITOR_MAX_REGEX_PATTERNS:
+        raise ValueError(f"Too many regex patterns (max {settings.MONITOR_MAX_REGEX_PATTERNS})")
+    for pattern in patterns:
+        if len(pattern) > settings.MONITOR_MAX_REGEX_LENGTH:
+            raise ValueError(f"Regex pattern is too long (max {settings.MONITOR_MAX_REGEX_LENGTH} characters)")
         try:
             re.compile(pattern)
         except re.error as exc:
             raise ValueError(f"Invalid regex pattern '{pattern}': {exc}") from exc
+        if _regex_has_backtracking_risk(pattern):
+            raise ValueError(f"Regex pattern has nested or ambiguous repetition risk: '{pattern}'")
+
+
+def _regex_has_backtracking_risk(pattern: str) -> bool:
+    """Cheap guardrail for user-defined monitor regexes.
+
+    SniffHound evaluates monitor regexes on the capture path, so reject the
+    common catastrophic-backtracking shapes up front instead of relying on a
+    runtime timeout that Python's stdlib regex engine does not provide.
+    """
+    if re.search(r"\\[1-9]", pattern):
+        return True
+    for group in re.findall(r"\(([^()]*)\)\s*(?:[+*]|\{\d+,?\d*\})", pattern):
+        has_inner_repeat = re.search(r"(?:\.\*|\.\+|\\[dwsDWS][+*]|\[[^\]]+\][+*]|[A-Za-z0-9][+*])", group)
+        has_literal_separator = re.search(r"(?:\\[./:_-]|[./:_-])", group)
+        if has_inner_repeat and not has_literal_separator:
+            return True
+    if re.search(r"\.\*\s*(?:\.\*|\{)", pattern):
+        return True
+    if re.search(r"\([^)]*\|[^)]*\)\s*(?:[+*]|\{\d+,?\d*\})", pattern):
+        alternatives = re.findall(r"\(([^)]*\|[^)]*)\)\s*(?:[+*]|\{\d+,?\d*\})", pattern)
+        for group in alternatives:
+            parts = [part.strip("\\^$") for part in group.split("|") if part]
+            if any(left and right and (left.startswith(right) or right.startswith(left)) for left in parts for right in parts if left != right):
+                return True
+    return False
 
 
 def normalize_monitor(item: dict, allow_source: bool = False, *, validate_regex: bool = True) -> dict:
@@ -1210,9 +1242,7 @@ def normalize_monitor(item: dict, allow_source: bool = False, *, validate_regex:
         # Always validated for user-submitted monitors (the API's
         # save_monitor -> normalize_monitor path), where a syntax error
         # should be rejected up front with a clear message. Skipped for
-        # load_builtin_monitors()'s large, already-generator-validated
-        # catalog (see scripts/import_et_open_monitors.py, which runs this
-        # exact check once at generation time) purely for load-time
+        # load_builtin_monitors()'s large, bundled catalog purely for load-time
         # performance - re.compile() on every one of several thousand
         # regexes on every single app startup adds real, avoidable delay.
         # Skipping it is still safe at match time: rule_matches_packet's
@@ -1243,8 +1273,8 @@ def monitor_matches_packet(monitor: dict, packet: dict, *, packet_text: str | No
 # --- Content index -----------------------------------------------------
 #
 # With only a few dozen monitors, checking every one of them against every
-# captured packet is cheap. With hundreds or thousands (see
-# scripts/import_et_open_monitors.py), it isn't - the vast majority carry a
+# captured packet is cheap. With hundreds or thousands (the full catalog
+# size), it isn't - the vast majority carry a
 # `payload_contains` criterion, so most of that work is "is any of these
 # literal strings present in this packet's text", which is exactly what a
 # multi-pattern matcher (sniffhound.ahocorasick.AhoCorasick) answers in one
@@ -1284,11 +1314,21 @@ _monitors_by_id: dict[str, dict] = {}
 _always_check: list[dict] = []
 _content_automaton = None
 _content_to_ids: dict[str, list[str]] = {}
+_monitor_positions: dict[str, int] = {}
 
 
 def _monitor_index_signature(monitors: list[dict]) -> tuple:
     return tuple(
-        (str(item.get("id") or ""), str(item.get("updated_at") or ""), bool(item.get("enabled", True)))
+        (
+            str(item.get("id") or ""),
+            str(item.get("updated_at") or ""),
+            bool(item.get("enabled", True)),
+            str(item.get("mode") or ""),
+            str(item.get("name") or ""),
+            safe_int(item.get("priority", 100), 100),
+            json.dumps(item.get("match") or {}, sort_keys=True, separators=(",", ":"), ensure_ascii=True),
+            json.dumps(item.get("action") or {}, sort_keys=True, separators=(",", ":"), ensure_ascii=True),
+        )
         for item in monitors
     )
 
@@ -1299,20 +1339,22 @@ def ensure_monitor_index(monitors: list[dict]) -> None:
     MONITOR_CACHE_TTL_SECONDS), not from the per-packet path - the
     signature computation alone is O(len(monitors))."""
     global _indexed_monitors_ref, _index_signature, _building_signature
-    global _monitors_by_id, _always_check
+    global _monitors_by_id, _always_check, _monitor_positions
 
     signature = _monitor_index_signature(monitors)
     with _index_lock:
-        _indexed_monitors_ref = monitors
         if signature == _index_signature:
+            _indexed_monitors_ref = monitors
             return
         _index_signature = signature
 
         monitors_by_id: dict[str, dict] = {}
         always_check: list[dict] = []
         content_to_ids: dict[str, list[str]] = {}
-        for monitor in monitors:
+        monitor_positions: dict[str, int] = {}
+        for position, monitor in enumerate(monitors):
             monitor_id = str(monitor.get("id") or "")
+            monitor_positions[monitor_id] = position
             monitors_by_id[monitor_id] = monitor
             contains = (monitor.get("match") or {}).get("payload_contains") or []
             if not contains:
@@ -1322,6 +1364,8 @@ def ensure_monitor_index(monitors: list[dict]) -> None:
                 content_to_ids.setdefault(str(content).lower(), []).append(monitor_id)
         _monitors_by_id = monitors_by_id
         _always_check = always_check
+        _monitor_positions = monitor_positions
+        _indexed_monitors_ref = monitors
 
         already_building = _building_signature == signature
         _building_signature = signature
@@ -1365,6 +1409,7 @@ def _indexed_candidates(monitors: list[dict], packet_text: str) -> list[dict] | 
         content_to_ids = _content_to_ids
         monitors_by_id = _monitors_by_id
         always_check = _always_check
+        monitor_positions = _monitor_positions
 
     hit_ids: set[str] = set()
     for content in automaton.search(packet_text):
@@ -1375,19 +1420,17 @@ def _indexed_candidates(monitors: list[dict], packet_text: str) -> list[dict] | 
         monitor = monitors_by_id.get(monitor_id)
         if monitor is not None:
             candidates.append(monitor)
+    candidates.sort(key=lambda item: monitor_positions.get(str(item.get("id") or ""), len(monitor_positions)))
     return candidates
 
 
 class RuleAlertThrottle:
-    """Per-process rate limiter for rule/regex-mode monitor hits - the
-    declarative-match equivalent of Suricata's per-signature `threshold`/
-    `detection_filter` keywords. Without it, any monitor whose match
-    criteria stay true for many packets in the same burst (a scan, a page
-    load pulling in dozens of resources, a chatty flow) re-fires on every
-    single matching packet, which is exactly what made the imported ET Open
-    catalog (scripts/import_et_open_monitors.py) so noisy in practice: a
-    generic-enough signature can match hundreds of times in one capture
-    window with no throttling at all.
+    """Per-process rate limiter for rule/regex-mode monitor hits - a
+    declarative, per-signature rate limit. Without it, any monitor whose
+    match criteria stay true for many packets in the same burst (a scan, a
+    page load pulling in dozens of resources, a chatty flow) re-fires on
+    every single matching packet: a generic-enough signature can match
+    hundreds of times in one capture window with no throttling at all.
 
     Deliberately scoped to severities "medium" and up: "info"/"low"
     monitors (DNS/HTTP/TLS-SNI/L2 discovery/protocol-seen/WiFi visibility/

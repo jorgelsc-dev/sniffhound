@@ -5,7 +5,7 @@
 | Variable | Default | Uso |
 | --- | --- | --- |
 | `SNIFFHOUND_HOST` | `127.0.0.1` | Host de escucha de la app. |
-| `SNIFFHOUND_PORT` | `45678` | Puerto HTTP principal. |
+| `SNIFFHOUND_PORT` | `45678` | Override explicito del puerto HTTP principal; sin override, SniffHound intenta `45678` primero. |
 | `SNIFFHOUND_DB_PATH` | `SniffHound.db` | Ruta de SQLite. |
 | `SNIFFHOUND_RUNTIME_MODE` | `sniffer` | Motor inicial. |
 | `SNIFFHOUND_MODE` | `sniffer` | Alias legado de `SNIFFHOUND_RUNTIME_MODE`. |

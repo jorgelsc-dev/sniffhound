@@ -126,6 +126,28 @@ def extract_dns_query_name(payload: bytes) -> str:
         return ""
 
 
+def _looks_like_tls_record(payload: bytes) -> bool:
+    """True for any TLS record (ContentType + ProtocolVersion header:
+    handshake 0x16, application data 0x17, alert 0x15, change-cipher-spec
+    0x14, each followed by 0x03 0x00-0x04 for SSLv3/TLS1.0-1.3) - not just
+    the ClientHello case _classify_tcp_banner already special-cases.
+
+    Only the handshake's ClientHello is ever meaningfully cleartext (that's
+    what extract_tls_sni parses, straight off the raw bytes - unaffected by
+    this function). Everything else, and above all TLS Application Data
+    (0x17) - the bulk of any HTTPS session after the handshake completes -
+    is ciphertext: uniformly random bytes that, sampled over is_printable_
+    payload's 128-byte window, pass the "mostly printable ASCII" check
+    often enough to be decoded as pseudo-readable garbage. That garbage
+    then coincidentally matches all kinds of unrelated monitor content/
+    regex patterns (a stray "google.com"-shaped run, a 2-letter country
+    code, a TLD suffix) - a real, observed false-positive source across
+    many monitors, not a hypothetical one. Skip it entirely rather than
+    let it enter payload_text/summary/banner_text at all.
+    """
+    return len(payload) >= 3 and payload[0] in (0x14, 0x15, 0x16, 0x17) and payload[1] == 0x03 and payload[2] <= 0x04
+
+
 def extract_tls_sni(payload: bytes) -> str:
     try:
         if len(payload) < 44 or payload[0] != 0x16:
@@ -792,8 +814,7 @@ class Sniffer:
         if now - self._monitor_cache_at >= MONITOR_CACHE_TTL_SECONDS:
             # store.list_monitors() - a full SELECT plus a JSON decode of
             # two columns per row - runs in well under a millisecond at a
-            # few dozen monitors, but at the catalog sizes
-            # scripts/import_et_open_monitors.py produces (tens of
+            # few dozen monitors, but at the full catalog size (tens of
             # thousands) it costs well over a second. This method runs on
             # the capture thread for every packet whose TTL has expired, so
             # doing that fetch here synchronously would stall live capture
@@ -1919,6 +1940,15 @@ class Sniffer:
     def _interpret_payload(self, packet: dict, payload: bytes) -> str:
         if not payload:
             return ""
+        # A TLS record (handshake, application data, alert, ...) is
+        # ciphertext beyond the ClientHello - is_printable_payload's 55%-
+        # of-first-128-bytes heuristic isn't reliable enough to reject it
+        # (uniformly random bytes clear that bar often enough in practice,
+        # confirmed against real captured traffic), so check the record
+        # header explicitly first rather than relying on that heuristic
+        # alone for this specific, very common case.
+        if _looks_like_tls_record(payload):
+            return ""
         # Binary/encrypted payloads decode into misleading "text" here -
         # `bytes.decode(errors="ignore")` silently drops undecodable bytes
         # and keeps whatever printable-looking fragments remain, which is
@@ -1935,9 +1965,17 @@ class Sniffer:
     def _classify_tcp_banner(self, packet: dict, payload: bytes) -> str:
         src_port = safe_int(packet.get("src_port"), 0)
         dst_port = safe_int(packet.get("dst_port"), 0)
-        text = bytes_to_text_preview(payload, limit=PAYLOAD_TEXT_MAX_CHARS)
         if payload.startswith(b"\x16\x03"):
             return "TLS handshake"
+        # Any other TLS record (application data, alert, change-cipher-spec)
+        # is ciphertext - `text` below is only meaningful decoded output for
+        # genuine cleartext protocols, so this must come before it's used as
+        # the fallback return value, or ciphertext-decoded-as-garbage leaks
+        # into banner_text/summary exactly like the payload_text case this
+        # mirrors (see _interpret_payload/_looks_like_tls_record).
+        if _looks_like_tls_record(payload):
+            return "TLS application data"
+        text = bytes_to_text_preview(payload, limit=PAYLOAD_TEXT_MAX_CHARS)
         if text.startswith("HTTP/1."):
             return "HTTP response"
         if text.startswith("GET ") or text.startswith("POST ") or text.startswith("HEAD "):

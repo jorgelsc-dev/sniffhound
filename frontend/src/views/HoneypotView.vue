@@ -2,8 +2,8 @@
   <div>
     <ViewHeader
       overline="Active Defense"
-      title="Honeypot"
-      description="Inspect inbound traffic that reached honeypot listeners and review the responses emitted by those services."
+      title="Inbound Services"
+      description="Inspect inbound traffic that reached service listeners and review the responses emitted by those services."
       :refresh-loading="loading"
       @refresh="load"
     />
@@ -28,8 +28,8 @@
     </v-alert>
 
     <DataPanel
-      title="Honeypot Engine"
-      subtitle="Only one engine (Sniffer or Honeypot) runs at a time. Starting this one stops the other. Only activate honeypot mode where you're allowed to bind the listener ports."
+      title="Service Listener Engine"
+      subtitle="Only one engine runs at a time. Starting this one stops packet capture. Only activate listener mode where you're allowed to bind the configured ports."
       variant="tonal"
       collapsible
       :count="runtime.packets_seen || 0"
@@ -41,16 +41,6 @@
         <v-chip size="small" :color="engineChipColor" variant="tonal" :prepend-icon="engineStatusIcon">
           {{ engineStatusLabel }}
         </v-chip>
-        <v-btn
-          size="small"
-          :color="engineActionColor"
-          variant="outlined"
-          :prepend-icon="engineActionIcon"
-          :loading="runtimeSubmitting"
-          @click="toggleEngine"
-        >
-          {{ engineActionLabel }}
-        </v-btn>
       </template>
     </DataPanel>
 
@@ -79,7 +69,7 @@
       <v-card class="pa-4">
         <div class="text-h6 mb-3">Clear alerts?</div>
         <div class="text-caption text-medium-emphasis mb-3">
-          Deletes every stored honeypot hit (inbound traffic, responses, and the TLS/DNS event
+          Deletes every stored inbound-service hit (inbound traffic, responses, and the TLS/DNS event
           detail behind them). Listener definitions and their enabled/disabled state are untouched.
           This can't be undone.
         </div>
@@ -99,8 +89,8 @@
       <v-col cols="12" md="5">
         <v-text-field
           v-model.trim="filters.query"
-          label="Search honeypot traffic"
-          name="honeypot_search"
+          label="Search service traffic"
+          name="service_search"
           placeholder="IP, port, response, summary..."
           prepend-inner-icon="mdi-magnify"
           clearable
@@ -150,7 +140,7 @@
       <v-col cols="12" xl="7">
         <EntityTablePanel
           title="Inbound Traffic"
-          subtitle="Connections and datagrams that hit honeypot listeners."
+          subtitle="Connections and datagrams that hit service listeners."
           v-model:live-enabled="liveRefreshEnabled"
           :rows="filteredPackets"
           :columns="packetColumns"
@@ -160,7 +150,7 @@
           :last-updated="lastUpdated"
           :live-refresh="true"
           :page-size="30"
-          empty-text="No honeypot traffic recorded"
+          empty-text="No service traffic recorded"
           @refresh="load"
         >
           <template #cell-updated_at="{ value }">
@@ -168,7 +158,7 @@
           </template>
           <template #cell-interface="{ value }">
             <v-chip size="x-small" color="warning" variant="tonal">
-              {{ value || "honeypot" }}
+              {{ value || "service" }}
             </v-chip>
           </template>
           <template #cell-proto="{ value }">
@@ -201,8 +191,8 @@
 
       <v-col cols="12" xl="5">
         <EntityTablePanel
-          title="Honeypot Responses"
-          subtitle="Decoded payloads and replies emitted by honeypot services."
+          title="Service Responses"
+          subtitle="Decoded payloads and replies emitted by service listeners."
           v-model:live-enabled="liveRefreshEnabled"
           :rows="filteredBanners"
           :columns="bannerColumns"
@@ -212,7 +202,7 @@
           :last-updated="lastUpdated"
           :live-refresh="true"
           :page-size="30"
-          empty-text="No honeypot responses recorded"
+          empty-text="No service responses recorded"
           @refresh="load"
         >
           <template #cell-updated_at="{ value }">
@@ -220,7 +210,7 @@
           </template>
           <template #cell-interface="{ value }">
             <v-chip size="x-small" color="warning" variant="tonal">
-              {{ value || "honeypot" }}
+              {{ value || "service" }}
             </v-chip>
           </template>
           <template #cell-proto="{ value }">
@@ -292,7 +282,6 @@ export default {
       liveRefreshEnabled: true,
       packets: [],
       banners: [],
-      runtimeSubmitting: false,
       runtimeError: "",
       clearDialog: false,
       clearing: false,
@@ -330,11 +319,10 @@ export default {
   },
   computed: {
     honeypotHitsMonitor() {
-      // Not a real entry in the monitors catalog (honeypot traffic never
-      // runs through evaluate_packet/AnomalyEngine) - just enough shape for
-      // MonitorMatchesPanel to query /api/monitors/packets/?monitor_id=
-      // builtin-honeypot-hit, the id honeypot.py tags every hit with.
-      return { id: "builtin-honeypot-hit", name: "Honeypot hits" };
+      // Not a real entry in the monitors catalog; listener traffic never runs
+      // through evaluate_packet/AnomalyEngine. This shape lets
+      // MonitorMatchesPanel query the synthetic inbound-service hit id.
+      return { id: "builtin-inbound-service-hit", name: "Inbound service hits" };
     },
     apiBase() {
       return this.store.state.apiBase;
@@ -356,15 +344,6 @@ export default {
     engineStatusIcon() {
       return this.runtime.running ? "mdi-play-circle-outline" : "mdi-stop-circle-outline";
     },
-    engineActionLabel() {
-      return this.runtime.running ? "Stop" : "Start";
-    },
-    engineActionColor() {
-      return this.runtime.running ? "warning" : "primary";
-    },
-    engineActionIcon() {
-      return this.runtime.running ? "mdi-stop" : "mdi-play";
-    },
     metricCards() {
       const packets = this.packets;
       const sources = new Set(packets.map((item) => String(item.src_ip || "").trim()).filter(Boolean));
@@ -375,7 +354,7 @@ export default {
           key: "events",
           label: "Traffic Hits",
           value: packets.length,
-          caption: "Inbound events accepted by honeypot listeners",
+          caption: "Inbound events accepted by service listeners",
           icon: "mdi-radar",
           colorClass: "text-warning",
         },
@@ -383,7 +362,7 @@ export default {
           key: "responses",
           label: "Responses",
           value: this.banners.length,
-          caption: "Decoded honeypot payload or banner rows",
+          caption: "Decoded service payload or banner rows",
           icon: "mdi-reply-all",
           colorClass: "text-info",
         },
@@ -503,20 +482,6 @@ export default {
     formatSize(value) {
       return formatBytes(value) || "-";
     },
-    toggleEngine() {
-      if (this.runtimeSubmitting) return;
-      const action = this.runtime.running ? "stop" : "start";
-      this.runtimeError = "";
-      this.runtimeSubmitting = true;
-      this.store
-        .controlRuntimeMode("honeypot", action)
-        .catch((err) => {
-          this.runtimeError = (err && err.message) || `Failed to ${action} the honeypot`;
-        })
-        .finally(() => {
-          this.runtimeSubmitting = false;
-        });
-    },
     confirmClear() {
       this.clearing = true;
       this.clearError = "";
@@ -548,7 +513,7 @@ export default {
       this.wsRefreshTimer = setTimeout(() => {
         this.wsRefreshTimer = null;
         this.load({ silent: true }).catch(() => {
-          // keep current honeypot view on transient realtime failures
+          // keep current listener view on transient realtime failures
         });
       }, 10000);
     },
@@ -566,13 +531,13 @@ export default {
             this.packets = this.store.extractArray(packetsRes.value);
           } else {
             this.packets = [];
-            errors.push((packetsRes.reason && packetsRes.reason.message) || "Failed to load honeypot traffic");
+            errors.push((packetsRes.reason && packetsRes.reason.message) || "Failed to load service traffic");
           }
           if (bannersRes.status === "fulfilled") {
             this.banners = this.store.extractArray(bannersRes.value);
           } else {
             this.banners = [];
-            errors.push((bannersRes.reason && bannersRes.reason.message) || "Failed to load honeypot responses");
+            errors.push((bannersRes.reason && bannersRes.reason.message) || "Failed to load service responses");
           }
           this.error = errors.join(" | ");
           this.syncFilters();

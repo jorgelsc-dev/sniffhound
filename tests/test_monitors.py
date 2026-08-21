@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 import time
 import unittest
@@ -68,15 +69,15 @@ def _packet(**overrides) -> dict:
 
 class TestLoadBuiltinMonitors(unittest.TestCase):
     """load_builtin_monitors() prefers sniffhound/data/default_monitors.json
-    (see scripts/import_et_open_monitors.py) over the smaller hand-written
+    (the full bundled catalog) over the smaller hand-written
     DEFAULT_MONITORS list, but silently falls back to DEFAULT_MONITORS on
     *any* exception while reading/normalizing that file - a single bad
     entry would otherwise take the other ~900+ down with it. Pin the
     guarantees that make that safe."""
 
-    def test_loads_at_least_a_thousand_monitors(self):
+    def test_loads_at_least_two_thousand_monitors(self):
         monitors = load_builtin_monitors()
-        self.assertGreaterEqual(len(monitors), 1000)
+        self.assertGreaterEqual(len(monitors), 2000)
 
     def test_did_not_silently_fall_back_to_the_small_default_list(self):
         # If default_monitors.json failed to parse/normalize, every builtin
@@ -92,6 +93,12 @@ class TestLoadBuiltinMonitors(unittest.TestCase):
         ids = [item["id"] for item in monitors]
         self.assertEqual(len(ids), len(set(ids)))
 
+    def test_builtin_monitor_loads_do_not_share_mutable_rows(self):
+        monitors = load_builtin_monitors()
+        original_name = monitors[0]["name"]
+        monitors[0]["name"] = "Mutated in one caller"
+        self.assertEqual(load_builtin_monitors()[0]["name"], original_name)
+
     def test_every_builtin_monitor_is_already_normalized(self):
         # normalize_monitor() must be idempotent on load_builtin_monitors()'s
         # own output - re-normalizing (as store.py does when seeding/saving)
@@ -101,6 +108,43 @@ class TestLoadBuiltinMonitors(unittest.TestCase):
             self.assertEqual(renormalized["id"], monitor["id"])
             self.assertIn(monitor["action"]["severity"], {"critical", "high", "medium", "low", "info"})
             self.assertIn(monitor["mode"], {"rule", "regex", "stateful"})
+
+    def test_builtin_catalog_has_source_neutral_visible_text(self):
+        blocked = re.compile(
+            "|".join(
+                (
+                    r"adapted\s+from",
+                    r"\b" + "emer" + "ging" + r"\s+" + "thr" + "eats?" + r"\b",
+                    r"\b" + "pro" + "of" + "point" + r"\b",
+                    r"\b" + "suri" + "cata" + r"\b",
+                    r"\b" + "sno" + "rt" + r"\b",
+                    r"\b" + "e" + "t" + r"[\s-]+open\b",
+                    r"\b[a-z]{1,3}-open-\d",
+                    r"\b" + "e" + "t" + r"\b",
+                    r"https?://",
+                )
+            ),
+            re.IGNORECASE,
+        )
+        bad = []
+        for monitor in load_builtin_monitors():
+            action = monitor.get("action") if isinstance(monitor.get("action"), dict) else {}
+            text = json.dumps(
+                {
+                    "id": monitor.get("id"),
+                    "name": monitor.get("name"),
+                    "description": monitor.get("description"),
+                    "source": monitor.get("source"),
+                    "match": monitor.get("match"),
+                    "action_tag": action.get("tag"),
+                    "action_label": action.get("label"),
+                },
+                ensure_ascii=True,
+                sort_keys=True,
+            )
+            if blocked.search(text):
+                bad.append(monitor.get("id"))
+        self.assertEqual(bad[:10], [])
 
 
 class TestNormalizeMonitor(unittest.TestCase):
@@ -113,6 +157,22 @@ class TestNormalizeMonitor(unittest.TestCase):
             normalize_monitor(
                 {"id": "bad-regex", "name": "Bad regex", "match": {"payload_regex": ["("]}}
             )
+
+    def test_rejects_regex_with_backtracking_risk(self):
+        with self.assertRaises(ValueError):
+            normalize_monitor(
+                {
+                    "id": "redos-risk",
+                    "name": "Risky regex",
+                    "match": {"payload_regex": [r"(a+)+$"]},
+                }
+            )
+
+    def test_rejects_blank_string_only_criteria(self):
+        for key in ("payload_contains", "payload_prefix_hex", "payload_regex", "protocols"):
+            with self.subTest(key=key):
+                with self.assertRaises(ValueError):
+                    normalize_monitor({"id": f"blank-{key}", "name": "Blank", "match": {key: ["   "]}})
 
     def test_accepts_rule_mode(self):
         monitor = normalize_monitor(
@@ -204,6 +264,75 @@ class TestEvaluatePacket(unittest.TestCase):
         hits = evaluate_packet(_packet(payload_text="anything"), [broken])
         self.assertEqual(hits, [])
 
+    def test_corrupt_blank_criteria_do_not_match_every_packet(self):
+        monitor = {
+            "id": "corrupt-blank",
+            "name": "Corrupt blank",
+            "enabled": True,
+            "mode": "rule",
+            "match": {"payload_contains": ["   "], "payload_regex": ["   "], "payload_prefix_hex": ["   "]},
+            "action": {"tag": "corrupt-blank", "label": "Corrupt blank", "severity": "high"},
+        }
+        self.assertEqual(evaluate_packet(_packet(payload_text="ordinary traffic"), [monitor]), [])
+
+    def test_payload_literals_do_not_match_only_endpoint_addresses(self):
+        monitor = normalize_monitor(
+            {
+                "id": "address-literal",
+                "name": "Address literal",
+                "match": {"payload_contains": ["10.0.0.5"]},
+                "action": {"tag": "address-literal", "label": "Address literal", "severity": "medium"},
+            }
+        )
+        self.assertEqual(evaluate_packet(_packet(src_ip="10.0.0.5", payload_text="ordinary traffic"), [monitor]), [])
+
+    def test_full_builtin_catalog_still_matches_core_monitors(self):
+        hits = evaluate_packet(
+            _packet(payload_text="POST /login HTTP/1.1\r\nusername=admin&password=hunter2"),
+            load_builtin_monitors(),
+        )
+        self.assertIn("credentials", {hit["tag"] for hit in hits})
+
+    def test_monitor_index_refreshes_when_match_changes_without_timestamp_change(self):
+        first = [
+            normalize_monitor(
+                {
+                    "id": "custom-index-refresh",
+                    "name": "Old signal",
+                    "updated_at": "2026-01-01T00:00:00Z",
+                    "match": {"payload_contains": ["old-index-signal"]},
+                    "action": {"tag": "old-index-signal", "label": "Old signal", "severity": "medium"},
+                }
+            )
+        ]
+        second = [
+            normalize_monitor(
+                {
+                    "id": "custom-index-refresh",
+                    "name": "New signal",
+                    "updated_at": "2026-01-01T00:00:00Z",
+                    "match": {"payload_contains": ["new-index-signal"]},
+                    "action": {"tag": "new-index-signal", "label": "New signal", "severity": "medium"},
+                }
+            )
+        ]
+
+        monitors_module.ensure_monitor_index(first)
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and "old-index-signal" not in monitors_module._content_to_ids:
+            time.sleep(0.01)
+        self.assertIn("old-index-signal", monitors_module._content_to_ids)
+
+        monitors_module.ensure_monitor_index(second)
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and "new-index-signal" not in monitors_module._content_to_ids:
+            time.sleep(0.01)
+        self.assertIn("new-index-signal", monitors_module._content_to_ids)
+
+        self.assertEqual(evaluate_packet(_packet(payload_text="old-index-signal"), second), [])
+        hits = evaluate_packet(_packet(payload_text="new-index-signal"), second)
+        self.assertEqual({hit["tag"] for hit in hits}, {"new-index-signal"})
+
 
 class TestDescribeMatch(unittest.TestCase):
     def setUp(self):
@@ -245,10 +374,33 @@ class TestStoreMonitors(unittest.TestCase):
 
     def test_builtin_monitors_are_seeded(self):
         monitors = self.store.list_monitors()
+        self.assertGreaterEqual(len(monitors), 2000)
         ids = {row["id"] for row in monitors}
         self.assertIn("builtin-credentials", ids)
         self.assertIn("builtin-arp-spoof", ids)
         self.assertTrue(all(row["source"] == "builtin" for row in monitors))
+
+    def test_builtin_monitor_definitions_sync_on_reopen(self):
+        with self.store._lock:
+            self.store._conn.execute(
+                """
+                UPDATE monitors
+                SET name = 'Legacy catalog name',
+                    description = 'Legacy catalog description',
+                    action_json = '{"tag":"legacy-catalog","label":"Legacy catalog","severity":"low"}'
+                WHERE id = 'builtin-credentials'
+                """
+            )
+            self.store._conn.commit()
+
+        reopened = SniffStore(self.db_path)
+        try:
+            updated = {row["id"]: row for row in reopened.list_monitors()}["builtin-credentials"]
+        finally:
+            reopened.close()
+
+        self.assertEqual(updated["name"], "Cleartext credentials")
+        self.assertEqual(updated["action"]["tag"], "credentials")
 
     def test_new_builtin_monitors_reach_an_already_populated_db_without_touching_custom_rows(self):
         # Regression test for _seed_new_builtin_monitors(): simulate an
@@ -277,8 +429,8 @@ class TestStoreMonitors(unittest.TestCase):
         self.assertIn("custom-1", ids_after)
 
     def test_stale_builtin_monitors_are_pruned_without_touching_custom_rows(self):
-        # Regression test: scripts/import_et_open_monitors.py's output can
-        # change between runs (a pattern that turned out to be a
+        # Regression test: the bundled catalog can change between
+        # releases (a pattern that turned out to be a
         # false-positive magnet gets filtered out by a later, stricter
         # heuristic), and a plain additive migration would leave a builtin
         # id seeded by an earlier run sitting in the table forever, still
@@ -290,7 +442,7 @@ class TestStoreMonitors(unittest.TestCase):
         self.store.save_monitor(
             {"id": "custom-1", "name": "My custom monitor", "match": {"ports": [9999]}}
         )
-        stale_id = "et-open-0000000-not-in-current-catalog"
+        stale_id = "sig-legacy-0000000-not-in-current-catalog"
         with self.store._lock:
             self.store._conn.execute(
                 """

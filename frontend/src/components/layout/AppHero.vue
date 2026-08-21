@@ -5,12 +5,12 @@
         <div class="text-overline text-primary">Network telemetry</div>
         <div class="text-h4 text-md-h3 font-weight-bold">SniffHound Control Room</div>
         <div class="text-body-1 text-medium-emphasis mt-2">
-          Start and configure the sniffer or the honeypot from their own dedicated views, then
-          drill into passive capture, inbound honeypot hits, and detection monitors from here.
+          Start and configure packet capture or service listeners from their own dedicated views,
+          then drill into passive capture, inbound service hits, and detection monitors from here.
         </div>
         <div class="d-flex flex-wrap ga-3 mt-4">
           <v-btn color="primary" variant="flat" to="/sniffer">Sniffer</v-btn>
-          <v-btn color="warning" variant="outlined" to="/honeypot">Honeypot</v-btn>
+          <v-btn color="warning" variant="outlined" to="/honeypot">Services</v-btn>
           <v-btn color="info" variant="outlined" to="/monitors">Monitors</v-btn>
         </div>
         <v-alert
@@ -21,7 +21,7 @@
           icon="mdi-shield-check-outline"
         >
           Authorized use only. Run SniffHound exclusively on systems, networks and IP ranges you
-          own or administer, and only activate honeypot mode where you are allowed to bind the
+          own or administer, and only activate listener mode where you are allowed to bind the
           selected ports.
         </v-alert>
       </v-col>

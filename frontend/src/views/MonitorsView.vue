@@ -53,8 +53,8 @@
       <v-card class="pa-4">
         <div class="text-h6 mb-3">Clear alerts?</div>
         <div class="text-caption text-medium-emphasis mb-3">
-          Deletes every stored packet/tag matched by a monitor (sniffer-side traffic only - honeypot
-          hits are cleared separately from the Honeypot view). Monitor definitions and their
+          Deletes every stored packet/tag matched by a monitor (sniffer-side traffic only - inbound
+          service hits are cleared separately from the Services view). Monitor definitions and their
           enabled/disabled state are untouched. This can't be undone.
         </div>
         <v-alert v-if="clearError" type="error" variant="tonal" density="comfortable" class="mb-3">

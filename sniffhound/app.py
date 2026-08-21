@@ -385,9 +385,9 @@ ENDPOINTS = [
     {"method": "POST", "path": "/api/runtime/", "desc": "Switch runtime mode or update the sniffer interface."},
     {"method": "GET", "path": "/api/wifi/monitor", "desc": "WiFi 802.11 monitor-mode capture status."},
     {"method": "POST", "path": "/api/wifi/monitor", "desc": "Toggle WiFi 802.11 monitor-mode capture on an interface."},
-    {"method": "GET", "path": "/api/honeypot/listeners/", "desc": "List honeypot listeners (builtin + custom) and their enabled/running state."},
-    {"method": "POST", "path": "/api/honeypot/listeners/", "desc": "Create a new honeypot listener. Listeners can only be created or toggled, never edited or deleted."},
-    {"method": "POST", "path": "/api/honeypot/listeners/toggle", "desc": "Enable/disable a honeypot listener (builtin or custom) without removing it."},
+    {"method": "GET", "path": "/api/honeypot/listeners/", "desc": "List service listeners (builtin + custom) and their enabled/running state."},
+    {"method": "POST", "path": "/api/honeypot/listeners/", "desc": "Create a new service listener. Listeners can only be created or toggled, never edited or deleted."},
+    {"method": "POST", "path": "/api/honeypot/listeners/toggle", "desc": "Enable/disable a service listener (builtin or custom) without removing it."},
     {"method": "GET", "path": "/api/ws/clients", "desc": "Connected WebSocket clients."},
     {"method": "POST", "path": "/api/ws/broadcast", "desc": "Broadcast a WebSocket payload."},
     {"method": "POST", "path": "/api/ws/ping", "desc": "Ping all WebSocket clients."},
@@ -424,7 +424,7 @@ ENDPOINTS = [
     {"method": "GET", "path": "/api/paths/", "desc": "Searchable catalog of HTTP request paths."},
     {"method": "GET", "path": "/api/intel/ips/", "desc": "Searchable catalog of IPs seen in stored traffic."},
     {"method": "GET", "path": "/api/monitors/packets/", "desc": "Packets that matched a given monitor."},
-    {"method": "POST", "path": "/api/data/clear/", "desc": "Clear stored detection history (packets/tags/payloads, plus honeypot event detail) for a scope: 'monitors', 'honeypot', or 'all'. Never deletes monitor/listener definitions."},
+    {"method": "POST", "path": "/api/data/clear/", "desc": "Clear stored detection history (packets/tags/payloads, plus listener event detail) for a scope: 'monitors', 'honeypot', or 'all'. Never deletes monitor/listener definitions."},
 ]
 
 _STATIC_ROUTES_REGISTERED = False

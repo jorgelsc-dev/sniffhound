@@ -77,7 +77,7 @@ python -m sniffhound
 
 Notas del launcher:
 
-- si `45678` esta ocupado, prueba el resto del bloque de 10 puertos y avisa cual usa;
+- usa `45678` por defecto; si esta ocupado, prueba una ventana cercana de 100 puertos y avisa cual usa;
 - si faltan privilegios para captura raw y corresponde elevar, intenta relanzarse con `sudo`;
 - si solo quieres abrir la UI sin autoarranque de captura, usa `SNIFFHOUND_CAPTURE_AUTO_START=0`.
 

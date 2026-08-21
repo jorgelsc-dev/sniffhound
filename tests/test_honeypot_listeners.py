@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from sniffhound.honeypot import HoneypotEngine
+from sniffhound.honeypot import HoneypotEngine, TCP_BANNERS, UDP_BANNERS, _build_rtsp_response, _build_sip_response
 from sniffhound.store import SniffStore
 
 
@@ -66,14 +66,21 @@ class TestSeedingDoesNotImportHeavyHoneypotModule(unittest.TestCase):
         repo_root = str(Path(__file__).resolve().parents[1])
         env = {**os.environ, "PYTHONPATH": repo_root}
         result = subprocess.run(
-            [sys.executable, "-c", "from sniffhound.honeypot_ports import COMMON_PORTS; print(len(COMMON_PORTS['tcp']))"],
+            [
+                sys.executable,
+                "-c",
+                "from sniffhound.honeypot_ports import COMMON_PORTS; "
+                "print(len(COMMON_PORTS['tcp']), len(COMMON_PORTS['udp']))",
+            ],
             env=env,
             capture_output=True,
             text=True,
             timeout=30,
         )
         self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertTrue(int(result.stdout.strip()) > 0)
+        tcp_count, udp_count = (int(item) for item in result.stdout.strip().split())
+        self.assertGreaterEqual(tcp_count, 200)
+        self.assertGreaterEqual(udp_count, 50)
 
 
 class TestHoneypotListenerStore(unittest.TestCase):
@@ -95,20 +102,26 @@ class TestHoneypotListenerStore(unittest.TestCase):
         self.assertTrue(all(item["source"] == "builtin" for item in listeners))
         self.assertTrue(all(item["enabled"] for item in listeners))
         ids = {item["id"] for item in listeners}
+        self.assertGreaterEqual(len(ids), 280)
         self.assertIn("tcp/22", ids)  # SSH is always in COMMON_PORTS
+        self.assertIn("tcp/502", ids)  # Modbus/OT
+        self.assertIn("tcp/6443", ids)  # Kubernetes API
+        self.assertIn("tcp/27018", ids)  # MongoDB alternate
+        self.assertIn("udp/623", ids)  # IPMI
+        self.assertIn("udp/47808", ids)  # BACnet/IP
 
     def test_create_custom_listener(self):
-        listener = self.store.create_honeypot_listener("tcp", 8022, label="Fake SSH #2")
-        self.assertEqual(listener["id"], "tcp/8022")
+        listener = self.store.create_honeypot_listener("tcp", 65000, label="Fake SSH #2")
+        self.assertEqual(listener["id"], "tcp/65000")
         self.assertEqual(listener["source"], "custom")
         self.assertTrue(listener["enabled"])
         self.assertEqual(listener["label"], "Fake SSH #2")
         self.assertIn(listener["id"], {item["id"] for item in self.store.list_honeypot_listeners()})
 
     def test_create_duplicate_listener_raises(self):
-        self.store.create_honeypot_listener("tcp", 8022)
+        self.store.create_honeypot_listener("tcp", 65000)
         with self.assertRaises(ValueError):
-            self.store.create_honeypot_listener("tcp", 8022)
+            self.store.create_honeypot_listener("tcp", 65000)
 
     def test_create_listener_rejects_bad_proto(self):
         with self.assertRaises(ValueError):
@@ -255,8 +268,44 @@ class TestHoneypotPacketNotificationTags(unittest.TestCase):
         tag_map = {tag["key"]: tag for tag in packet["tags"]}
         self.assertIn("monitor", tag_map)
         self.assertIn("monitor_id", tag_map)
+        self.assertEqual(packet["interface"], "service:22")
         self.assertEqual(tag_map["monitor"]["severity"], "critical")
-        self.assertEqual(tag_map["monitor_id"]["value"], "builtin-honeypot-hit")
+        self.assertEqual(tag_map["monitor"]["value"], "Inbound service hit")
+        self.assertEqual(tag_map["monitor_id"]["value"], "builtin-inbound-service-hit")
+        self.assertEqual(tag_map["mode"]["value"], "service")
+        exported_text = repr(
+            {
+                "interface": packet.get("interface"),
+                "summary": packet.get("summary"),
+                "banner_text": packet.get("banner_text"),
+                "tags": packet.get("tags"),
+                "rule_hits": packet.get("rule_hits"),
+            }
+        ).lower()
+        self.assertNotIn("honeypot", exported_text)
+
+
+class TestHoneypotStealthBanners(unittest.TestCase):
+    def assertNoMarkerLeak(self, payload):
+        if isinstance(payload, str):
+            payload = payload.encode("utf-8", errors="replace")
+        lowered = bytes(payload).lower()
+        self.assertNotIn(b"honeypot", lowered)
+        self.assertNotIn(b"sniffhound", lowered)
+
+    def test_static_banners_do_not_reveal_the_listener_role(self):
+        for payload in list(TCP_BANNERS.values()) + list(UDP_BANNERS.values()):
+            with self.subTest(payload=payload):
+                self.assertNoMarkerLeak(payload)
+
+    def test_dynamic_sip_and_rtsp_responses_do_not_reveal_the_listener_role(self):
+        responses = [
+            _build_sip_response(b"OPTIONS sip:service@example.net SIP/2.0\r\n\r\n", ("203.0.113.8", 5060)),
+            _build_rtsp_response("OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n\r\n"),
+        ]
+        for response in responses:
+            with self.subTest(response=response):
+                self.assertNoMarkerLeak(response)
 
 
 if __name__ == "__main__":

@@ -125,7 +125,7 @@ export default {
         { label: "Dashboard", to: "/", icon: "mdi-view-dashboard" },
         { label: "Radar", to: "/radar", icon: "mdi-radar" },
         { label: "Sniffer", to: "/sniffer", icon: "mdi-ethernet" },
-        { label: "Honeypot", to: "/honeypot", icon: "mdi-shield-bug" },
+        { label: "Services", to: "/honeypot", icon: "mdi-server-security" },
         { label: "Monitors", to: "/monitors", icon: "mdi-target-account" },
         { label: "Domains", to: "/domains", icon: "mdi-web" },
         { label: "Paths", to: "/paths", icon: "mdi-routes" },

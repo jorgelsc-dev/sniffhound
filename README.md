@@ -140,7 +140,7 @@ python -m sniffhound
 
 Notas del launcher:
 
-- Si `45678` esta ocupado, prueba el resto del mismo bloque de 10 puertos y avisa cual usa.
+- Usa `45678` por defecto; si esta ocupado, prueba una ventana cercana de 100 puertos y avisa cual usa.
 - Si faltan privilegios para captura raw y corresponde elevar, intenta relanzarse con `sudo`.
 - Si solo quieres abrir la UI sin autoarranque de captura, usa `SNIFFHOUND_CAPTURE_AUTO_START=0`.
 
@@ -264,7 +264,7 @@ Rutas mas utiles:
 Variables practicas del runtime:
 
 - `SNIFFHOUND_HOST`
-- `SNIFFHOUND_PORT`
+- `SNIFFHOUND_PORT`: override explicito del puerto HTTP. Si no se define, SniffHound siempre intenta `45678` primero.
 - `SNIFFHOUND_DB_PATH`
 - `SNIFFHOUND_RUNTIME_MODE`
 - `SNIFFHOUND_CAPTURE_AUTO_START`

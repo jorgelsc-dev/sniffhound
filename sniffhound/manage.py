@@ -17,7 +17,7 @@ from pathlib import Path
 
 from .ipc import generate_ipc_token
 from .process_control import request_process_shutdown, reset_process_shutdown_request
-from .settings import DATA_DIR, DB_PATH, HOST, PORT, resolve_ipc_socket, resolve_ipc_token
+from .settings import DATA_DIR, DB_PATH, DEFAULT_PORT, HOST, PORT, resolve_ipc_socket, resolve_ipc_token
 
 try:
     import readline
@@ -70,6 +70,7 @@ CONSOLE_COMPLETION_TOKENS = tuple(
 )
 
 BANNER_INNER_WIDTH = 64
+FALLBACK_PORT_SCAN_SIZE = 100
 
 
 def _display_width(value: str) -> int:
@@ -177,11 +178,33 @@ def _print_startup_banner(host: str, port: int):
 
 
 def _candidate_ports(preferred_port: int) -> tuple[int, ...]:
-    """Try the requested port first, then scan the rest of its 10-port block."""
+    """Try the requested port first, then nearby fallbacks in a stable order."""
+    try:
+        preferred_port = int(preferred_port)
+    except Exception:
+        preferred_port = DEFAULT_PORT
+    preferred_port = min(65535, max(1, preferred_port))
     block_start = max(1, (preferred_port // 10) * 10)
     block_end = min(65535, block_start + 9)
-    candidates = [preferred_port]
-    candidates.extend(port for port in range(block_start, block_end + 1) if port != preferred_port)
+    scan_end = min(65535, block_start + FALLBACK_PORT_SCAN_SIZE - 1)
+    candidates = []
+    seen = set()
+
+    def add_candidate(port: int) -> None:
+        if 1 <= int(port) <= 65535 and port not in seen:
+            candidates.append(port)
+            seen.add(port)
+
+    add_candidate(preferred_port)
+    for port in range(block_start, block_end + 1):
+        add_candidate(port)
+    for port in range(block_end + 1, scan_end + 1):
+        add_candidate(port)
+
+    backfill = FALLBACK_PORT_SCAN_SIZE - len(candidates)
+    if backfill > 0:
+        for port in range(block_start - 1, max(0, block_start - backfill) - 1, -1):
+            add_candidate(port)
     return tuple(candidates)
 
 
@@ -216,10 +239,11 @@ def _print_port_fallback_notice(preferred_port: int, selected_port: int) -> None
 
 def _print_address_in_use_error(host: str, preferred_port: int) -> None:
     """Print a clean error when no port is free in the fallback scan range."""
-    block_start = max(1, (preferred_port // 10) * 10)
-    block_end = min(65535, block_start + 9)
+    candidates = _candidate_ports(preferred_port)
+    window_start = min(candidates) if candidates else preferred_port
+    window_end = max(candidates) if candidates else preferred_port
     print(
-        f"\n[!] Cannot start SniffHound: no free port available on {host} in {block_start}-{block_end}.",
+        f"\n[!] Cannot start SniffHound: no free port available on {host} in {window_start}-{window_end}.",
         file=sys.stderr,
     )
     print(

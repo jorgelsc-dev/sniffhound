@@ -146,10 +146,17 @@ def normalize_match(match: dict) -> dict:
     def _list(key):
         raw = data.get(key, [])
         if isinstance(raw, (list, tuple, set)):
-            return unique_ordered([normalize_protocol_name(item) if key == "protocols" else item for item in raw if item not in (None, "")])
-        if raw in (None, ""):
-            return []
-        return [normalize_protocol_name(raw) if key == "protocols" else raw]
+            values = raw
+        else:
+            values = [] if raw in (None, "") else [raw]
+        cleaned = []
+        for item in values:
+            if item is None:
+                continue
+            if isinstance(item, str) and not item.strip():
+                continue
+            cleaned.append(normalize_protocol_name(item) if key == "protocols" else item)
+        return unique_ordered(cleaned)
 
     def _int_list(key):
         values = []
@@ -170,9 +177,13 @@ def normalize_match(match: dict) -> dict:
         "ports": _int_list("ports"),
         "src_ports": _int_list("src_ports"),
         "dst_ports": _int_list("dst_ports"),
-        "payload_contains": [str(item) for item in _list("payload_contains")],
-        "payload_prefix_hex": [str(item).lower().replace("0x", "") for item in _list("payload_prefix_hex")],
-        "payload_regex": [str(item) for item in _list("payload_regex")],
+        "payload_contains": [str(item) for item in _list("payload_contains") if str(item).strip()],
+        "payload_prefix_hex": [
+            str(item).strip().lower().replace("0x", "")
+            for item in _list("payload_prefix_hex")
+            if str(item).strip()
+        ],
+        "payload_regex": [str(item).strip() for item in _list("payload_regex") if str(item).strip()],
         "min_length": safe_int(data.get("min_length", 0), 0),
         "max_length": safe_int(data.get("max_length", 0), 0),
         "min_payload_text_length": safe_int(data.get("min_payload_text_length", 0), 0),
@@ -190,15 +201,22 @@ def normalize_action(action: dict) -> dict:
 
 
 def build_packet_text(packet: dict) -> str:
+    """Text buffers that content/regex monitor criteria are allowed to inspect.
+
+    Keep endpoint addresses out of this joined blob: established IDS engines
+    scope payload/content matches separately from header fields, and mixing
+    src/dst IPs or MACs into the payload buffer makes IOC-like literals fire
+    on routing metadata rather than observed application data.
+    """
     return " ".join(
         str(value)
         for value in (
             packet.get("summary"),
             packet.get("payload_text"),
-            packet.get("src_ip"),
-            packet.get("dst_ip"),
-            packet.get("eth_src"),
-            packet.get("eth_dst"),
+            packet.get("domain"),
+            packet.get("http_host"),
+            packet.get("http_path"),
+            packet.get("http_method"),
         )
         if value not in (None, "")
     ).lower()
@@ -249,6 +267,14 @@ def rule_matches_packet(rule: dict, packet: dict, *, packet_text: str | None = N
     needles = [str(item).lower() for item in match.get("payload_contains", []) if str(item).strip()]
     prefix_hex = [str(item).lower().replace("0x", "") for item in match.get("payload_prefix_hex", []) if str(item).strip()]
     regexes = [str(item).strip() for item in match.get("payload_regex", []) if str(item).strip()]
+    min_length = safe_int(match.get("min_length", 0), 0)
+    max_length = safe_int(match.get("max_length", 0), 0)
+    min_payload_text_length = safe_int(match.get("min_payload_text_length", 0), 0)
+
+    if not any((protocols, ip_versions, eth_types, ports, src_ports, dst_ports, needles, prefix_hex, regexes)):
+        if not (min_length or max_length or min_payload_text_length):
+            return False
+
     if needles or regexes:
         if packet_text is None:
             packet_text = build_packet_text(packet)
@@ -269,15 +295,12 @@ def rule_matches_packet(rule: dict, packet: dict, *, packet_text: str | None = N
         if not matched_any:
             return False
 
-    min_length = safe_int(match.get("min_length", 0), 0)
     if min_length and packet_length < min_length:
         return False
 
-    max_length = safe_int(match.get("max_length", 0), 0)
     if max_length and packet_length > max_length:
         return False
 
-    min_payload_text_length = safe_int(match.get("min_payload_text_length", 0), 0)
     if min_payload_text_length:
         # `payload_text` is only ever populated by Sniffer._interpret_payload()
         # after utils.is_printable_payload() confirmed the raw bytes are
@@ -307,4 +330,3 @@ def classify_packet(packet: dict, rulesets: list[dict]) -> list[dict]:
                 }
             )
     return matches
-

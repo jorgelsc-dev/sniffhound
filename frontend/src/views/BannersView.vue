@@ -57,7 +57,7 @@
     <EntityTablePanel
       v-if="tab === 'banners'"
       title="Captured Responses"
-      subtitle="Service responses captured by listeners and honeypot services."
+      subtitle="Service responses captured by listeners."
       v-model:live-enabled="liveRefreshEnabled"
       :rows="filteredBanners"
       :columns="bannerColumns"
