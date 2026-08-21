@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from . import netlink
 from .anomaly import AnomalyEngine
 from .logger import get_capture_logger
-from .monitors import evaluate_packet
+from .monitors import ensure_monitor_index, evaluate_packet, indexed_monitors_by_id
 from .rulesets import classify_packet
 from .settings import (
     CAPTURE_BUFFER_BYTES,
@@ -479,6 +479,8 @@ class Sniffer:
         self._monitor_cache: list[dict] = []
         self._monitor_filter_enabled = True
         self._monitor_cache_at = 0.0
+        self._monitor_refresh_lock = threading.Lock()
+        self._monitor_refresh_in_flight = False
         self._ruleset_cache: list[dict] = []
         self._ruleset_cache_at = 0.0
         self._last_stats_broadcast_at = 0.0
@@ -786,13 +788,55 @@ class Sniffer:
     def _get_monitor_context(self):
         now = time.monotonic()
         if now - self._monitor_cache_at >= MONITOR_CACHE_TTL_SECONDS:
-            try:
-                self._monitor_cache = self.store.list_monitors()
-                self._monitor_filter_enabled = self.store.get_monitor_filter_enabled()
-            except Exception:
-                LOGGER.exception("Failed to refresh monitors")
+            # store.list_monitors() - a full SELECT plus a JSON decode of
+            # two columns per row - runs in well under a millisecond at a
+            # few dozen monitors, but at the catalog sizes
+            # scripts/import_et_open_monitors.py produces (tens of
+            # thousands) it costs well over a second. This method runs on
+            # the capture thread for every packet whose TTL has expired, so
+            # doing that fetch here synchronously would stall live capture
+            # for that long every refresh. Kick it off in the background
+            # instead and keep serving the last-known-good cache (atomic
+            # attribute swap, no lock needed on this read side) until it's
+            # ready - a monitor add/edit lags a refresh cycle or two before
+            # it's live, which is a far better trade than blocking capture.
+            #
+            # The very first fetch (cold start, nothing cached yet) is the
+            # one exception: there's no last-known-good cache to fall back
+            # to, so it runs synchronously, same as before this catalog
+            # grew - a one-time, once-per-Sniffer-instance cost.
+            cold_start = self._monitor_cache_at == 0.0
             self._monitor_cache_at = now
+            if cold_start:
+                self._refresh_monitor_cache()
+            else:
+                with self._monitor_refresh_lock:
+                    already_refreshing = self._monitor_refresh_in_flight
+                    self._monitor_refresh_in_flight = True
+                if not already_refreshing:
+                    threading.Thread(
+                        target=self._refresh_monitor_cache,
+                        daemon=True,
+                        name="sniffhound-monitor-refresh",
+                    ).start()
         return self._monitor_cache, self._monitor_filter_enabled
+
+    def _refresh_monitor_cache(self):
+        try:
+            monitors = self.store.list_monitors()
+            filter_enabled = self.store.get_monitor_filter_enabled()
+            # Builds/refreshes monitors.evaluate_packet()'s content index
+            # for this exact list object; its own expensive part (the
+            # multi-pattern automaton) is itself built in a further
+            # background thread - see that module.
+            ensure_monitor_index(monitors)
+            self._monitor_cache = monitors
+            self._monitor_filter_enabled = filter_enabled
+        except Exception:
+            LOGGER.exception("Failed to refresh monitors")
+        finally:
+            with self._monitor_refresh_lock:
+                self._monitor_refresh_in_flight = False
 
     def _get_rulesets(self):
         now = time.monotonic()
@@ -893,7 +937,7 @@ class Sniffer:
         # a rate/state-based detector that only ever saw already-matched
         # traffic could never build a useful baseline.
         try:
-            anomaly_hits = self._anomaly.evaluate(packet, monitors)
+            anomaly_hits = self._anomaly.evaluate(packet, monitors, monitors_by_id=indexed_monitors_by_id(monitors))
         except Exception:
             LOGGER.exception("Anomaly detection failed")
             anomaly_hits = []

@@ -326,18 +326,24 @@ class AnomalyEngine:
             "builtin-dhcp-rogue-server": DhcpRogueServerDetector(),
         }
 
-    def evaluate(self, packet: dict, monitors: list[dict]) -> list[dict]:
-        if not monitors:
-            return []
-        by_id = {
-            str(monitor.get("id") or ""): monitor
-            for monitor in monitors
-            if str(monitor.get("mode") or "").strip().lower() == "stateful"
-        }
+    def evaluate(self, packet: dict, monitors: list[dict], *, monitors_by_id: dict[str, dict] | None = None) -> list[dict]:
+        # Only ever looks up a handful of fixed, known ids (self._detectors'
+        # keys), so building a full id->monitor map by scanning `monitors`
+        # here - as this used to do unconditionally - is O(len(monitors))
+        # of wasted work on every single captured packet once that list
+        # gets into the thousands (see scripts/import_et_open_monitors.py).
+        # Sniffer._store_packet passes the id map it already built once per
+        # ~2s monitor refresh (monitors.indexed_monitors_by_id) instead;
+        # this still falls back to building one here so direct callers
+        # (every test in test_anomaly.py) keep working unchanged.
+        if monitors_by_id is None:
+            monitors_by_id = {str(monitor.get("id") or ""): monitor for monitor in monitors}
         hits = []
         for monitor_id, detector in self._detectors.items():
-            monitor = by_id.get(monitor_id)
+            monitor = monitors_by_id.get(monitor_id)
             if not monitor or not monitor.get("enabled", True):
+                continue
+            if str(monitor.get("mode") or "").strip().lower() != "stateful":
                 continue
             try:
                 hit = detector.evaluate(packet)

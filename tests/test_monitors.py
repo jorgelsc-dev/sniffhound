@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
+import sniffhound.monitors as monitors_module
 from sniffhound.monitors import (
     DEFAULT_MONITORS,
     describe_match,
@@ -15,6 +17,32 @@ from sniffhound.monitors import (
 )
 from sniffhound.sniffer import Sniffer
 from sniffhound.store import SniffStore
+
+
+def _await_monitor_index_ready(sniffer: Sniffer, timeout: float = 15.0) -> None:
+    """Sniffer._get_monitor_context() fetches the monitors list (and
+    monitors.ensure_monitor_index() builds its content index) in a
+    background thread so the capture loop is never blocked by either - fine
+    for production, but a test that fires many packets through a real
+    Sniffer and asserts on time-throttled broadcast counts needs both
+    actually warm first, or every one of those packets pays the much
+    slower unindexed full scan and the throttle window (1s, see
+    sniffer.STATS_BROADCAST_MIN_INTERVAL_SECONDS) elapses for real partway
+    through, producing extra broadcasts that have nothing to do with the
+    behavior under test. Re-reads sniffer._monitor_cache on every poll
+    (rather than capturing it once) since the background refresh swaps it
+    for a new list object when it completes."""
+    sniffer._get_monitor_context()  # kicks off the background refresh if one isn't already in flight
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        monitors = sniffer._monitor_cache
+        if (
+            monitors
+            and monitors_module._indexed_monitors_ref is monitors
+            and monitors_module._content_automaton is not None
+        ):
+            return
+        time.sleep(0.05)
 
 
 def _packet(**overrides) -> dict:
@@ -353,12 +381,25 @@ class TestSnifferGatedPersistence(unittest.TestCase):
         self.assertEqual(self.sniffer.state.packets_stored, 1)
 
     def test_undetected_packets_are_time_throttled_on_the_websocket(self):
+        # Warm the content index (see _await_monitor_index_ready) first so
+        # the 201 packets below don't each pay the much slower unindexed
+        # full scan across the whole builtin catalog.
+        _await_monitor_index_ready(self.sniffer)
+        self.sniffer.hub.reset_mock()
         self.sniffer._store_packet(self._base_packet())
         self.assertEqual(self.sniffer.hub.broadcast.call_count, 1)
         broadcast_type = self.sniffer.hub.broadcast.call_args[0][0]["type"]
         self.assertEqual(broadcast_type, "stats_update")
-        for _ in range(200):
-            self.sniffer._store_packet(self._base_packet())
+        # Freeze time.monotonic() for the throttle check itself
+        # (Sniffer._broadcast_stats_throttled) so this assertion covers the
+        # throttling logic on its own terms - "many packets within one
+        # window produce one broadcast" - rather than depending on this
+        # process actually processing 200 packets in under one real second,
+        # which varies with whatever else is running on the machine/in the
+        # rest of the test suite at the time.
+        with patch("sniffhound.sniffer.time.monotonic", return_value=time.monotonic()):
+            for _ in range(200):
+                self.sniffer._store_packet(self._base_packet())
         # Still within the same throttle window, so wire-speed traffic can't flood the socket.
         self.assertEqual(self.sniffer.hub.broadcast.call_count, 1)
 

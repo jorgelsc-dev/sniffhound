@@ -56,6 +56,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import signal
 import sys
 from collections import Counter
 from pathlib import Path
@@ -214,6 +215,26 @@ def _literal_port(*candidates: str) -> int | None:
     return None
 
 
+# Generic protocol/markup boilerplate that shows up as its own `content`
+# keyword in many rules (usually just there to anchor a sticky buffer, not
+# to carry the actual signal) - long enough to beat a rule's real IOC on
+# raw length (e.g. "HTTP/1." at 7 chars beat a Shellshock rule's actual
+# marker, the 4-byte hex sequence for "() {", every time), so it's
+# excluded from the "pick the longest" comparison rather than relied on to
+# lose fairly.
+_GENERIC_CONTENT_BLOCKLIST = frozenset(
+    text.lower()
+    for text in (
+        "http/1.", "http/1.0", "http/1.1", "content-type", "content-length",
+        "user-agent", "user-agent:", "content-type:", "content-length:",
+        "accept-encoding", "accept-language", "cache-control", "connection:",
+        "content-disposition", "set-cookie", "x-forwarded-for",
+        "<html", "</html>", "<head>", "</head>", "<body", "</body>",
+        "<!doctype",
+    )
+)
+
+
 def _best_content(pairs: list[tuple[str, str]]) -> str | None:
     candidates = []
     for key, value in pairs:
@@ -223,15 +244,174 @@ def _best_content(pairs: list[tuple[str, str]]) -> str | None:
         if decoded is None:
             continue
         text = decoded.strip()
-        if len(text) < 4:
+        if len(text) < 6:
             continue
         candidates.append(text)
     if not candidates:
         return None
     # Longest wins - a longer literal is almost always the more specific,
     # less generic one (a URI path or parameter name vs. a bare SQL/HTML
-    # keyword also present in the same rule's other `content` keywords).
-    return max(candidates, key=len)
+    # keyword also present in the same rule's other `content` keywords) -
+    # except for a short list of protocol/markup boilerplate that's
+    # excluded from consideration entirely (see _GENERIC_CONTENT_BLOCKLIST)
+    # so it can never out-rank a rule's actual, shorter IOC just by being
+    # verbose. If every candidate is blocklisted, fall back to the longest
+    # one anyway rather than discarding an otherwise-convertible rule.
+    non_generic = [text for text in candidates if text.strip().lower() not in _GENERIC_CONTENT_BLOCKLIST]
+    return max(non_generic or candidates, key=len)
+
+
+_REGEX_NOISE_RE = re.compile(r"\\[dDwWsSbBAZ]|\[[^\]]*\]|\{[0-9,]*\}|[\^\$\.\*\+\?\|\(\)]")
+_HEX_ESCAPE_RE = re.compile(r"\\x[0-9A-Fa-f]{2}")
+_LARGE_QUANTIFIER_RE = re.compile(r"\{(\d+),?\d*\}")
+_LOOKAROUND_RE = re.compile(r"\(\?<?[!=]")
+_MIN_REGEX_SIGNAL_CHARS = 6
+_MIN_LARGE_QUANTIFIER = 20
+
+
+def _has_narrow_large_quantifier(pattern: str) -> bool:
+    """A big `{N,}` repeat count (e.g. `{1000,}` for a base64/hex blob) is
+    only actually specific when what's being repeated is a narrow set of
+    characters - `[a-zA-Z0-9+/]{1000,}` (base64 alphabet) is a real
+    signature, but `[^\\r\\n]{50,}` (literally "50+ characters that aren't
+    a newline") or `.{50,}` matches nearly any non-trivial payload and
+    should never be treated as specific just because the count is large."""
+    for match in _LARGE_QUANTIFIER_RE.finditer(pattern):
+        if int(match.group(1)) < _MIN_LARGE_QUANTIFIER:
+            continue
+        start = match.start()
+        if start == 0:
+            continue
+        prev = pattern[start - 1]
+        if prev == ".":
+            continue  # matches (almost) anything - not specific
+        if prev == "]":
+            depth = 0
+            i = start - 1
+            while i >= 0:
+                if pattern[i] == "]":
+                    depth += 1
+                elif pattern[i] == "[":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                i -= 1
+            if i >= 0 and pattern[i : start].startswith("[^"):
+                continue  # negated character class - broad, not specific
+            return True
+        return True
+    return False
+
+
+def _strip_optional_groups(pattern: str) -> str:
+    """Remove every balanced (...)? or (...)* group, including nested ones
+    (e.g. `((?:https?\\x3a\\/\\/)?[a-z0-9\\-]{1,30}\\.){1,8}` keeps the
+    outer {1,8}-quantified group - it must match at least once - but the
+    inner `(?:https?://)?` is itself optional and must be stripped too).
+    A single regex substitution can't do this since parens nest arbitrarily
+    deep, so this walks the string tracking paren depth and recurses into
+    whatever group text it decides to keep."""
+    result: list[str] = []
+    i, n = 0, len(pattern)
+    while i < n:
+        if pattern[i] == "(":
+            depth = 1
+            j = i + 1
+            while j < n and depth > 0:
+                if pattern[j] == "\\":
+                    j += 2
+                    continue
+                if pattern[j] == "(":
+                    depth += 1
+                elif pattern[j] == ")":
+                    depth -= 1
+                j += 1
+            inner = pattern[i + 1 : j - 1]
+            if j < n and pattern[j] in "?*":
+                i = j + 1  # whole group can match zero characters - drop it
+                continue
+            result.append("(" + _strip_optional_groups(inner) + ")")
+            i = j
+            continue
+        result.append(pattern[i])
+        i += 1
+    return "".join(result)
+
+
+def _regex_is_specific_enough(pattern: str) -> bool:
+    """Suricata's `pcre` keyword normally runs against a narrow, already-
+    anchored buffer (a specific sticky buffer, or right after a preceding
+    `content` match at a given distance/offset) - extracted on its own and
+    run against SniffHound's much broader flat packet_text blob, a pattern
+    that is mostly anchors/character-classes with little or no literal
+    text (`^\\d`, `^[0-9]{1}`, an IPv4-shaped `\\d{1,3}\\x2e\\d{1,3}...`)
+    stops meaning "this specific malware artifact" and starts meaning "any
+    packet whose text happens to look like that" - which is most of them,
+    since src_ip/dst_ip are always in that text. A negative lookahead/
+    lookbehind (`(?!...)`/`(?<!...)`) is worse still: "does NOT start with
+    one of these known-good words" reads as highly specific in a Suricata
+    rule bound to one buffer, but in isolation it just means "matches
+    almost everything" - reject those outright.
+
+    Otherwise, accept a pattern only if it still carries real literal
+    signal once optional groups (which can contribute zero characters) and
+    generic regex syntax are stripped away, or it demands a long run of
+    matching characters (e.g. `{1000,}` for a base64/hex blob) that's
+    inherently unlikely to false-positive regardless of literal content."""
+    if _LOOKAROUND_RE.search(pattern):
+        return False
+    reduced = _strip_optional_groups(pattern)
+    reduced = _HEX_ESCAPE_RE.sub("#", reduced)  # one escaped byte = one signal char, not four
+    literal_signal = len(_REGEX_NOISE_RE.sub("", reduced))
+    if literal_signal >= _MIN_REGEX_SIGNAL_CHARS:
+        return True
+    return _has_narrow_large_quantifier(pattern)
+
+
+class _RegexTimeout(Exception):
+    pass
+
+
+def _alarm_handler(signum, frame):
+    raise _RegexTimeout
+
+
+def _regex_has_redos_risk(compiled: "re.Pattern") -> bool:
+    """Empirically fuzz for catastrophic backtracking instead of trying to
+    prove its absence structurally (a generally hard problem). This is
+    load-bearing, not just a nice-to-have: monitors.evaluate_packet() runs
+    every enabled monitor's regex against every captured packet on the
+    live capture thread, and Python's signal-based alarm() (the mechanism
+    used here) only fires on the *main* thread - there is no runtime
+    backstop once a pattern like
+    `^(?:[:,.]?[A-Za-z0-9]{1,8}[:,.]?[:,.]?\\s*){50,}$` (a real ET Open
+    rule this caught) reaches the capture thread. One such pattern hanging
+    on one packet is a trivial DoS against the whole sniffer, so anything
+    that doesn't resolve quickly against a battery of adversarial probe
+    strings is rejected here at import time rather than shipped."""
+    probes = [
+        "a" * 200,
+        "1" * 200,
+        "a1" * 150,
+        "aa:bb:cc:dd:ee:ff " * 12,
+        "10.0.0.5 192.168.1.1 " * 12,
+        ":" * 150,
+        ", .:" * 60,
+        "GET /index.html HTTP/1.1 Host: example.com " * 8,
+    ]
+    previous = signal.signal(signal.SIGALRM, _alarm_handler)
+    try:
+        for probe in probes:
+            signal.setitimer(signal.ITIMER_REAL, 0.25)
+            try:
+                compiled.search(probe)
+            except _RegexTimeout:
+                return True
+            finally:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+    finally:
+        signal.signal(signal.SIGALRM, previous)
+    return False
 
 
 def _best_regex(pairs: list[tuple[str, str]]) -> str | None:
@@ -243,8 +423,12 @@ def _best_regex(pairs: list[tuple[str, str]]) -> str | None:
             continue
         pattern = match.group(1)
         try:
-            re.compile(pattern)
+            compiled = re.compile(pattern)
         except re.error:
+            continue
+        if not _regex_is_specific_enough(pattern):
+            continue
+        if _regex_has_redos_risk(compiled):
             continue
         return pattern
     return None

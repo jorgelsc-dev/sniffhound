@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import functools
 import re
+import threading
 from pathlib import Path
 import json
 
+from .ahocorasick import AhoCorasick
 from .runtime_paths import resolve_data_file
 from .rulesets import build_packet_text, normalize_action, normalize_match, rule_matches_packet
 from .utils import normalize_protocol_name, safe_int
@@ -1106,16 +1109,33 @@ def _default_monitor_path() -> Path:
     return resolve_data_file("default_monitors.json")
 
 
-def load_builtin_monitors() -> list[dict]:
+@functools.lru_cache(maxsize=1)
+def _load_builtin_monitors_cached() -> tuple[dict, ...]:
+    # The packaged default_monitors.json (see
+    # scripts/import_et_open_monitors.py) is read-only, installed data that
+    # never changes for the life of a running process - parsing and
+    # normalizing several thousand entries (a second-plus at this catalog's
+    # size) on every single call, including SniffStore._seed_baseline()'s
+    # own two calls per startup, is pure waste. Cached as a tuple (an
+    # immutable sequence) so nothing can accidentally mutate the shared
+    # result; load_builtin_monitors() below still hands back a fresh list.
     path = _default_monitor_path()
     if path.exists():
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(payload, list):
-                return [normalize_monitor(item, allow_source=True) for item in payload if isinstance(item, dict)]
+                return tuple(
+                    normalize_monitor(item, allow_source=True, validate_regex=False)
+                    for item in payload
+                    if isinstance(item, dict)
+                )
         except Exception:
             pass
-    return [normalize_monitor(item, allow_source=True) for item in DEFAULT_MONITORS]
+    return tuple(normalize_monitor(item, allow_source=True) for item in DEFAULT_MONITORS)
+
+
+def load_builtin_monitors() -> list[dict]:
+    return list(_load_builtin_monitors_cached())
 
 
 def _validate_match_not_empty(match: dict):
@@ -1148,7 +1168,7 @@ def _validate_regex_patterns(match: dict):
             raise ValueError(f"Invalid regex pattern '{pattern}': {exc}") from exc
 
 
-def normalize_monitor(item: dict, allow_source: bool = False) -> dict:
+def normalize_monitor(item: dict, allow_source: bool = False, *, validate_regex: bool = True) -> dict:
     data = item if isinstance(item, dict) else {}
     rule_id = str(data.get("id") or data.get("slug") or data.get("name") or "").strip()
     if not rule_id:
@@ -1166,7 +1186,20 @@ def normalize_monitor(item: dict, allow_source: bool = False) -> dict:
         ) else "rule"
 
     _validate_match_not_empty(match)
-    _validate_regex_patterns(match)
+    if validate_regex:
+        # Always validated for user-submitted monitors (the API's
+        # save_monitor -> normalize_monitor path), where a syntax error
+        # should be rejected up front with a clear message. Skipped for
+        # load_builtin_monitors()'s large, already-generator-validated
+        # catalog (see scripts/import_et_open_monitors.py, which runs this
+        # exact check once at generation time) purely for load-time
+        # performance - re.compile() on every one of several thousand
+        # regexes on every single app startup adds real, avoidable delay.
+        # Skipping it is still safe at match time: rule_matches_packet's
+        # regex cache (rulesets._compiled_regex) catches a bad pattern
+        # there too and just treats it as never matching, never a crash or
+        # a false "matches everything".
+        _validate_regex_patterns(match)
 
     normalized = {
         "id": rule_id,
@@ -1187,16 +1220,157 @@ def monitor_matches_packet(monitor: dict, packet: dict, *, packet_text: str | No
     return rule_matches_packet(monitor, packet, packet_text=packet_text)
 
 
+# --- Content index -----------------------------------------------------
+#
+# With only a few dozen monitors, checking every one of them against every
+# captured packet is cheap. With hundreds or thousands (see
+# scripts/import_et_open_monitors.py), it isn't - the vast majority carry a
+# `payload_contains` criterion, so most of that work is "is any of these
+# literal strings present in this packet's text", which is exactly what a
+# multi-pattern matcher (sniffhound.ahocorasick.AhoCorasick) answers in one
+# pass over the text instead of one `in` check per monitor.
+#
+# This module-level cache is keyed by the exact `monitors` list *object*
+# Sniffer._get_monitor_context() hands out (re-fetched, and so a new list
+# instance, every MONITOR_CACHE_TTL_SECONDS): ensure_monitor_index() is
+# meant to be called once per that refresh, not once per packet, and
+# evaluate_packet() only trusts the cache when it's given that exact same
+# object back - anything else (every test in this repo builds its own
+# monitors list ad hoc and never calls ensure_monitor_index) transparently
+# falls back to the plain O(monitors) scan below, so correctness never
+# depends on the cache being present or fresh.
+#
+# Two different rebuild costs are split apart deliberately:
+#   - `_monitors_by_id` / `_always_check` (which monitors have no
+#     payload_contains and so must always run the real check) are cheap to
+#     rebuild (a single pass, no regex/trie work) and are done synchronously
+#     - they're the ones `rule_matches_packet` uses for the authoritative
+#       enabled/match check, so they must never be stale.
+#   - the AhoCorasick automaton itself is the expensive part (its build
+#     time scales with total pattern length - seconds, not milliseconds, at
+#     tens of thousands of monitors) and is only ever used to *narrow*
+#     candidates, never to authoritatively decide a match, so it's safe to
+#     build in a background thread and keep serving the previous automaton
+#     (or none at all) until the new one is ready. The practical effect of
+#     that lag is bounded to "a monitor added seconds ago might take one
+#     more refresh cycle before its content match starts firing" - it can
+#     never cause a stale/disabled monitor to incorrectly match, because
+#     every candidate is still re-validated against the fresh monitor dict.
+_index_lock = threading.Lock()
+_indexed_monitors_ref: list | None = None
+_index_signature: tuple | None = None
+_building_signature: tuple | None = None
+_monitors_by_id: dict[str, dict] = {}
+_always_check: list[dict] = []
+_content_automaton = None
+_content_to_ids: dict[str, list[str]] = {}
+
+
+def _monitor_index_signature(monitors: list[dict]) -> tuple:
+    return tuple(
+        (str(item.get("id") or ""), str(item.get("updated_at") or ""), bool(item.get("enabled", True)))
+        for item in monitors
+    )
+
+
+def ensure_monitor_index(monitors: list[dict]) -> None:
+    """Refresh the content index for this monitors list if needed. Meant to
+    be called from Sniffer._get_monitor_context() (every
+    MONITOR_CACHE_TTL_SECONDS), not from the per-packet path - the
+    signature computation alone is O(len(monitors))."""
+    global _indexed_monitors_ref, _index_signature, _building_signature
+    global _monitors_by_id, _always_check
+
+    signature = _monitor_index_signature(monitors)
+    with _index_lock:
+        _indexed_monitors_ref = monitors
+        if signature == _index_signature:
+            return
+        _index_signature = signature
+
+        monitors_by_id: dict[str, dict] = {}
+        always_check: list[dict] = []
+        content_to_ids: dict[str, list[str]] = {}
+        for monitor in monitors:
+            monitor_id = str(monitor.get("id") or "")
+            monitors_by_id[monitor_id] = monitor
+            contains = (monitor.get("match") or {}).get("payload_contains") or []
+            if not contains:
+                always_check.append(monitor)
+                continue
+            for content in contains:
+                content_to_ids.setdefault(str(content).lower(), []).append(monitor_id)
+        _monitors_by_id = monitors_by_id
+        _always_check = always_check
+
+        already_building = _building_signature == signature
+        _building_signature = signature
+
+    if already_building:
+        return
+
+    def _build_automaton() -> None:
+        global _content_automaton, _content_to_ids, _building_signature
+        automaton = AhoCorasick(content_to_ids.keys())
+        with _index_lock:
+            if _index_signature == signature:
+                _content_automaton = automaton
+                _content_to_ids = content_to_ids
+            if _building_signature == signature:
+                _building_signature = None
+
+    threading.Thread(target=_build_automaton, daemon=True, name="sniffhound-monitor-index").start()
+
+
+def indexed_monitors_by_id(monitors: list[dict]) -> dict[str, dict] | None:
+    """The id->monitor lookup ensure_monitor_index() already built for this
+    exact monitors list object (unlike the content automaton, this part is
+    always built synchronously, so it's available as soon as
+    ensure_monitor_index() returns) - or None if that was never called for
+    this object (e.g. a test building its own ad hoc monitors list), in
+    which case the caller should build its own. Used by
+    anomaly.AnomalyEngine.evaluate() to avoid its own O(len(monitors)) scan
+    on every packet just to find a handful of fixed, known ids."""
+    with _index_lock:
+        if monitors is _indexed_monitors_ref:
+            return _monitors_by_id
+    return None
+
+
+def _indexed_candidates(monitors: list[dict], packet_text: str) -> list[dict] | None:
+    with _index_lock:
+        if monitors is not _indexed_monitors_ref or _content_automaton is None:
+            return None
+        automaton = _content_automaton
+        content_to_ids = _content_to_ids
+        monitors_by_id = _monitors_by_id
+        always_check = _always_check
+
+    hit_ids: set[str] = set()
+    for content in automaton.search(packet_text):
+        hit_ids.update(content_to_ids.get(content, ()))
+
+    candidates = list(always_check)
+    for monitor_id in hit_ids:
+        monitor = monitors_by_id.get(monitor_id)
+        if monitor is not None:
+            candidates.append(monitor)
+    return candidates
+
+
 def evaluate_packet(packet: dict, monitors: list[dict]) -> list[dict]:
     # `monitors` is expected pre-sorted by (priority, name) - store.list_monitors()
     # already orders that way in SQL, and this is called once per captured
-    # packet against every enabled monitor (up to hundreds), so re-sorting
-    # here on every call would be pure waste. packet_text (a string
-    # join + lower() over several fields) is likewise built once per packet
-    # rather than once per monitor - see rule_matches_packet.
+    # packet against every enabled monitor, so re-sorting here on every call
+    # would be pure waste. packet_text (a string join + lower() over several
+    # fields) is likewise built once per packet rather than once per
+    # monitor - see rule_matches_packet.
     matches = []
     packet_text = build_packet_text(packet)
-    for monitor in monitors:
+    candidates = _indexed_candidates(monitors, packet_text)
+    if candidates is None:
+        candidates = monitors
+    for monitor in candidates:
         if str(monitor.get("mode") or "").strip().lower() == "stateful":
             # Stateful monitors have no declarative match logic to evaluate here —
             # they're driven by anomaly.AnomalyEngine, which runs separately and

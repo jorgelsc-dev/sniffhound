@@ -576,27 +576,30 @@ class SniffStore:
             count = int(cursor.fetchone()["count"] or 0)
             if count == 0:
                 now = utc_now()
-                for monitor in load_builtin_monitors():
-                    self._conn.execute(
-                        """
-                        INSERT OR REPLACE INTO monitors
-                        (id, name, description, enabled, priority, source, mode, match_json, action_json, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            str(monitor.get("id") or monitor.get("name")),
-                            str(monitor.get("name") or monitor.get("id")),
-                            str(monitor.get("description") or ""),
-                            1 if monitor.get("enabled", True) else 0,
-                            safe_int(monitor.get("priority", 100), 100),
-                            str(monitor.get("source") or "builtin"),
-                            str(monitor.get("mode") or "rule"),
-                            json_dumps(monitor.get("match") or {}),
-                            json_dumps(monitor.get("action") or {}),
-                            now,
-                            now,
-                        ),
+                rows = [
+                    (
+                        str(monitor.get("id") or monitor.get("name")),
+                        str(monitor.get("name") or monitor.get("id")),
+                        str(monitor.get("description") or ""),
+                        1 if monitor.get("enabled", True) else 0,
+                        safe_int(monitor.get("priority", 100), 100),
+                        str(monitor.get("source") or "builtin"),
+                        str(monitor.get("mode") or "rule"),
+                        json_dumps(monitor.get("match") or {}),
+                        json_dumps(monitor.get("action") or {}),
+                        now,
+                        now,
                     )
+                    for monitor in load_builtin_monitors()
+                ]
+                self._conn.executemany(
+                    """
+                    INSERT OR REPLACE INTO monitors
+                    (id, name, description, enabled, priority, source, mode, match_json, action_json, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    rows,
+                )
                 self._conn.commit()
 
             self._seed_new_builtin_monitors()
@@ -697,17 +700,12 @@ class SniffStore:
         cursor = self._conn.execute("SELECT id FROM monitors")
         existing_ids = {str(row["id"]) for row in cursor.fetchall()}
         now = utc_now()
-        inserted = False
+        rows = []
         for monitor in load_builtin_monitors():
             monitor_id = str(monitor.get("id") or "").strip()
             if not monitor_id or monitor_id in existing_ids:
                 continue
-            self._conn.execute(
-                """
-                INSERT OR IGNORE INTO monitors
-                (id, name, description, enabled, priority, source, mode, match_json, action_json, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+            rows.append(
                 (
                     monitor_id,
                     str(monitor.get("name") or monitor_id),
@@ -720,10 +718,22 @@ class SniffStore:
                     json_dumps(monitor.get("action") or {}),
                     now,
                     now,
-                ),
+                )
             )
-            inserted = True
-        if inserted:
+        if rows:
+            # executemany() over one prepared statement instead of one
+            # execute() call per row - with thousands of builtin monitors
+            # (see scripts/import_et_open_monitors.py) this migration runs
+            # on every single startup (not just the first), so the
+            # per-statement overhead of a Python-level loop adds up fast.
+            self._conn.executemany(
+                """
+                INSERT OR IGNORE INTO monitors
+                (id, name, description, enabled, priority, source, mode, match_json, action_json, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
             self._conn.commit()
 
     def _seed_file_catalogs(self):
