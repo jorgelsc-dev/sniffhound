@@ -276,6 +276,43 @@ class TestStoreMonitors(unittest.TestCase):
         self.assertTrue(set(new_ids).issubset(ids_after))
         self.assertIn("custom-1", ids_after)
 
+    def test_stale_builtin_monitors_are_pruned_without_touching_custom_rows(self):
+        # Regression test: scripts/import_et_open_monitors.py's output can
+        # change between runs (a pattern that turned out to be a
+        # false-positive magnet gets filtered out by a later, stricter
+        # heuristic), and a plain additive migration would leave a builtin
+        # id seeded by an earlier run sitting in the table forever, still
+        # matching live traffic, even though the current catalog no longer
+        # includes it. _seed_new_builtin_monitors() must remove it - but
+        # must never remove a user's own custom monitor, even one that
+        # happens to share the "looks stale" shape (source='builtin' rows
+        # not in the current catalog are the only thing in scope).
+        self.store.save_monitor(
+            {"id": "custom-1", "name": "My custom monitor", "match": {"ports": [9999]}}
+        )
+        stale_id = "et-open-0000000-not-in-current-catalog"
+        with self.store._lock:
+            self.store._conn.execute(
+                """
+                INSERT INTO monitors
+                (id, name, description, enabled, priority, source, mode, match_json, action_json, created_at, updated_at)
+                VALUES (?, 'Stale test monitor', '', 1, 500, 'builtin', 'regex', '{"payload_regex": ["^."]}', '{}', '2020-01-01', '2020-01-01')
+                """,
+                (stale_id,),
+            )
+            self.store._conn.commit()
+        ids_before = {row["id"] for row in self.store.list_monitors()}
+        self.assertIn(stale_id, ids_before)
+
+        reopened = SniffStore(self.db_path)
+        try:
+            ids_after = {row["id"] for row in reopened.list_monitors()}
+        finally:
+            reopened.close()
+        self.assertNotIn(stale_id, ids_after)
+        self.assertIn("custom-1", ids_after)
+        self.assertIn("builtin-credentials", ids_after)
+
     def test_save_list_delete_custom_monitor(self):
         saved = self.store.save_monitor(
             {"id": "custom-1", "name": "My monitor", "match": {"ports": [9999]}}

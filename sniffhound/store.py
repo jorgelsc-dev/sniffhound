@@ -688,22 +688,38 @@ class SniffStore:
         return self.get_honeypot_listener(listener_id)
 
     def _seed_new_builtin_monitors(self):
-        """Additive migration: insert any DEFAULT_MONITORS id that isn't
-        already in the table, by id, without touching any existing row.
+        """Additive + pruning migration, run on every startup (not just
+        against a brand new DB - see the `count == 0` seeding above):
 
-        Unlike the `count == 0` seeding above (which only runs on a brand new
-        DB), this runs on every startup so monitors added to DEFAULT_MONITORS
-        in later releases reach already-populated databases too — without
-        ever overwriting a builtin the user has since customized, or any of
-        the user's own custom monitors.
+        - Insert any catalog id that isn't already in the table, by id,
+          without touching any existing row - so monitors added in a later
+          release reach already-populated databases too.
+        - Remove any *builtin* row whose id is no longer in the current
+          catalog. scripts/import_et_open_monitors.py's output can and does
+          change between runs as its quality filters improve (a pattern
+          that turned out to be a false-positive magnet, or too broad to
+          be a meaningful signature at all) - without this, a row seeded by
+          an earlier, buggier generator run would sit in the table and keep
+          matching live traffic forever, since a plain additive migration
+          only ever adds. Already-stored packets/tags that reference a
+          pruned id are untouched (they're the historical record of what
+          it once flagged); only the live definition goes away. Never
+          touches a `source = 'custom'` row - a user's own monitor is never
+          in the generated catalog to begin with, so it can't collide, but
+          the DELETE below is still scoped to `source = 'builtin'` as a
+          second guard.
         """
-        cursor = self._conn.execute("SELECT id FROM monitors")
-        existing_ids = {str(row["id"]) for row in cursor.fetchall()}
+        cursor = self._conn.execute("SELECT id, source FROM monitors")
+        existing_rows = {str(row["id"]): str(row["source"] or "") for row in cursor.fetchall()}
+
+        catalog = load_builtin_monitors()
+        catalog_ids = {str(monitor.get("id") or "").strip() for monitor in catalog if monitor.get("id")}
+
         now = utc_now()
         rows = []
-        for monitor in load_builtin_monitors():
+        for monitor in catalog:
             monitor_id = str(monitor.get("id") or "").strip()
-            if not monitor_id or monitor_id in existing_ids:
+            if not monitor_id or monitor_id in existing_rows:
                 continue
             rows.append(
                 (
@@ -734,6 +750,20 @@ class SniffStore:
                 """,
                 rows,
             )
+
+        stale_builtin_ids = [
+            monitor_id
+            for monitor_id, source in existing_rows.items()
+            if source == "builtin" and monitor_id not in catalog_ids
+        ]
+        if stale_builtin_ids:
+            placeholders = ",".join("?" for _ in stale_builtin_ids)
+            self._conn.execute(
+                f"DELETE FROM monitors WHERE source = 'builtin' AND id IN ({placeholders})",
+                stale_builtin_ids,
+            )
+
+        if rows or stale_builtin_ids:
             self._conn.commit()
 
     def _seed_file_catalogs(self):
