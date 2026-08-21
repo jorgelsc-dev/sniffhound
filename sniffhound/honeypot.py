@@ -8,6 +8,7 @@ import sqlite3
 import ssl
 import subprocess
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email.utils import formatdate
@@ -443,6 +444,82 @@ def _build_postgres_error_packet() -> bytes:
     error_response = b"E" + (len(payload) + 4).to_bytes(4, "big") + payload
     ready_for_query = b"Z\x00\x00\x00\x05I"
     return error_response + ready_for_query
+
+
+# A fixed-but-plausible server GUID for the SMB2 Negotiate Response below -
+# real servers advertise a random-looking, per-install GUID here; a fixed
+# one is fine for a passive decoy (it's never load-bearing to a real client,
+# just present-and-well-formed) and keeps the response byte-for-byte
+# reproducible for tests.
+_SMB2_SERVER_GUID = bytes.fromhex("0102030405060708090a0b0c0d0e0f10")
+
+
+def _build_smb2_negotiate_response() -> bytes:
+    """A minimal, structurally-correct SMB2 NEGOTIATE_RESPONSE (dialect
+    2.0.2, the oldest SMB2 dialect - avoids the SMB 3.x negotiate-context
+    fields a fuller response would need), wrapped in its NetBIOS Session
+    Service framing. Answered unconditionally regardless of whether the
+    client opened with legacy SMB1 (\\xffSMB) or SMB2 (\\xfeSMB) framing -
+    see _handle_smb_service's docstring for why that matches real modern
+    Windows server behavior rather than being a tell."""
+    header = (
+        b"\xfeSMB"  # ProtocolId
+        + (64).to_bytes(2, "little")  # StructureSize
+        + b"\x00\x00"  # CreditCharge
+        + b"\x00\x00\x00\x00"  # Status
+        + (0).to_bytes(2, "little")  # Command = SMB2 NEGOTIATE
+        + (1).to_bytes(2, "little")  # CreditResponse
+        + (1).to_bytes(4, "little")  # Flags = SMB2_FLAGS_SERVER_TO_REDIR
+        + b"\x00\x00\x00\x00"  # NextCommand
+        + b"\x00" * 8  # MessageId
+        + b"\x00" * 4  # Reserved
+        + b"\x00" * 4  # TreeId
+        + b"\x00" * 8  # SessionId
+        + b"\x00" * 16  # Signature
+    )
+    now_filetime = int((time.time() + 11644473600) * 10_000_000).to_bytes(8, "little")
+    body = (
+        (65).to_bytes(2, "little")  # StructureSize
+        + (1).to_bytes(2, "little")  # SecurityMode = signing enabled
+        + (0x0202).to_bytes(2, "little")  # DialectRevision = 2.0.2
+        + b"\x00\x00"  # Reserved
+        + _SMB2_SERVER_GUID  # ServerGuid
+        + b"\x00\x00\x00\x00"  # Capabilities
+        + (0x00010000).to_bytes(4, "little")  # MaxTransactSize
+        + (0x00010000).to_bytes(4, "little")  # MaxReadSize
+        + (0x00010000).to_bytes(4, "little")  # MaxWriteSize
+        + now_filetime  # SystemTime
+        + b"\x00" * 8  # ServerStartTime
+        + (128).to_bytes(2, "little")  # SecurityBufferOffset (64 header + 64 body)
+        + (0).to_bytes(2, "little")  # SecurityBufferLength
+        + b"\x00\x00\x00\x00"  # Reserved2
+    )
+    message = header + body
+    return len(message).to_bytes(4, "big") + message  # NetBIOS Session Service framing
+
+
+def _build_rdp_connection_confirm() -> bytes:
+    """A minimal RFC 905 X.224 Connection Confirm TPDU carrying an
+    RDP_NEG_RSP selecting PROTOCOL_RDP (standard RDP security, no
+    TLS/CredSSP) - the simplest response that still completes the very
+    first round trip of an RDP connection attempt (MS-RDPBCGR §2.2.1.4),
+    wrapped in its TPKT header."""
+    rdp_neg_rsp = (
+        b"\x02"  # Type = TYPE_RDP_NEG_RSP
+        + b"\x00"  # Flags
+        + (8).to_bytes(2, "little")  # Length
+        + (0).to_bytes(4, "little")  # SelectedProtocol = PROTOCOL_RDP
+    )
+    x224_body = (
+        b"\xd0"  # CC CDT (Connection Confirm, credit 0)
+        + b"\x00\x00"  # DST-REF
+        + b"\x00\x00"  # SRC-REF
+        + b"\x00"  # Class option
+        + rdp_neg_rsp
+    )
+    x224 = bytes([len(x224_body)]) + x224_body
+    tpkt_length = 4 + len(x224)
+    return b"\x03\x00" + tpkt_length.to_bytes(2, "big") + x224
 
 
 @dataclass
@@ -949,7 +1026,7 @@ class HoneypotEngine:
         listener_ip = self.bind_host if self.bind_host not in {"0.0.0.0", "::"} else "127.0.0.1"
         packet = {
             "session_id": self._session_id(),
-            "interface": f"service:{port}",
+            "interface": f"honeypot:{port}",
             "direction": "inbound",
             "eth_src": "",
             "eth_dst": "",
@@ -970,33 +1047,33 @@ class HoneypotEngine:
             "icmp_type": 0,
             "icmp_code": 0,
             "arp_opcode": 0,
-            "summary": normalize_text(summary or banner_text or f"{protocol.upper()} service", limit=PAYLOAD_TEXT_MAX_CHARS),
+            "summary": normalize_text(summary or banner_text or f"{protocol.upper()} honeypot", limit=PAYLOAD_TEXT_MAX_CHARS),
             "payload_text": normalize_text(payload_text, limit=PAYLOAD_TEXT_MAX_CHARS),
             "payload_hex": bytes_to_hex_preview(payload),
             "banner_text": normalize_text(banner_text or summary or payload_text, limit=PAYLOAD_TEXT_MAX_CHARS),
             "tags": [
-                {"key": "mode", "value": "service"},
+                {"key": "mode", "value": "honeypot"},
                 {"key": "service", "value": normalize_protocol_name(protocol)},
                 {"key": "port", "value": str(port)},
                 # A "monitor"/"monitor_id" pair, same shape Sniffer's monitor
                 # engine emits - this is what the frontend's notifyForPacketEvent
-                # (appStore.js) scans for to pop a toast/notification. Listener
+                # (appStore.js) scans for to pop a toast/notification. Honeypot
                 # traffic never runs through evaluate_packet/AnomalyEngine (a
                 # separate pipeline by design), so this is added directly here
                 # rather than via a DEFAULT_MONITORS catalog entry - there's no
-                # declarative match to toggle, every inbound service hit is inherently
+                # declarative match to toggle, every honeypot hit is inherently
                 # notable. "critical" severity clears NOTIFY_MONITOR_SEVERITIES
                 # so it always toasts, matching the Sniffer-side "alert me"
                 # behavior for high/critical monitors.
-                {"key": "monitor", "value": "Inbound service hit", "severity": "critical"},
-                {"key": "monitor_id", "value": "builtin-inbound-service-hit", "severity": "critical"},
+                {"key": "monitor", "value": "Honeypot hit", "severity": "critical"},
+                {"key": "monitor_id", "value": "builtin-honeypot-hit", "severity": "critical"},
             ],
             "rule_hits": [
                 {
-                    "rule_id": "inbound-service",
-                    "rule_name": "Inbound service",
-                    "tag": "inbound-service",
-                    "label": "Inbound service",
+                    "rule_id": "honeypot",
+                    "rule_name": "Honeypot",
+                    "tag": "honeypot",
+                    "label": "Honeypot",
                     "severity": "high",
                 }
             ],
@@ -1181,6 +1258,10 @@ class HoneypotEngine:
                 self._handle_dns_tcp_service(wrapped_sock, addr, port, meta=meta)
             elif port in MONGODB_PORTS:
                 self._handle_mongodb_service(wrapped_sock, addr, port, meta=meta)
+            elif port in SMB_PORTS:
+                self._handle_smb_service(wrapped_sock, addr, port, meta=meta)
+            elif port in RDP_PORTS:
+                self._handle_rdp_service(wrapped_sock, addr, port, meta=meta)
             else:
                 self._handle_generic_tcp(wrapped_sock, addr, port, use_tls=use_tls, meta=meta)
         except ssl.SSLError as error:
@@ -1608,6 +1689,47 @@ class HoneypotEngine:
         packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=data or b"(sin datos)", banner_text="MongoDB banner", summary="MongoDB session", meta=meta)
         self._emit_packet(packet)
 
+    def _handle_smb_service(self, client_sock, addr, port, *, meta=None):
+        # SMB is client-speaks-first (unlike FTP/SSH/SMTP/...), so wait for
+        # the client's own Negotiate request before answering at all - a
+        # server that talks before being spoken to is itself a tell.
+        client_sock.settimeout(READ_TIMEOUT_SECONDS)
+        request = b""
+        try:
+            request = client_sock.recv(MAX_PACKET_SIZE)
+        except socket.timeout:
+            pass
+        if request:
+            # Real modern Windows servers (SMB1 disabled by default since
+            # Server 2012) reply with an SMB2 header even to an SMB1
+            # Negotiate that advertises an "SMB 2.???" dialect string -
+            # answering SMB2 unconditionally, regardless of which magic
+            # (\xffSMB legacy vs \xfeSMB) the client actually opened with,
+            # matches that real-world behavior rather than being a tell.
+            _safe_send(client_sock, _build_smb2_negotiate_response())
+        packet = self._build_packet(
+            protocol="tcp", port=port, addr=addr, data=request or b"(sin datos)",
+            banner_text="SMB2 negotiate response", summary="SMB negotiate", meta=meta,
+        )
+        self._emit_packet(packet)
+
+    def _handle_rdp_service(self, client_sock, addr, port, *, meta=None):
+        # Same client-speaks-first shape as SMB: wait for the X.224
+        # Connection Request before answering with a Connection Confirm.
+        client_sock.settimeout(READ_TIMEOUT_SECONDS)
+        request = b""
+        try:
+            request = client_sock.recv(MAX_PACKET_SIZE)
+        except socket.timeout:
+            pass
+        if request:
+            _safe_send(client_sock, _build_rdp_connection_confirm())
+        packet = self._build_packet(
+            protocol="tcp", port=port, addr=addr, data=request or b"(sin datos)",
+            banner_text="RDP connection confirm", summary="RDP negotiate", meta=meta,
+        )
+        self._emit_packet(packet)
+
     def _handle_generic_tcp(self, client_sock, addr, port, *, use_tls=False, meta=None):
         banner = TCP_BANNERS.get(port, "220 Service Ready\r\n")
         _safe_send(client_sock, banner)
@@ -1621,8 +1743,6 @@ class HoneypotEngine:
             if not chunk:
                 break
             data += chunk
-            if port in SMB_PORTS or port in RDP_PORTS:
-                _safe_send(client_sock, banner)
         packet = self._build_packet(protocol="tcp", port=port, addr=addr, data=data or b"(sin datos)", banner_text=str(banner), summary="Generic TCP session", meta=meta)
         self._emit_packet(packet)
 

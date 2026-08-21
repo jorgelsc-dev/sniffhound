@@ -10,7 +10,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from sniffhound.honeypot import HoneypotEngine, TCP_BANNERS, UDP_BANNERS, _build_rtsp_response, _build_sip_response
+from sniffhound.honeypot import (
+    HoneypotEngine,
+    TCP_BANNERS,
+    UDP_BANNERS,
+    _build_rdp_connection_confirm,
+    _build_rtsp_response,
+    _build_sip_response,
+    _build_smb2_negotiate_response,
+)
 from sniffhound.store import SniffStore
 
 
@@ -262,27 +270,23 @@ class TestHoneypotPacketNotificationTags(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_build_packet_carries_a_critical_monitor_tag(self):
+        # "honeypot" is expected and correct in this packet's own internal
+        # metadata (interface/tags/summary) - that's the SniffHound
+        # operator's own dashboard data, never transmitted to the connecting
+        # client. The actual stealth requirement (nothing sent back over the
+        # wire may reveal the listener's true nature) is covered separately
+        # by TestHoneypotStealthBanners below, against the real banner bytes.
         packet = self.engine._build_packet(
             protocol="tcp", port=22, addr=("203.0.113.5", 51234), data=b"SSH-2.0-test\r\n"
         )
         tag_map = {tag["key"]: tag for tag in packet["tags"]}
         self.assertIn("monitor", tag_map)
         self.assertIn("monitor_id", tag_map)
-        self.assertEqual(packet["interface"], "service:22")
+        self.assertEqual(packet["interface"], "honeypot:22")
         self.assertEqual(tag_map["monitor"]["severity"], "critical")
-        self.assertEqual(tag_map["monitor"]["value"], "Inbound service hit")
-        self.assertEqual(tag_map["monitor_id"]["value"], "builtin-inbound-service-hit")
-        self.assertEqual(tag_map["mode"]["value"], "service")
-        exported_text = repr(
-            {
-                "interface": packet.get("interface"),
-                "summary": packet.get("summary"),
-                "banner_text": packet.get("banner_text"),
-                "tags": packet.get("tags"),
-                "rule_hits": packet.get("rule_hits"),
-            }
-        ).lower()
-        self.assertNotIn("honeypot", exported_text)
+        self.assertEqual(tag_map["monitor"]["value"], "Honeypot hit")
+        self.assertEqual(tag_map["monitor_id"]["value"], "builtin-honeypot-hit")
+        self.assertEqual(tag_map["mode"]["value"], "honeypot")
 
 
 class TestHoneypotStealthBanners(unittest.TestCase):
@@ -302,10 +306,62 @@ class TestHoneypotStealthBanners(unittest.TestCase):
         responses = [
             _build_sip_response(b"OPTIONS sip:service@example.net SIP/2.0\r\n\r\n", ("203.0.113.8", 5060)),
             _build_rtsp_response("OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n\r\n"),
+            _build_smb2_negotiate_response(),
+            _build_rdp_connection_confirm(),
         ]
         for response in responses:
             with self.subTest(response=response):
                 self.assertNoMarkerLeak(response)
+
+
+class TestSmb2NegotiateResponse(unittest.TestCase):
+    """Byte-level structural checks for the SMB2 NEGOTIATE_RESPONSE mock -
+    see _build_smb2_negotiate_response's docstring for the field layout this
+    pins down. A malformed response here is worse than the honest generic
+    fallback it replaced, so these checks matter."""
+
+    def setUp(self):
+        self.response = _build_smb2_negotiate_response()
+        netbios_len = int.from_bytes(self.response[0:4], "big")
+        self.assertEqual(netbios_len, len(self.response) - 4)
+        self.message = self.response[4:]
+        self.body = self.message[64:]
+
+    def test_smb2_protocol_id_and_header_shape(self):
+        self.assertEqual(self.message[:4], b"\xfeSMB")
+        self.assertEqual(int.from_bytes(self.message[4:6], "little"), 64)  # header StructureSize
+        self.assertEqual(int.from_bytes(self.message[12:14], "little"), 0)  # Command = NEGOTIATE
+
+    def test_negotiate_response_body_fields(self):
+        self.assertEqual(int.from_bytes(self.body[0:2], "little"), 65)  # body StructureSize
+        self.assertEqual(int.from_bytes(self.body[4:6], "little"), 0x0202)  # DialectRevision = 2.0.2
+        sec_offset = int.from_bytes(self.body[56:58], "little")
+        sec_len = int.from_bytes(self.body[58:60], "little")
+        self.assertEqual(sec_offset, 128)  # 64-byte header + 64-byte body
+        self.assertEqual(sec_len, 0)
+
+
+class TestRdpConnectionConfirm(unittest.TestCase):
+    """Byte-level structural checks for the X.224 Connection Confirm mock -
+    see _build_rdp_connection_confirm's docstring for the field layout."""
+
+    def setUp(self):
+        self.response = _build_rdp_connection_confirm()
+
+    def test_tpkt_header_length_matches_actual_size(self):
+        self.assertEqual(self.response[0:2], b"\x03\x00")
+        tpkt_length = int.from_bytes(self.response[2:4], "big")
+        self.assertEqual(tpkt_length, len(self.response))
+
+    def test_x224_connection_confirm_and_negotiate_response(self):
+        length_indicator = self.response[4]
+        self.assertEqual(length_indicator, len(self.response) - 5)
+        self.assertEqual(self.response[5], 0xD0)  # CC CDT
+        self.assertEqual(self.response[11], 0x02)  # RDP_NEG_RSP type
+        neg_length = int.from_bytes(self.response[13:15], "little")
+        self.assertEqual(neg_length, 8)
+        selected_protocol = int.from_bytes(self.response[15:19], "little")
+        self.assertEqual(selected_protocol, 0)  # PROTOCOL_RDP
 
 
 if __name__ == "__main__":

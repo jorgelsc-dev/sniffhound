@@ -42,6 +42,12 @@
       empty-text="No IPs observed yet"
       @refresh="load"
     >
+      <template #cell-ip="{ value }">
+        <router-link v-if="value" class="mono ip-link" :to="{ path: '/investigate', query: { ip: value } }">
+          {{ value }}
+        </router-link>
+        <span v-else>-</span>
+      </template>
       <template #cell-private="{ item }">
         <v-chip size="x-small" :color="item.private ? 'secondary' : 'warning'" variant="tonal">
           {{ item.private ? "Private" : "Public" }}
@@ -162,3 +168,18 @@ export default {
   },
 };
 </script>
+
+<style scoped>
+.mono {
+  font-family: var(--font-mono);
+}
+
+.ip-link {
+  color: rgba(108, 186, 228, 0.98);
+  text-decoration: none;
+}
+
+.ip-link:hover {
+  text-decoration: underline;
+}
+</style>

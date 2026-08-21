@@ -45,6 +45,12 @@
       <template #cell-method="{ value }">
         <v-chip size="x-small" color="primary" variant="tonal">{{ value }}</v-chip>
       </template>
+      <template #cell-ip="{ value }">
+        <router-link v-if="value" class="mono ip-link" :to="{ path: '/investigate', query: { ip: value } }">
+          {{ value }}
+        </router-link>
+        <span v-else>-</span>
+      </template>
       <template #cell-last_seen="{ value }">
         {{ formatTimestamp(value) }}
       </template>
@@ -166,3 +172,18 @@ export default {
   },
 };
 </script>
+
+<style scoped>
+.mono {
+  font-family: var(--font-mono);
+}
+
+.ip-link {
+  color: rgba(108, 186, 228, 0.98);
+  text-decoration: none;
+}
+
+.ip-link:hover {
+  text-decoration: underline;
+}
+</style>

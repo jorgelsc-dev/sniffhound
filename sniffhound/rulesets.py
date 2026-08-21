@@ -177,6 +177,8 @@ def normalize_match(match: dict) -> dict:
         "ports": _int_list("ports"),
         "src_ports": _int_list("src_ports"),
         "dst_ports": _int_list("dst_ports"),
+        "ips": [str(item).strip().lower() for item in _list("ips") if str(item).strip()],
+        "ip_regex": [str(item).strip() for item in _list("ip_regex") if str(item).strip()],
         "payload_contains": [str(item) for item in _list("payload_contains") if str(item).strip()],
         "payload_prefix_hex": [
             str(item).strip().lower().replace("0x", "")
@@ -264,6 +266,34 @@ def rule_matches_packet(rule: dict, packet: dict, *, packet_text: str | None = N
     if dst_ports and safe_int(packet.get("dst_port", 0), 0) not in dst_ports:
         return False
 
+    # Deliberately checked as direct header fields (src_ip/dst_ip), not via
+    # build_packet_text's payload blob - that blob excludes endpoint
+    # addresses on purpose (see its own docstring) so payload/content
+    # criteria never fire on routing metadata. IP matching needs the exact
+    # opposite: precise equality (or a regex explicitly scoped to just
+    # these two fields) against the real address, not a substring search
+    # over a blob that could contain one address as a substring of another
+    # (e.g. "1.2.3.4" is a substring of "21.2.3.45").
+    ips = [str(item).strip().lower() for item in match.get("ips", []) if str(item).strip()]
+    if ips:
+        src_ip = str(packet.get("src_ip") or "").strip().lower()
+        dst_ip = str(packet.get("dst_ip") or "").strip().lower()
+        if src_ip not in ips and dst_ip not in ips:
+            return False
+
+    ip_regexes = [str(item).strip() for item in match.get("ip_regex", []) if str(item).strip()]
+    if ip_regexes:
+        src_ip = str(packet.get("src_ip") or "")
+        dst_ip = str(packet.get("dst_ip") or "")
+        matched_ip = False
+        for pattern in ip_regexes:
+            compiled = _compiled_regex(pattern)
+            if compiled is not None and (compiled.search(src_ip) or compiled.search(dst_ip)):
+                matched_ip = True
+                break
+        if not matched_ip:
+            return False
+
     needles = [str(item).lower() for item in match.get("payload_contains", []) if str(item).strip()]
     prefix_hex = [str(item).lower().replace("0x", "") for item in match.get("payload_prefix_hex", []) if str(item).strip()]
     regexes = [str(item).strip() for item in match.get("payload_regex", []) if str(item).strip()]
@@ -271,7 +301,7 @@ def rule_matches_packet(rule: dict, packet: dict, *, packet_text: str | None = N
     max_length = safe_int(match.get("max_length", 0), 0)
     min_payload_text_length = safe_int(match.get("min_payload_text_length", 0), 0)
 
-    if not any((protocols, ip_versions, eth_types, ports, src_ports, dst_ports, needles, prefix_hex, regexes)):
+    if not any((protocols, ip_versions, eth_types, ports, src_ports, dst_ports, ips, ip_regexes, needles, prefix_hex, regexes)):
         if not (min_length or max_length or min_payload_text_length):
             return False
 

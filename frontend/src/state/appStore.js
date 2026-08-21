@@ -281,6 +281,32 @@ function setMonitorConfig(payload) {
   });
 }
 
+function listBlacklistEntries(category = "") {
+  const query = category ? `?category=${encodeURIComponent(category)}` : "";
+  return fetchJsonPromise(`/api/blacklist/${query}`);
+}
+
+function createBlacklistEntry({ category, matchType, value, label = "" }) {
+  return fetchJsonPromise("/api/blacklist/", {
+    method: "POST",
+    body: JSON.stringify({ category, match_type: matchType, value, label }),
+  });
+}
+
+function deleteBlacklistEntry(id) {
+  return fetchJsonPromise("/api/blacklist/", {
+    method: "DELETE",
+    body: JSON.stringify({ id }),
+  });
+}
+
+function toggleBlacklistEntry(id, enabled) {
+  return fetchJsonPromise("/api/blacklist/toggle", {
+    method: "POST",
+    body: JSON.stringify({ id, enabled: Boolean(enabled) }),
+  });
+}
+
 function buildIntelQuery({ search = "", limit = 200, offset = 0 } = {}) {
   const params = new URLSearchParams();
   if (search) params.set("search", search);
@@ -780,10 +806,10 @@ function notifyForPacketEvent(payload) {
   const dstPort = (packet && packet.dst_port) || "";
   const route = srcIp && dstIp ? `${srcIp} → ${dstIp}${dstPort ? `:${dstPort}` : ""}` : "";
   hits.forEach((hit) => {
-    // Listener hits have no real entry in the monitors catalog - this traffic
+    // Honeypot hits have no real entry in the monitors catalog - this traffic
     // never runs through evaluate_packet/AnomalyEngine, so send it to the
-    // dedicated inbound-service table instead.
-    const isHoneypotHit = hit.monitorId === "builtin-inbound-service-hit";
+    // dedicated honeypot table instead.
+    const isHoneypotHit = hit.monitorId === "builtin-honeypot-hit";
     pushNotification({
       kind: "monitor",
       severity: hit.severity,
@@ -1132,6 +1158,10 @@ export default {
   toggleMonitorEnabled,
   getMonitorConfig,
   setMonitorConfig,
+  listBlacklistEntries,
+  createBlacklistEntry,
+  deleteBlacklistEntry,
+  toggleBlacklistEntry,
   listHoneypotListeners,
   createHoneypotListener,
   toggleHoneypotListenerEnabled,

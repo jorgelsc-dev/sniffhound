@@ -4,8 +4,10 @@ import ctypes
 import ctypes.util
 import ipaddress
 import json
+import re
 import sqlite3
 import threading
+import uuid
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -519,6 +521,18 @@ class SniffStore:
                 label TEXT NOT NULL DEFAULT '',
                 enabled INTEGER NOT NULL DEFAULT 1,
                 source TEXT NOT NULL DEFAULT 'builtin',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS blacklist_entries (
+                id TEXT PRIMARY KEY,
+                category TEXT NOT NULL,
+                match_type TEXT NOT NULL DEFAULT 'exact',
+                value TEXT NOT NULL,
+                label TEXT NOT NULL DEFAULT '',
+                enabled INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -1496,6 +1510,8 @@ class SniffStore:
         existing = self.get_monitor(monitor_id)
         if existing and existing.get("source") == "builtin":
             raise ValueError("Builtin monitors are read-only")
+        if existing and existing.get("source") == "blacklist":
+            raise ValueError("Blacklist-derived monitors can only be edited from the Blacklist settings tab")
         now = utc_now()
         self._execute(
             """
@@ -1533,6 +1549,8 @@ class SniffStore:
         existing = self.get_monitor(monitor_id)
         if existing and existing.get("source") == "builtin":
             raise ValueError("Builtin monitors are read-only")
+        if existing and existing.get("source") == "blacklist":
+            raise ValueError("Blacklist-derived monitors can only be removed from the Blacklist settings tab")
         self._execute("DELETE FROM monitors WHERE id = ?", (str(monitor_id),), commit=True)
         return True
 
@@ -1541,10 +1559,20 @@ class SniffStore:
         this is allowed for builtin monitors too. Builtins stay read-only
         for their definition (name/match/action can't be edited, and they
         can't be deleted), but toggling one off is just "stop applying this
-        rule", not a change to what the rule does."""
+        rule", not a change to what the rule does.
+
+        Blacklist-derived monitors are the one exception: toggling them
+        here (bypassing set_blacklist_entry_enabled) would desync the
+        monitors table from blacklist_entries.enabled, so the Blacklist tab
+        would keep showing an entry as "on" after its monitor was actually
+        switched off elsewhere. Route through the Blacklist tab instead,
+        same as save_monitor/delete_monitor already do for this source.
+        """
         existing = self.get_monitor(monitor_id)
         if not existing:
             raise ValueError(f"Unknown monitor id: {monitor_id}")
+        if existing.get("source") == "blacklist":
+            raise ValueError("Blacklist-derived monitors can only be toggled from the Blacklist settings tab")
         now = utc_now()
         self._execute(
             "UPDATE monitors SET enabled = ?, updated_at = ? WHERE id = ?",
@@ -1552,6 +1580,168 @@ class SniffStore:
             commit=True,
         )
         return self.get_monitor(monitor_id)
+
+    # --- Blacklist -----------------------------------------------------
+    #
+    # A blacklist entry (an IP/domain/path an operator wants flagged
+    # unconditionally) is stored in its own table so the dedicated
+    # Blacklist settings UI can list/manage them without wading through the
+    # full monitors catalog - but detection itself is never duplicated:
+    # every enabled entry is mirrored 1:1 into the `monitors` table (same
+    # id, source='blacklist') so it flows through the exact same
+    # evaluate_packet/RuleAlertThrottle/notification pipeline every other
+    # monitor already uses, for free. Deleting/disabling the entry
+    # deletes/disables its mirrored monitor row too, in the same
+    # transaction-adjacent call, so the two never drift out of sync.
+    #
+    # "Exact" match is implemented as a word-boundary-anchored regex
+    # (`\bre.escape(value)\b`), not a bare payload_contains substring -
+    # build_packet_text joins fields like `src_ip`/`dst_ip` with no
+    # delimiter guarantee beyond a space, so a plain substring match on an
+    # IP would false-positive against any IP that merely *contains* the
+    # blacklisted one as a run of digits (e.g. blacklisting "1.2.3.4"
+    # would also match "21.2.3.4" and "1.2.3.45" via naive substring
+    # matching). The word-boundary regex form matches the literal value
+    # only when it isn't glued to more word characters on either side,
+    # which is what an operator typing an exact IP/domain/path actually
+    # means. "Regex" mode uses the operator's own pattern verbatim.
+
+    BLACKLIST_CATEGORIES = ("ip", "domain", "path")
+
+    def _blacklist_monitor_id(self, entry_id: str) -> str:
+        return str(entry_id)
+
+    def _sync_blacklist_monitor(self, entry: dict):
+        category = str(entry.get("category") or "")
+        value = str(entry.get("value") or "")
+        is_regex = str(entry.get("match_type")) == "regex"
+        if category == "ip":
+            # rulesets.build_packet_text deliberately excludes src_ip/dst_ip
+            # (see its own docstring) so ordinary payload/content criteria
+            # never fire on routing metadata - so an IP blacklist entry
+            # can't ride on payload_contains/payload_regex at all. `ips`/
+            # `ip_regex` check packet["src_ip"]/packet["dst_ip"] directly
+            # instead (see rulesets.rule_matches_packet). "Exact" here means
+            # exact string equality against the real address - not a
+            # substring/regex match, which would risk one IP false-
+            # positive-matching another that merely contains it as a
+            # run of digits (e.g. "1.2.3.4" inside "21.2.3.45").
+            match = {"ip_regex": [value]} if is_regex else {"ips": [value.strip().lower()]}
+        else:
+            # Domain/path values DO appear in build_packet_text (via
+            # summary/payload_text/domain/http_host/http_path/http_method),
+            # so these stay payload-based. "Exact" is still word-boundary-
+            # anchored rather than a bare substring, for the same reason:
+            # a bare substring match on "evil.com" would also fire on
+            # "notevil.com" or an unrelated domain that merely contains
+            # that run of characters.
+            pattern = value if is_regex else r"\b" + re.escape(value) + r"\b"
+            match = {"payload_regex": [pattern]}
+        label = str(entry.get("label") or "").strip() or f"Blacklisted {category}: {value}"
+        now = utc_now()
+        self._execute(
+            """
+            INSERT INTO monitors (id, name, description, enabled, priority, source, mode, match_json, action_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 'blacklist', ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              name = excluded.name,
+              description = excluded.description,
+              enabled = excluded.enabled,
+              mode = excluded.mode,
+              match_json = excluded.match_json,
+              action_json = excluded.action_json,
+              updated_at = excluded.updated_at
+            """,
+            (
+                self._blacklist_monitor_id(entry["id"]),
+                label,
+                f"Blacklist entry ({category}, {entry.get('match_type')}): {value}",
+                1 if entry.get("enabled", True) else 0,
+                1,
+                "regex" if is_regex else "rule",
+                json_dumps(match),
+                json_dumps({"tag": f"blacklist-{category}", "label": label, "severity": "critical"}),
+                now,
+                now,
+            ),
+            commit=True,
+        )
+
+    def list_blacklist_entries(self, category: str = "") -> list[dict]:
+        category = str(category or "").strip().lower()
+        if category:
+            rows = self._fetchall(
+                "SELECT * FROM blacklist_entries WHERE category = ? ORDER BY created_at DESC",
+                (category,),
+            )
+        else:
+            rows = self._fetchall("SELECT * FROM blacklist_entries ORDER BY created_at DESC")
+        for row in rows:
+            row["enabled"] = bool(row.get("enabled"))
+        return rows
+
+    def get_blacklist_entry(self, entry_id: str):
+        row = self._fetchone("SELECT * FROM blacklist_entries WHERE id = ?", (str(entry_id),))
+        if not row:
+            return None
+        row["enabled"] = bool(row.get("enabled"))
+        return row
+
+    def create_blacklist_entry(self, category: str, match_type: str, value: str, label: str = "") -> dict:
+        category = str(category or "").strip().lower()
+        if category not in self.BLACKLIST_CATEGORIES:
+            raise ValueError(f"category must be one of {self.BLACKLIST_CATEGORIES}")
+        match_type = str(match_type or "exact").strip().lower()
+        if match_type not in ("exact", "regex"):
+            raise ValueError("match_type must be 'exact' or 'regex'")
+        value = str(value or "").strip()
+        if not value:
+            raise ValueError("value is required")
+        if match_type == "regex":
+            try:
+                re.compile(value)
+            except re.error as exc:
+                raise ValueError(f"Invalid regex pattern: {exc}") from exc
+        entry_id = f"blacklist-{category}-{uuid.uuid4().hex[:12]}"
+        now = utc_now()
+        self._execute(
+            """
+            INSERT INTO blacklist_entries (id, category, match_type, value, label, enabled, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+            """,
+            (entry_id, category, match_type, value, str(label or "").strip(), now, now),
+            commit=True,
+        )
+        entry = self.get_blacklist_entry(entry_id)
+        self._sync_blacklist_monitor(entry)
+        return entry
+
+    def set_blacklist_entry_enabled(self, entry_id: str, enabled: bool) -> dict:
+        existing = self.get_blacklist_entry(entry_id)
+        if not existing:
+            raise ValueError(f"Unknown blacklist entry id: {entry_id}")
+        now = utc_now()
+        self._execute(
+            "UPDATE blacklist_entries SET enabled = ?, updated_at = ? WHERE id = ?",
+            (1 if enabled else 0, now, str(entry_id)),
+            commit=True,
+        )
+        entry = self.get_blacklist_entry(entry_id)
+        self._sync_blacklist_monitor(entry)
+        return entry
+
+    def delete_blacklist_entry(self, entry_id: str) -> bool:
+        existing = self.get_blacklist_entry(entry_id)
+        if not existing:
+            raise ValueError(f"Unknown blacklist entry id: {entry_id}")
+        with self._lock:
+            self._conn.execute("DELETE FROM blacklist_entries WHERE id = ?", (str(entry_id),))
+            self._conn.execute(
+                "DELETE FROM monitors WHERE id = ? AND source = 'blacklist'",
+                (self._blacklist_monitor_id(entry_id),),
+            )
+            self._conn.commit()
+        return True
 
     def get_monitor_filter_enabled(self) -> bool:
         default = "1" if MONITOR_FILTER_DEFAULT else "0"

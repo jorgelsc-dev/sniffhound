@@ -67,7 +67,7 @@
             <div class="runtime-state-card runtime-state-card--warm">
               <div class="runtime-state-card__topline">
                 <div>
-                  <div class="text-subtitle-2">Services</div>
+                  <div class="text-subtitle-2">Honeypot</div>
                   <div class="text-caption text-medium-emphasis">
                     {{ honeypotSummary }}
                   </div>
@@ -113,7 +113,7 @@
         >
           <div class="d-flex flex-wrap ga-2">
             <v-btn color="primary" variant="flat" to="/sniffer">Open Sniffer</v-btn>
-            <v-btn color="warning" variant="outlined" to="/honeypot">Open Services</v-btn>
+            <v-btn color="warning" variant="outlined" to="/honeypot">Open Honeypot</v-btn>
             <v-btn color="info" variant="outlined" to="/investigate">Investigate Host</v-btn>
           </div>
 
@@ -149,7 +149,7 @@
       <v-col cols="12">
         <EntityTablePanel
           title="Latest Packets"
-          subtitle="Newest captured frames from packet capture and service listeners."
+          subtitle="Newest captured frames from packet capture and honeypot listeners."
           v-model:live-enabled="liveRefreshEnabled"
           :rows="recentPackets"
           :columns="packetColumns"
@@ -353,9 +353,9 @@ export default {
         },
         {
           key: "honeypot",
-          label: "Service Hits",
+          label: "Honeypot Hits",
           value: this.honeypotPacketsSeen,
-          caption: "Inbound events recorded by service listeners",
+          caption: "Inbound events recorded by honeypot listeners",
           icon: "mdi-server-security",
           colorClass: "text-warning",
         },
@@ -439,8 +439,8 @@ export default {
       return `${listeners.length} listeners`;
     },
     honeypotSummary() {
-      if (this.honeypotRuntime.running) return "Service emulation is accepting inbound traffic.";
-      return "Stopped until you start a listener profile.";
+      if (this.honeypotRuntime.running) return "Honeypot is accepting inbound traffic.";
+      return "Stopped until you start the honeypot.";
     },
   },
   watch: {

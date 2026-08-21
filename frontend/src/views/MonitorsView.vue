@@ -101,7 +101,13 @@
             >
               {{ monitor.match_count.toLocaleString() }}
             </v-chip>
-            <span class="font-weight-medium">{{ monitor.name }}</span>
+            <router-link
+              class="font-weight-medium monitor-name-link"
+              :to="{ path: '/investigate', query: { monitor: monitor.id } }"
+              @click.stop
+            >
+              {{ monitor.name }}
+            </router-link>
             <v-chip size="x-small" :color="modeColor(monitor.mode)" variant="tonal">
               {{ modeLabel(monitor.mode) }}
             </v-chip>
@@ -114,6 +120,15 @@
             <v-chip size="x-small" :color="monitor.enabled ? 'success' : 'secondary'" variant="outlined">
               {{ monitor.enabled ? "Enabled" : "Disabled" }}
             </v-chip>
+            <v-btn
+              size="x-small"
+              variant="text"
+              color="info"
+              icon="mdi-magnify"
+              :to="{ path: '/investigate', query: { monitor: monitor.id } }"
+              aria-label="Investigate this monitor"
+              @click.stop
+            />
           </div>
         </v-expansion-panel-title>
         <v-expansion-panel-text>
@@ -324,6 +339,16 @@ export default {
 .match-count-chip {
   font-variant-numeric: tabular-nums;
   font-weight: 700;
+}
+
+.monitor-name-link {
+  color: rgba(229, 241, 252, 0.94);
+  text-decoration: none;
+}
+
+.monitor-name-link:hover {
+  color: rgba(108, 186, 228, 0.98);
+  text-decoration: underline;
 }
 
 .metric-card {

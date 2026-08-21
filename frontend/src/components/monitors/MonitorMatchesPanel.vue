@@ -82,10 +82,24 @@
         </v-chip>
       </template>
       <template #cell-source="{ item }">
-        <span class="mono">{{ formatEndpoint(item.src_ip, item.src_port) }}</span>
+        <router-link
+          v-if="item.src_ip"
+          class="mono ip-link"
+          :to="{ path: '/investigate', query: { ip: item.src_ip } }"
+        >
+          {{ formatEndpoint(item.src_ip, item.src_port) }}
+        </router-link>
+        <span v-else class="mono">-</span>
       </template>
       <template #cell-target="{ item }">
-        <span class="mono">{{ formatEndpoint(item.dst_ip, item.dst_port) }}</span>
+        <router-link
+          v-if="item.dst_ip"
+          class="mono ip-link"
+          :to="{ path: '/investigate', query: { ip: item.dst_ip } }"
+        >
+          {{ formatEndpoint(item.dst_ip, item.dst_port) }}
+        </router-link>
+        <span v-else class="mono">-</span>
       </template>
       <template #cell-size="{ item }">
         <span class="meta-cell">{{ buildPacketSizeSummary(item) }}</span>
@@ -150,6 +164,14 @@ export default {
       type: Object,
       required: true,
     },
+    // Set to false to render a static snapshot with no WS-driven polling at
+    // all (see mounted() below) - used by InvestigateView, which is meant
+    // to show exactly what was selected and nothing that shifts under the
+    // reader while they're looking at it.
+    liveRefresh: {
+      type: Boolean,
+      default: true,
+    },
   },
   data() {
     return {
@@ -208,7 +230,11 @@ export default {
   },
   mounted() {
     this.load();
-    this.stopTableRefreshSubscription = store.subscribeTableRefresh(this.handleWsRefresh);
+    if (this.liveRefresh) {
+      this.stopTableRefreshSubscription = store.subscribeTableRefresh(this.handleWsRefresh);
+    } else {
+      this.liveRefreshEnabled = false;
+    }
   },
   beforeUnmount() {
     if (this.wsRefreshTimer) {
@@ -287,6 +313,15 @@ export default {
 <style scoped>
 .monitor-matches {
   background: rgba(6, 12, 22, 0.4);
+}
+
+.ip-link {
+  color: rgba(108, 186, 228, 0.98);
+  text-decoration: none;
+}
+
+.ip-link:hover {
+  text-decoration: underline;
 }
 
 .mono {

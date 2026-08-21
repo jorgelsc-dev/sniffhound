@@ -1364,7 +1364,7 @@ class SmokeTests(unittest.TestCase):
                 app_module.store.register_packet(
                     {
                         "session_id": 12,
-                        "interface": "service:53",
+                        "interface": "honeypot:53",
                         "direction": "inbound",
                         "proto": "udp",
                         "src_ip": "203.0.113.50",
@@ -1374,7 +1374,7 @@ class SmokeTests(unittest.TestCase):
                         "summary": "DNS message",
                         "payload_text": "query example.com",
                         "banner_text": "DNS message",
-                        "tags": [{"key": "mode", "value": "service"}],
+                        "tags": [{"key": "mode", "value": "honeypot"}],
                     }
                 )
 
@@ -1384,12 +1384,12 @@ class SmokeTests(unittest.TestCase):
 
                 self.assertEqual(response.status, 200)
                 self.assertEqual(len(payload), 1)
-                self.assertEqual(payload[0]["interface"], "service:53")
+                self.assertEqual(payload[0]["interface"], "honeypot:53")
                 self.assertEqual(payload[0]["direction"], "inbound")
                 self.assertEqual(payload[0]["src_ip"], "203.0.113.50")
                 self.assertEqual(payload[0]["dst_ip"], "127.0.0.1")
                 self.assertEqual(payload[0]["response_plain"], "DNS message")
-                self.assertEqual(payload[0]["tags"][0]["value"], "service")
+                self.assertEqual(payload[0]["tags"][0]["value"], "honeypot")
                 app_module.store.close()
             finally:
                 if previous_db is None:

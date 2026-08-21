@@ -2,12 +2,33 @@
   <div>
     <ViewHeader
       overline="Investigation"
-      title="Host Investigator"
-      description="Search an IP and get a compact, evidence-first view of transport, payloads, tags, and flows."
+      :title="mode === 'monitor' ? 'Monitor Investigator' : 'Host Investigator'"
+      :description="
+        mode === 'monitor'
+          ? 'A static snapshot of everything this monitor has matched - packets, charts, and the source/target IPs, each one click away from its own investigation.'
+          : 'Search an IP and get a compact, evidence-first view of transport, payloads, tags, and flows.'
+      "
       :refresh-loading="loading"
-      @refresh="load"
+      @refresh="refresh"
     />
 
+    <div v-if="mode === 'monitor'">
+      <div class="d-flex align-center flex-wrap ga-2 mb-4">
+        <v-btn size="small" variant="text" prepend-icon="mdi-arrow-left" :to="{ path: '/investigate' }">
+          Back to host search
+        </v-btn>
+        <v-chip size="small" variant="tonal" :color="severityColor(activeMonitor.action && activeMonitor.action.severity)">
+          {{ (activeMonitor.action && activeMonitor.action.severity) || "info" }}
+        </v-chip>
+      </div>
+      <MonitorMatchesPanel ref="matchesPanel" :monitor="activeMonitor" :live-refresh="false" />
+      <v-alert type="info" variant="tonal" density="comfortable" class="mt-4">
+        This snapshot doesn't refresh automatically - use the refresh button above or the panel's own
+        "Refresh" action to pull the latest matches.
+      </v-alert>
+    </div>
+
+    <div v-else>
     <v-row dense class="mb-3">
       <v-col cols="12" md="7">
         <v-text-field
@@ -131,7 +152,7 @@
           :loading="loading"
           :error="error"
           :last-updated="lastUpdated"
-          :live-refresh="true"
+          :live-refresh="false"
           :search-enabled="true"
           search-label="Search services"
           search-placeholder="IP, port, proto, state, banner, or tags"
@@ -160,7 +181,7 @@
           :loading="loading"
           :error="error"
           :last-updated="lastUpdated"
-          :live-refresh="true"
+          :live-refresh="false"
           :search-enabled="true"
           search-label="Search payloads"
           search-placeholder="IP, port, proto, or response"
@@ -186,7 +207,7 @@
           :loading="loading"
           :error="error"
           :last-updated="lastUpdated"
-          :live-refresh="true"
+          :live-refresh="false"
           :search-enabled="true"
           search-label="Search flows"
           search-placeholder="Flow key, source, target, or banner"
@@ -210,7 +231,7 @@
           :loading="loading"
           :error="error"
           :last-updated="lastUpdated"
-          :live-refresh="true"
+          :live-refresh="false"
           :search-enabled="true"
           search-label="Search tags"
           search-placeholder="Key, value, proto, IP, or port"
@@ -221,6 +242,7 @@
         />
       </v-col>
     </v-row>
+    </div>
   </div>
 </template>
 
@@ -229,6 +251,7 @@ import store from "../state/appStore";
 import ViewHeader from "../components/ui/ViewHeader.vue";
 import DataPanel from "../components/ui/DataPanel.vue";
 import EntityTablePanel from "../components/ui/EntityTablePanel.vue";
+import MonitorMatchesPanel from "../components/monitors/MonitorMatchesPanel.vue";
 import { uniqueSorted } from "../utils/traffic";
 
 export default {
@@ -237,6 +260,7 @@ export default {
     ViewHeader,
     DataPanel,
     EntityTablePanel,
+    MonitorMatchesPanel,
   },
   data() {
     return {
@@ -245,6 +269,8 @@ export default {
       error: "",
       lastUpdated: "",
       queryIp: "",
+      queryMonitor: "",
+      monitors: [],
       analytics: {},
       intel: {},
       serviceColumns: [
@@ -438,6 +464,18 @@ export default {
     apiBase() {
       return this.store.state.apiBase;
     },
+    mode() {
+      return this.queryMonitor ? "monitor" : "ip";
+    },
+    activeMonitor() {
+      if (!this.queryMonitor) return {};
+      const found = this.monitors.find((item) => item.id === this.queryMonitor);
+      // Falls back to a synthesized {id, name} rather than waiting on the
+      // full monitors list - MonitorMatchesPanel only strictly needs the
+      // id to fetch matched packets, so this avoids a blank/loading flash
+      // for the common case (monitors list not fetched yet on first paint).
+      return found || { id: this.queryMonitor, name: this.queryMonitor, action: {} };
+    },
   },
   watch: {
     apiBase() {
@@ -446,20 +484,60 @@ export default {
     $route: {
       immediate: true,
       handler(route) {
-        const ip = String((route && route.query && route.query.ip) || "").trim();
+        const query = (route && route.query) || {};
+        const monitor = String(query.monitor || "").trim();
+        const ip = String(query.ip || "").trim();
+        // The two modes are mutually exclusive by URL shape (a monitor link
+        // never carries ?ip= and vice versa) - clearing the one not present
+        // in the current query is what lets clicking an IP inside monitor
+        // mode (or a monitor link from anywhere) actually switch modes
+        // instead of getting stuck showing whichever was set first.
+        this.queryMonitor = monitor;
+        if (monitor && !this.monitors.length) {
+          this.loadMonitors();
+        }
         if (ip && ip !== this.queryIp) {
           this.queryIp = ip;
           this.load();
+        } else if (!ip) {
+          this.queryIp = "";
         }
       },
     },
   },
   mounted() {
-    if (!this.queryIp) {
+    if (!this.queryIp && !this.queryMonitor) {
       this.loadSeed();
     }
   },
   methods: {
+    refresh() {
+      if (this.mode === "monitor") {
+        if (this.$refs.matchesPanel && typeof this.$refs.matchesPanel.load === "function") {
+          this.$refs.matchesPanel.load();
+        }
+        return Promise.resolve();
+      }
+      return this.load();
+    },
+    severityColor(value) {
+      const severity = String(value || "info").trim().toLowerCase();
+      if (severity === "critical" || severity === "high") return "error";
+      if (severity === "medium") return "warning";
+      if (severity === "low") return "info";
+      return "secondary";
+    },
+    loadMonitors() {
+      return this.store
+        .listMonitors()
+        .then((payload) => {
+          this.monitors = this.store.extractArray(payload);
+        })
+        .catch(() => {
+          // Best-effort enrichment only - activeMonitor already falls back
+          // to a synthesized {id, name} when this list isn't available.
+        });
+    },
     loadSeed() {
       return this.store.fetchJsonPromise("/api/charts/analytics").then((payload) => {
         this.analytics = payload || {};

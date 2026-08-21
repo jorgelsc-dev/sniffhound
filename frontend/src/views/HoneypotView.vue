@@ -2,8 +2,8 @@
   <div>
     <ViewHeader
       overline="Active Defense"
-      title="Inbound Services"
-      description="Inspect inbound traffic that reached service listeners and review the responses emitted by those services."
+      title="Honeypot"
+      description="Inspect inbound traffic that reached honeypot listeners and review the responses emitted by those decoy services."
       :refresh-loading="loading"
       @refresh="load"
     />
@@ -28,8 +28,8 @@
     </v-alert>
 
     <DataPanel
-      title="Service Listener Engine"
-      subtitle="Only one engine runs at a time. Starting this one stops packet capture. Only activate listener mode where you're allowed to bind the configured ports."
+      title="Honeypot Engine"
+      subtitle="Only one engine runs at a time. Starting this one stops packet capture. Only activate honeypot mode where you're allowed to bind the configured ports."
       variant="tonal"
       collapsible
       :count="runtime.packets_seen || 0"
@@ -69,7 +69,7 @@
       <v-card class="pa-4">
         <div class="text-h6 mb-3">Clear alerts?</div>
         <div class="text-caption text-medium-emphasis mb-3">
-          Deletes every stored inbound-service hit (inbound traffic, responses, and the TLS/DNS event
+          Deletes every stored honeypot hit (inbound traffic, responses, and the TLS/DNS event
           detail behind them). Listener definitions and their enabled/disabled state are untouched.
           This can't be undone.
         </div>
@@ -89,8 +89,8 @@
       <v-col cols="12" md="5">
         <v-text-field
           v-model.trim="filters.query"
-          label="Search service traffic"
-          name="service_search"
+          label="Search honeypot traffic"
+          name="honeypot_search"
           placeholder="IP, port, response, summary..."
           prepend-inner-icon="mdi-magnify"
           clearable
@@ -140,7 +140,7 @@
       <v-col cols="12" xl="7">
         <EntityTablePanel
           title="Inbound Traffic"
-          subtitle="Connections and datagrams that hit service listeners."
+          subtitle="Connections and datagrams that hit honeypot listeners."
           v-model:live-enabled="liveRefreshEnabled"
           :rows="filteredPackets"
           :columns="packetColumns"
@@ -150,7 +150,7 @@
           :last-updated="lastUpdated"
           :live-refresh="true"
           :page-size="30"
-          empty-text="No service traffic recorded"
+          empty-text="No honeypot traffic recorded"
           @refresh="load"
         >
           <template #cell-updated_at="{ value }">
@@ -158,7 +158,7 @@
           </template>
           <template #cell-interface="{ value }">
             <v-chip size="x-small" color="warning" variant="tonal">
-              {{ value || "service" }}
+              {{ value || "honeypot" }}
             </v-chip>
           </template>
           <template #cell-proto="{ value }">
@@ -191,8 +191,8 @@
 
       <v-col cols="12" xl="5">
         <EntityTablePanel
-          title="Service Responses"
-          subtitle="Decoded payloads and replies emitted by service listeners."
+          title="Honeypot Responses"
+          subtitle="Decoded payloads and replies emitted by honeypot listeners."
           v-model:live-enabled="liveRefreshEnabled"
           :rows="filteredBanners"
           :columns="bannerColumns"
@@ -202,7 +202,7 @@
           :last-updated="lastUpdated"
           :live-refresh="true"
           :page-size="30"
-          empty-text="No service responses recorded"
+          empty-text="No honeypot responses recorded"
           @refresh="load"
         >
           <template #cell-updated_at="{ value }">
@@ -210,7 +210,7 @@
           </template>
           <template #cell-interface="{ value }">
             <v-chip size="x-small" color="warning" variant="tonal">
-              {{ value || "service" }}
+              {{ value || "honeypot" }}
             </v-chip>
           </template>
           <template #cell-proto="{ value }">
@@ -319,10 +319,10 @@ export default {
   },
   computed: {
     honeypotHitsMonitor() {
-      // Not a real entry in the monitors catalog; listener traffic never runs
+      // Not a real entry in the monitors catalog; honeypot traffic never runs
       // through evaluate_packet/AnomalyEngine. This shape lets
-      // MonitorMatchesPanel query the synthetic inbound-service hit id.
-      return { id: "builtin-inbound-service-hit", name: "Inbound service hits" };
+      // MonitorMatchesPanel query the synthetic honeypot-hit id.
+      return { id: "builtin-honeypot-hit", name: "Honeypot hits" };
     },
     apiBase() {
       return this.store.state.apiBase;
@@ -354,7 +354,7 @@ export default {
           key: "events",
           label: "Traffic Hits",
           value: packets.length,
-          caption: "Inbound events accepted by service listeners",
+          caption: "Inbound events accepted by honeypot listeners",
           icon: "mdi-radar",
           colorClass: "text-warning",
         },
@@ -362,7 +362,7 @@ export default {
           key: "responses",
           label: "Responses",
           value: this.banners.length,
-          caption: "Decoded service payload or banner rows",
+          caption: "Decoded honeypot payload or banner rows",
           icon: "mdi-reply-all",
           colorClass: "text-info",
         },

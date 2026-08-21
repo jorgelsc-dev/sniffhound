@@ -15,7 +15,7 @@
         <div class="brand-copy">
           <div class="text-subtitle-1 font-weight-bold">SniffHound</div>
           <div class="text-caption text-medium-emphasis">
-            Telemetry capture &amp; service listeners
+            Telemetry capture &amp; honeypot
           </div>
         </div>
       </div>
@@ -42,36 +42,62 @@
 
       <div class="status-rail">
         <div class="runtime-actions" aria-label="Runtime controls">
-          <v-btn
-            :icon="snifferActionIcon"
-            :color="snifferActionColor"
-            variant="tonal"
-            size="small"
-            density="comfortable"
-            class="runtime-action-btn"
-            :loading="runtimeSubmitting === 'sniffer'"
-            :disabled="runtimeControlsDisabled || runtimeSubmitting === 'services'"
-            :aria-label="snifferActionLabel"
-            @click="toggleRuntime('sniffer')"
-          >
-            <v-icon :icon="snifferActionIcon" />
-            <v-tooltip activator="parent" location="bottom">{{ snifferActionLabel }}</v-tooltip>
-          </v-btn>
-          <v-btn
-            :icon="servicesActionIcon"
-            :color="servicesActionColor"
-            variant="tonal"
-            size="small"
-            density="comfortable"
-            class="runtime-action-btn"
-            :loading="runtimeSubmitting === 'services'"
-            :disabled="runtimeControlsDisabled || runtimeSubmitting === 'sniffer'"
-            :aria-label="servicesActionLabel"
-            @click="toggleRuntime('services')"
-          >
-            <v-icon :icon="servicesActionIcon" />
-            <v-tooltip activator="parent" location="bottom">{{ servicesActionLabel }}</v-tooltip>
-          </v-btn>
+          <div class="runtime-slot runtime-slot--sniffer">
+            <v-badge
+              :model-value="true"
+              :color="snifferRunning ? 'success' : 'secondary'"
+              :icon="snifferRunning ? 'mdi-play' : 'mdi-stop'"
+              location="bottom end"
+              offset-x="3"
+              offset-y="3"
+              class="runtime-badge"
+            >
+              <v-btn
+                icon="mdi-ethernet"
+                color="primary"
+                variant="tonal"
+                size="small"
+                density="comfortable"
+                class="runtime-action-btn"
+                :loading="runtimeSubmitting === 'sniffer'"
+                :disabled="runtimeControlsDisabled || runtimeSubmitting === 'services'"
+                :aria-label="snifferActionLabel"
+                @click="toggleRuntime('sniffer')"
+              >
+                <v-icon icon="mdi-ethernet" />
+                <v-tooltip activator="parent" location="bottom">{{ snifferActionLabel }}</v-tooltip>
+              </v-btn>
+            </v-badge>
+            <span class="runtime-slot-label">Sniffer</span>
+          </div>
+          <div class="runtime-slot runtime-slot--honeypot">
+            <v-badge
+              :model-value="true"
+              :color="servicesRunning ? 'success' : 'secondary'"
+              :icon="servicesRunning ? 'mdi-play' : 'mdi-stop'"
+              location="bottom end"
+              offset-x="3"
+              offset-y="3"
+              class="runtime-badge"
+            >
+              <v-btn
+                icon="mdi-spider-web"
+                color="warning"
+                variant="tonal"
+                size="small"
+                density="comfortable"
+                class="runtime-action-btn"
+                :loading="runtimeSubmitting === 'services'"
+                :disabled="runtimeControlsDisabled || runtimeSubmitting === 'sniffer'"
+                :aria-label="servicesActionLabel"
+                @click="toggleRuntime('services')"
+              >
+                <v-icon icon="mdi-spider-web" />
+                <v-tooltip activator="parent" location="bottom">{{ servicesActionLabel }}</v-tooltip>
+              </v-btn>
+            </v-badge>
+            <span class="runtime-slot-label">Honeypot</span>
+          </div>
         </div>
         <NotificationBell />
         <v-btn
@@ -201,20 +227,8 @@ export default {
     snifferActionLabel() {
       return this.snifferRunning ? "Stop Sniffer" : "Start Sniffer";
     },
-    snifferActionIcon() {
-      return this.snifferRunning ? "mdi-stop" : "mdi-play";
-    },
-    snifferActionColor() {
-      return this.snifferRunning ? "warning" : "primary";
-    },
     servicesActionLabel() {
-      return this.servicesRunning ? "Stop Services" : "Start Services";
-    },
-    servicesActionIcon() {
-      return this.servicesRunning ? "mdi-stop" : "mdi-play";
-    },
-    servicesActionColor() {
-      return this.servicesRunning ? "warning" : "success";
+      return this.servicesRunning ? "Stop Honeypot" : "Start Honeypot";
     },
     authStateLabel() {
       if (!this.authRequired) return "Auth Open";
@@ -435,15 +449,42 @@ export default {
 .runtime-actions {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px;
+  gap: 12px;
+}
+
+.runtime-slot {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 10px;
   border: 1px solid rgba(var(--brand-sky-rgb), 0.16);
-  border-radius: 999px;
+  border-radius: 14px;
   background: rgba(5, 10, 18, 0.36);
+}
+
+.runtime-slot--sniffer {
+  border-color: rgba(var(--brand-cyan-rgb), 0.28);
+}
+
+.runtime-slot--honeypot {
+  border-color: rgba(255, 179, 71, 0.32);
+}
+
+.runtime-slot-label {
+  font-size: 0.6rem;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
 }
 
 .runtime-action-btn {
   flex: 0 0 auto;
+}
+
+.runtime-badge :deep(.v-badge__badge) {
+  border: 2px solid rgba(5, 10, 18, 0.9);
 }
 
 .auth-chip {

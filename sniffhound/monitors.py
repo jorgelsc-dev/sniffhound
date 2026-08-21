@@ -1166,6 +1166,8 @@ def _validate_match_not_empty(match: dict):
         "ports",
         "src_ports",
         "dst_ports",
+        "ips",
+        "ip_regex",
         "payload_contains",
         "payload_prefix_hex",
         "payload_regex",
@@ -1181,7 +1183,9 @@ def _validate_match_not_empty(match: dict):
 
 
 def _validate_regex_patterns(match: dict):
-    patterns = [str(pattern) for pattern in match.get("payload_regex", []) if str(pattern).strip()]
+    patterns = [str(pattern) for pattern in match.get("payload_regex", []) if str(pattern).strip()] + [
+        str(pattern) for pattern in match.get("ip_regex", []) if str(pattern).strip()
+    ]
     if len(patterns) > settings.MONITOR_MAX_REGEX_PATTERNS:
         raise ValueError(f"Too many regex patterns (max {settings.MONITOR_MAX_REGEX_PATTERNS})")
     for pattern in patterns:

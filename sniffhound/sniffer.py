@@ -60,6 +60,11 @@ PACKET_ADD_MEMBERSHIP = 1
 PACKET_MR_PROMISC = 1
 ETH_P_ALL = 0x0003
 MONITOR_CACHE_TTL_SECONDS = 2.0
+# Cap on Sniffer._tls_flows (see its docstring) - a busy sniffed network can
+# accumulate many thousands of concurrent flows; this is a best-effort
+# memory, not a correctness-critical structure, so a wholesale clear once
+# this cap is hit is preferable to the complexity of real LRU eviction.
+TLS_FLOW_MEMORY_CAP = 20000
 RULESET_CACHE_TTL_SECONDS = 2.0
 STATS_BROADCAST_MIN_INTERVAL_SECONDS = 1.0
 
@@ -509,6 +514,27 @@ class Sniffer:
         self._last_stats_broadcast_at = 0.0
         self._anomaly = AnomalyEngine()
         self._rule_throttle = RuleAlertThrottle()
+        # Per-flow "this TCP flow is carrying TLS" memory. A single TLS
+        # record (especially Application Data, the bulk of any HTTPS
+        # session after the handshake) is routinely larger than one Ethernet
+        # frame and spans several TCP segments - only the *first* segment of
+        # that record starts with the TLS record header
+        # (_looks_like_tls_record checks byte 0/1/2), so a purely
+        # per-packet check misses every continuation segment, whose leading
+        # bytes are just more ciphertext with no header at all. Those
+        # continuation segments then decode as printable-looking garbage
+        # (is_printable_payload's 55%-of-first-128-bytes heuristic clears
+        # often enough on random bytes) and can coincidentally trigger
+        # unrelated monitor content/regex matches - a real false-positive
+        # source confirmed against live captured traffic. Once any segment
+        # on a flow is recognized as a TLS record, every later segment on
+        # that same flow is treated as opaque too, closing that gap.
+        # Bounded and cleared wholesale rather than LRU-evicted: this is a
+        # best-effort optimization for a live capture session, not a
+        # correctness-critical structure - an occasional false "not TLS"
+        # right after a clear is fine, and far simpler than real eviction.
+        self._tls_flows: dict[str, float] = {}
+        self._tls_flows_lock = threading.Lock()
         self._wifi_stop_event = threading.Event()
         self._wifi_thread: threading.Thread | None = None
         self._wifi_lock = threading.RLock()
@@ -1937,6 +1963,39 @@ class Sniffer:
             if not packet.get("payload_text"):
                 packet["payload_text"] = summary
 
+    def _is_tls_payload(self, packet: dict, payload: bytes) -> bool:
+        """Stateless TLS-record-header check, extended with per-flow memory
+        for TCP so continuation segments of a multi-segment TLS record
+        (which carry no header of their own - see self._tls_flows'
+        docstring in __init__) are still recognized as opaque ciphertext.
+        Falls back to the stateless check alone for non-TCP callers/packets
+        with no usable flow identity."""
+        if _looks_like_tls_record(payload):
+            if packet.get("proto") == "tcp":
+                flow_key = stable_flow_key(
+                    "tcp",
+                    packet.get("src_ip", ""),
+                    packet.get("src_port", 0),
+                    packet.get("dst_ip", ""),
+                    packet.get("dst_port", 0),
+                )
+                with self._tls_flows_lock:
+                    if len(self._tls_flows) >= TLS_FLOW_MEMORY_CAP:
+                        self._tls_flows.clear()
+                    self._tls_flows[flow_key] = time.monotonic()
+            return True
+        if packet.get("proto") != "tcp":
+            return False
+        flow_key = stable_flow_key(
+            "tcp",
+            packet.get("src_ip", ""),
+            packet.get("src_port", 0),
+            packet.get("dst_ip", ""),
+            packet.get("dst_port", 0),
+        )
+        with self._tls_flows_lock:
+            return flow_key in self._tls_flows
+
     def _interpret_payload(self, packet: dict, payload: bytes) -> str:
         if not payload:
             return ""
@@ -1947,7 +2006,7 @@ class Sniffer:
         # confirmed against real captured traffic), so check the record
         # header explicitly first rather than relying on that heuristic
         # alone for this specific, very common case.
-        if _looks_like_tls_record(payload):
+        if self._is_tls_payload(packet, payload):
             return ""
         # Binary/encrypted payloads decode into misleading "text" here -
         # `bytes.decode(errors="ignore")` silently drops undecodable bytes
@@ -1968,12 +2027,13 @@ class Sniffer:
         if payload.startswith(b"\x16\x03"):
             return "TLS handshake"
         # Any other TLS record (application data, alert, change-cipher-spec)
-        # is ciphertext - `text` below is only meaningful decoded output for
+        # - or a continuation segment of one, tracked via per-flow memory -
+        # is ciphertext. `text` below is only meaningful decoded output for
         # genuine cleartext protocols, so this must come before it's used as
         # the fallback return value, or ciphertext-decoded-as-garbage leaks
         # into banner_text/summary exactly like the payload_text case this
-        # mirrors (see _interpret_payload/_looks_like_tls_record).
-        if _looks_like_tls_record(payload):
+        # mirrors (see _interpret_payload/_is_tls_payload).
+        if self._is_tls_payload(packet, payload):
             return "TLS application data"
         text = bytes_to_text_preview(payload, limit=PAYLOAD_TEXT_MAX_CHARS)
         if text.startswith("HTTP/1."):

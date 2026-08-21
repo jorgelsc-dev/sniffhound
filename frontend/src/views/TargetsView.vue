@@ -10,7 +10,7 @@
 
     <DataPanel
       title="Create Session"
-      subtitle="Add a network scope or service listener profile."
+      subtitle="Add a network scope or honeypot listener profile."
       :error="createError"
       :show-refresh="false"
       class="mb-6"

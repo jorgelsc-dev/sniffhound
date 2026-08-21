@@ -13,12 +13,16 @@
         Capture
       </v-tab>
       <v-tab value="honeypot">
-        <v-icon icon="mdi-server-security" start />
-        Service Listeners
+        <v-icon icon="mdi-spider-web" start />
+        Honeypot
       </v-tab>
       <v-tab value="detection">
         <v-icon icon="mdi-target-account" start />
         Detection
+      </v-tab>
+      <v-tab value="blacklist">
+        <v-icon icon="mdi-cancel" start />
+        Blacklist
       </v-tab>
       <v-tab value="notifications">
         <v-icon icon="mdi-bell-outline" start />
@@ -500,7 +504,7 @@
                 </v-row>
               </div>
 
-              <div v-else>
+              <div v-else class="d-flex align-start ga-2">
                 <v-combobox
                   v-model="form.payloadRegex"
                   label="Regex patterns"
@@ -513,7 +517,9 @@
                   variant="outlined"
                   density="comfortable"
                   :error-messages="regexErrors"
+                  class="flex-grow-1"
                 />
+                <RegexHelperButton class="mt-2" @apply="(pattern) => form.payloadRegex.push(pattern)" />
               </div>
             </v-card-text>
             <v-card-actions>
@@ -525,6 +531,10 @@
             </v-card-actions>
           </v-card>
         </v-dialog>
+      </v-window-item>
+
+      <v-window-item value="blacklist">
+        <BlacklistPanel />
       </v-window-item>
 
       <v-window-item value="notifications">
@@ -556,6 +566,8 @@ import store from "../state/appStore";
 import ViewHeader from "../components/ui/ViewHeader.vue";
 import EntityTablePanel from "../components/ui/EntityTablePanel.vue";
 import DataPanel from "../components/ui/DataPanel.vue";
+import RegexHelperButton from "../components/ui/RegexHelperButton.vue";
+import BlacklistPanel from "../components/settings/BlacklistPanel.vue";
 import { formatTimestamp, matchesSearch, uniqueSorted } from "../utils/traffic";
 
 const PROTOCOL_OPTIONS = [
@@ -577,7 +589,7 @@ const PROTOCOL_OPTIONS = [
   "wifi-data",
 ];
 const SEVERITY_OPTIONS = ["info", "low", "medium", "high", "critical"];
-const VALID_TABS = new Set(["capture", "honeypot", "detection", "notifications"]);
+const VALID_TABS = new Set(["capture", "honeypot", "detection", "blacklist", "notifications"]);
 
 function emptyForm() {
   return {
@@ -602,6 +614,8 @@ export default {
     ViewHeader,
     EntityTablePanel,
     DataPanel,
+    RegexHelperButton,
+    BlacklistPanel,
   },
   data() {
     const requested = String((this.$route && this.$route.query && this.$route.query.section) || "").trim();

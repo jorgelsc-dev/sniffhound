@@ -420,6 +420,10 @@ ENDPOINTS = [
     {"method": "POST", "path": "/api/monitors/toggle", "desc": "Enable/disable any monitor, including builtins, without editing or deleting it."},
     {"method": "GET", "path": "/api/monitors/config", "desc": "Read the monitor persistence-filter toggle."},
     {"method": "POST", "path": "/api/monitors/config", "desc": "Toggle whether only detected traffic is persisted."},
+    {"method": "GET", "path": "/api/blacklist/", "desc": "List blacklist entries (optionally filtered by ?category=ip|domain|path)."},
+    {"method": "POST", "path": "/api/blacklist/", "desc": "Create a blacklist entry (category, match_type, value, label)."},
+    {"method": "DELETE", "path": "/api/blacklist/", "desc": "Delete a blacklist entry."},
+    {"method": "POST", "path": "/api/blacklist/toggle", "desc": "Enable/disable a blacklist entry without deleting it."},
     {"method": "GET", "path": "/api/domains/", "desc": "Searchable catalog of domains seen in DNS/HTTP/TLS traffic."},
     {"method": "GET", "path": "/api/paths/", "desc": "Searchable catalog of HTTP request paths."},
     {"method": "GET", "path": "/api/intel/ips/", "desc": "Searchable catalog of IPs seen in stored traffic."},
@@ -1743,6 +1747,54 @@ def monitors_config(request):
         raise ValueError("filter_enabled is required")
     enabled = bool(payload.get("filter_enabled"))
     return {"filter_enabled": store.set_monitor_filter_enabled(enabled)}
+
+
+def _blacklist_row(row: dict) -> dict:
+    return {
+        "id": row.get("id"),
+        "category": row.get("category"),
+        "match_type": row.get("match_type"),
+        "value": row.get("value"),
+        "label": row.get("label"),
+        "enabled": bool(row.get("enabled")),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+@app.api("/api/blacklist/", methods=("GET", "POST", "DELETE"))
+def blacklist_collection(request):
+    if request.method.upper() == "GET":
+        category = str(request.query.get("category") or "").strip()
+        return [_blacklist_row(row) for row in store.list_blacklist_entries(category)]
+    payload = _read_json_body(request)
+    if request.method.upper() == "POST":
+        entry = store.create_blacklist_entry(
+            category=str(payload.get("category") or ""),
+            match_type=str(payload.get("match_type") or "exact"),
+            value=str(payload.get("value") or ""),
+            label=str(payload.get("label") or ""),
+        )
+        return _blacklist_row(entry)
+    if request.method.upper() == "DELETE":
+        entry_id = str(payload.get("id") or "").strip()
+        if not entry_id:
+            raise ValueError("id is required")
+        store.delete_blacklist_entry(entry_id)
+        return {"status": "ok"}
+    raise ValueError("Unsupported method")
+
+
+@app.api("/api/blacklist/toggle", methods=("POST",))
+def blacklist_toggle(request):
+    payload = _read_json_body(request)
+    entry_id = str(payload.get("id") or "").strip()
+    if not entry_id:
+        raise ValueError("id is required")
+    if "enabled" not in payload:
+        raise ValueError("enabled is required")
+    enabled = bool(payload.get("enabled"))
+    return _blacklist_row(store.set_blacklist_entry_enabled(entry_id, enabled))
 
 
 @app.api("/api/domains/", methods=("GET",))
