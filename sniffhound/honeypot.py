@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import fcntl
+import ipaddress
 import logging
 import queue
+import select
 import shutil
 import socket
 import sqlite3
 import ssl
+import struct
 import subprocess
 import threading
 import time
@@ -111,6 +115,7 @@ def clear_honeypot_events() -> dict:
     return counts
 
 BIND_HOST = "0.0.0.0"
+_SIOCGIFADDR = 0x8915
 READ_TIMEOUT_SECONDS = 6
 MAX_PACKET_SIZE = 4096
 MAX_HTTP_REQUEST_SIZE = 16384
@@ -200,6 +205,41 @@ def _build_logger() -> logging.Logger:
 
 
 LOGGER = _build_logger()
+
+
+def _discover_host_ipv4_addresses() -> list[str]:
+    """Every IPv4 address currently assigned to a local interface, minus
+    loopback (127.0.0.0/8) - used so the honeypot binds each listener
+    directly to the host's real IPs instead of the 0.0.0.0 wildcard, which
+    would otherwise also quietly answer on 127.0.0.1. Linux-only
+    (SIOCGIFADDR ioctl), matching this project's existing AF_PACKET-based
+    capture code, which is already Linux-only."""
+    addresses: list[str] = []
+    seen: set[str] = set()
+    try:
+        names = [name for _, name in socket.if_nameindex()]
+    except Exception:
+        return addresses
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        for name in names:
+            try:
+                packed = fcntl.ioctl(
+                    probe.fileno(),
+                    _SIOCGIFADDR,
+                    struct.pack("256s", name[:15].encode("utf-8")),
+                )
+                ip = socket.inet_ntoa(packed[20:24])
+            except OSError:
+                continue
+            try:
+                if ipaddress.ip_address(ip).is_loopback:
+                    continue
+            except ValueError:
+                continue
+            if ip not in seen:
+                seen.add(ip)
+                addresses.append(ip)
+    return addresses
 
 
 def _normalize_payload(data):
@@ -1092,47 +1132,89 @@ class HoneypotEngine:
     def _emit_packet(self, packet: dict):
         self._event_queue.put({"packet": packet, "meta": packet.get("listener_meta") or {}})
 
+    def _resolve_bind_hosts(self) -> list[str]:
+        """Which local addresses a listener should bind to. The wildcard
+        default (bind_host="0.0.0.0"/"::") is expanded to every host IPv4
+        address except loopback, so the honeypot never answers on
+        127.0.0.0/8; an explicit non-wildcard bind_host is used as-is. If
+        no non-loopback address can be discovered (e.g. an isolated
+        sandbox with only "lo"), fall back to the wildcard bind so the
+        honeypot still starts rather than silently binding nothing."""
+        if self.bind_host not in {"0.0.0.0", "::"}:
+            return [self.bind_host]
+        hosts = _discover_host_ipv4_addresses()
+        if not hosts:
+            LOGGER.warning(
+                "No se encontraron IPs no loopback en el host; fallback a %s", self.bind_host
+            )
+            return [self.bind_host]
+        return hosts
+
     def _listen(self, port: int, handler, *, udp: bool = False, stop_event: threading.Event):
         sock_type = socket.SOCK_DGRAM if udp else socket.SOCK_STREAM
-        with socket.socket(socket.AF_INET, sock_type) as sock:
+        hosts = self._resolve_bind_hosts()
+        sockets: list[socket.socket] = []
+        for host in hosts:
+            sock = socket.socket(socket.AF_INET, sock_type)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
-                sock.bind((self.bind_host, port))
+                sock.bind((host, port))
             except Exception as error:
-                self._set_error(f"{'udp' if udp else 'tcp'}/{port}", f"bind failed: {error}")
-                LOGGER.exception("No se pudo enlazar puerto %s", port)
-                return
-
+                self._set_error(f"{'udp' if udp else 'tcp'}/{port}@{host}", f"bind failed: {error}")
+                LOGGER.exception("No se pudo enlazar %s:%s", host, port)
+                sock.close()
+                continue
             if not udp:
                 sock.listen(20)
-                sock.settimeout(1.0)
-                LOGGER.info("TCP listener activo en %s:%s", self.bind_host, port)
+            sockets.append(sock)
+
+        if not sockets:
+            return
+
+        try:
+            if not udp:
+                LOGGER.info("TCP listener activo en %s:%s (%d IP(s))", hosts, port, len(sockets))
                 while not stop_event.is_set():
                     try:
-                        client, addr = sock.accept()
-                    except socket.timeout:
-                        continue
-                    except OSError as error:
+                        ready, _, _ = select.select(sockets, [], [], 1.0)
+                    except OSError:
                         if stop_event.is_set():
                             break
-                        self._set_error(f"tcp/{port}", str(error))
                         continue
-                    threading.Thread(target=handler, args=(client, addr, port), daemon=True).start()
+                    for ready_sock in ready:
+                        try:
+                            client, addr = ready_sock.accept()
+                        except OSError as error:
+                            if stop_event.is_set():
+                                break
+                            self._set_error(f"tcp/{port}", str(error))
+                            continue
+                        threading.Thread(target=handler, args=(client, addr, port), daemon=True).start()
             else:
-                sock.settimeout(1.0)
-                LOGGER.info("UDP listener activo en %s:%s", self.bind_host, port)
+                LOGGER.info("UDP listener activo en %s:%s (%d IP(s))", hosts, port, len(sockets))
                 while not stop_event.is_set():
                     try:
-                        data, addr = sock.recvfrom(MAX_PACKET_SIZE)
-                    except socket.timeout:
-                        continue
-                    except OSError as error:
+                        ready, _, _ = select.select(sockets, [], [], 1.0)
+                    except OSError:
                         if stop_event.is_set():
                             break
-                        self._set_error(f"udp/{port}", str(error))
                         continue
-                    if data:
-                        handler(sock, addr, port, data)
+                    for ready_sock in ready:
+                        try:
+                            data, addr = ready_sock.recvfrom(MAX_PACKET_SIZE)
+                        except OSError as error:
+                            if stop_event.is_set():
+                                break
+                            self._set_error(f"udp/{port}", str(error))
+                            continue
+                        if data:
+                            handler(ready_sock, addr, port, data)
+        finally:
+            for sock in sockets:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
 
     def _tcp_listener(self, port: int, stop_event: threading.Event, tls_context=None):
         if tls_context is not None:

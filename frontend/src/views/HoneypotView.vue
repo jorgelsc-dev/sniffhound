@@ -29,7 +29,6 @@
 
     <DataPanel
       title="Honeypot Engine"
-      subtitle="Only one engine runs at a time. Starting this one stops packet capture. Only activate honeypot mode where you're allowed to bind the configured ports."
       variant="tonal"
       collapsible
       :count="runtime.packets_seen || 0"

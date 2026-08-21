@@ -138,7 +138,6 @@
 
       <DataPanel
         title="Sniffer Engine"
-        subtitle="Only one engine runs at a time. Starting this one stops the honeypot."
         variant="tonal"
         collapsible
         :count="runtime.packets_seen || 0"

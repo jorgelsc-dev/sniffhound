@@ -543,6 +543,7 @@ class SniffStore:
                 self._conn.execute(statement)
             self._conn.commit()
             self._migrate_packets_columns()
+            self._migrate_tags_columns()
 
     def _migrate_packets_columns(self):
         existing = {row["name"] for row in self._conn.execute("PRAGMA table_info(packets)")}
@@ -556,6 +557,19 @@ class SniffStore:
         for column, definition in additions.items():
             if column not in existing:
                 self._conn.execute(f"ALTER TABLE packets ADD COLUMN {column} {definition}")
+        self._conn.commit()
+
+    def _migrate_tags_columns(self):
+        # `severity` lets list_recent_alerts() answer "which hosts have
+        # monitor hits, and how bad" straight from the small `tags` table
+        # (indexed by key) instead of scanning full `packets` rows
+        # (raw_packet/payload_text/tags_json and the rest) just to reread a
+        # value already present on the tag dict that register_packet() was
+        # handed.
+        existing = {row["name"] for row in self._conn.execute("PRAGMA table_info(tags)")}
+        if "severity" not in existing:
+            self._conn.execute("ALTER TABLE tags ADD COLUMN severity TEXT NOT NULL DEFAULT ''")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_tags_key_packet ON tags(key, packet_id)")
         self._conn.commit()
 
     def _seed_baseline(self):
@@ -1191,6 +1205,26 @@ class SniffStore:
         else:
             for row in rows:
                 row["matched_value"] = ""
+        return rows
+
+    def list_recent_alerts(self, *, limit=500):
+        """Lean feed of recent monitor hits (src/dst IP + severity only) for
+        UI surfaces - like the Radar host graph badges - that only need to
+        know *which hosts got flagged and how badly*, not the full packet
+        row (raw_packet/payload_text/tags_json and the rest) that
+        list_packets() would otherwise ship for every one of them."""
+        rows = self._fetchall(
+            """
+            SELECT packets.id AS packet_id, packets.src_ip AS src_ip, packets.dst_ip AS dst_ip,
+                   tags.value AS monitor, tags.severity AS severity, packets.created_at AS created_at
+            FROM tags
+            JOIN packets ON packets.id = tags.packet_id
+            WHERE tags.key = 'monitor' AND tags.severity != ''
+            ORDER BY packets.id DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+        )
         return rows
 
     def list_flows(self, *, proto="", search="", limit=250, offset=0):
@@ -3023,13 +3057,14 @@ class SniffStore:
                 continue
             key = str(tag.get("key") or tag.get("tag") or "").strip()
             value = str(tag.get("value") or tag.get("label") or "").strip()
+            severity = str(tag.get("severity") or "").strip().lower()
             if not key:
                 continue
             self._conn.execute(
                 """
                 INSERT INTO tags
-                (packet_id, flow_key, ip, port, proto, key, value, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (packet_id, flow_key, ip, port, proto, key, value, severity, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     packet_id,
@@ -3039,6 +3074,7 @@ class SniffStore:
                     normalize_protocol_name(packet.get("proto")),
                     key,
                     value,
+                    severity,
                     now,
                     now,
                 ),

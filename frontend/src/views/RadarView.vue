@@ -131,22 +131,11 @@ const RADAR_REFRESH_EVENT_TYPES = new Set([
 const RADAR_REFRESH_DELAY_MS = 10000;
 const SEVERITY_RANK = { critical: 4, high: 3, medium: 2, low: 1 };
 
-function packetTags(packet) {
-  if (!packet) return [];
-  if (Array.isArray(packet.tags)) return packet.tags;
-  const raw = packet.tags_json;
-  if (typeof raw !== "string" || !raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-// Rolls recent flagged packets up into a per-IP { count, severity } map so
-// the host graph can badge every node currently involved in a monitor hit,
-// counting it against both the source and the destination endpoint.
+// Rolls recent alert rows up into a per-IP { count, severity } map so the
+// host graph can badge every node currently involved in a monitor hit,
+// counting it against both the source and the destination endpoint. Fed by
+// /api/alerts/recent, which already filters to monitor hits server-side -
+// no packet bodies to scan here.
 function buildHostAlerts(rows) {
   const alerts = {};
   const bump = (ip, severity) => {
@@ -160,13 +149,10 @@ function buildHostAlerts(rows) {
     alerts[key] = entry;
   };
   (Array.isArray(rows) ? rows : []).forEach((row) => {
-    packetTags(row).forEach((tag) => {
-      if (!tag || tag.key !== "monitor") return;
-      const severity = String(tag.severity || "").trim().toLowerCase();
-      if (!SEVERITY_RANK[severity]) return;
-      bump(row.src_ip, severity);
-      bump(row.dst_ip, severity);
-    });
+    const severity = String((row && row.severity) || "").trim().toLowerCase();
+    if (!SEVERITY_RANK[severity]) return;
+    bump(row.src_ip, severity);
+    bump(row.dst_ip, severity);
   });
   return alerts;
 }
@@ -311,8 +297,10 @@ export default {
     loadHostAlerts() {
       // Best-effort: alert badges are a nice-to-have overlay on the host
       // graph, never a reason to block or error out the main radar load.
+      // Uses the lean alerts-only feed (src/dst IP + severity) instead of
+      // pulling full packet rows just to read their monitor tags.
       return this.store
-        .fetchJsonPromise("/ports/?limit=500")
+        .fetchJsonPromise("/api/alerts/recent?limit=500")
         .then((payload) => {
           this.hostAlerts = buildHostAlerts(this.store.extractArray(payload));
         })

@@ -428,6 +428,7 @@ ENDPOINTS = [
     {"method": "GET", "path": "/api/paths/", "desc": "Searchable catalog of HTTP request paths."},
     {"method": "GET", "path": "/api/intel/ips/", "desc": "Searchable catalog of IPs seen in stored traffic."},
     {"method": "GET", "path": "/api/monitors/packets/", "desc": "Packets that matched a given monitor."},
+    {"method": "GET", "path": "/api/alerts/recent", "desc": "Lean recent monitor-hit feed (src/dst IP + severity only, no packet bodies)."},
     {"method": "POST", "path": "/api/data/clear/", "desc": "Clear stored detection history (packets/tags/payloads, plus listener event detail) for a scope: 'monitors', 'honeypot', or 'all'. Never deletes monitor/listener definitions."},
 ]
 
@@ -1819,6 +1820,12 @@ def ip_catalog_collection(request):
     limit = _normalize_limit(request.query.get("limit"), default=200)
     offset = _normalize_offset(request.query.get("offset"))
     return store.list_ip_catalog(search=search, limit=limit, offset=offset)
+
+
+@app.api("/api/alerts/recent", methods=("GET",))
+def alerts_recent(request):
+    limit = _normalize_limit(request.query.get("limit"), default=500, maximum=2000)
+    return store.list_recent_alerts(limit=limit)
 
 
 @app.api("/api/monitors/packets/", methods=("GET",))
