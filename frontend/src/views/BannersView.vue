@@ -77,11 +77,11 @@
           {{ String(value || "unknown").toUpperCase() }}
         </v-chip>
       </template>
-      <template #cell-source="{ item }">
-        <span class="mono">{{ formatEndpoint(item.src_ip, item.src_port) }}</span>
+      <template #cell-src_ip="{ value }">
+        <span class="mono">{{ value || "-" }}</span>
       </template>
-      <template #cell-target="{ item }">
-        <span class="mono">{{ formatEndpoint(item.dst_ip, item.dst_port) }}</span>
+      <template #cell-dst_ip="{ value }">
+        <span class="mono">{{ value || "-" }}</span>
       </template>
       <template #cell-response_plain="{ item }">
         <span class="banner-text">{{ buildResponseSummary(item, 180) || "-" }}</span>
@@ -167,7 +167,6 @@ import EntityTablePanel from "../components/ui/EntityTablePanel.vue";
 import {
   buildResponseSummary,
   formatBytes,
-  formatEndpoint,
   formatTimestamp,
   hasOptionValue,
   matchesSearch,
@@ -195,8 +194,10 @@ export default {
       bannerColumns: [
         { key: "updated_at", label: "Seen" },
         { key: "proto", label: "Proto" },
-        { key: "source", label: "Source" },
-        { key: "target", label: "Target" },
+        { key: "src_ip", label: "Src IP" },
+        { key: "src_port", label: "Src Port" },
+        { key: "dst_ip", label: "Dst IP" },
+        { key: "dst_port", label: "Dst Port" },
         { key: "scan_state", label: "State" },
         { key: "response_size", label: "Size" },
         { key: "response_plain", label: "Response" },
@@ -310,7 +311,6 @@ export default {
   methods: {
     buildResponseSummary,
     formatBytes,
-    formatEndpoint,
     formatTimestamp,
     syncFilters() {
       if (!hasOptionValue(this.protoFilterOptions, this.tableFilters.proto)) this.tableFilters.proto = "";

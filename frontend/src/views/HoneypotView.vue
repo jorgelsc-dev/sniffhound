@@ -170,11 +170,11 @@
               {{ value || "unknown" }}
             </v-chip>
           </template>
-          <template #cell-source="{ item }">
-            <span class="mono">{{ formatEndpoint(item.src_ip, item.src_port) }}</span>
+          <template #cell-src_ip="{ value }">
+            <span class="mono">{{ value || "-" }}</span>
           </template>
-          <template #cell-target="{ item }">
-            <span class="mono">{{ formatEndpoint(item.dst_ip, item.dst_port) }}</span>
+          <template #cell-dst_ip="{ value }">
+            <span class="mono">{{ value || "-" }}</span>
           </template>
           <template #cell-size="{ item }">
             <span class="meta-cell">{{ buildPacketSizeSummary(item) }}</span>
@@ -222,11 +222,11 @@
               {{ value || "unknown" }}
             </v-chip>
           </template>
-          <template #cell-source="{ item }">
-            <span class="mono">{{ formatEndpoint(item.src_ip, item.src_port) }}</span>
+          <template #cell-src_ip="{ value }">
+            <span class="mono">{{ value || "-" }}</span>
           </template>
-          <template #cell-target="{ item }">
-            <span class="mono">{{ formatEndpoint(item.dst_ip, item.dst_port) }}</span>
+          <template #cell-dst_ip="{ value }">
+            <span class="mono">{{ value || "-" }}</span>
           </template>
           <template #cell-response_size="{ value }">
             <span class="meta-cell">{{ formatSize(value) }}</span>
@@ -253,7 +253,6 @@ import {
   buildPacketSizeSummary,
   buildPacketSummary,
   buildResponseSummary,
-  formatEndpoint,
   formatTimestamp,
   formatBytes,
   hasOptionValue,
@@ -295,8 +294,10 @@ export default {
         { key: "interface", label: "Listener" },
         { key: "proto", label: "Proto" },
         { key: "state", label: "State" },
-        { key: "source", label: "Source" },
-        { key: "target", label: "Target" },
+        { key: "src_ip", label: "Src IP" },
+        { key: "src_port", label: "Src Port" },
+        { key: "dst_ip", label: "Dst IP" },
+        { key: "dst_port", label: "Dst Port" },
         { key: "size", label: "Size" },
         { key: "flow_key", label: "Flow" },
         { key: "summary", label: "Summary" },
@@ -306,8 +307,10 @@ export default {
         { key: "interface", label: "Listener" },
         { key: "proto", label: "Proto" },
         { key: "state", label: "State" },
-        { key: "source", label: "Source" },
-        { key: "target", label: "Target" },
+        { key: "src_ip", label: "Src IP" },
+        { key: "src_port", label: "Src Port" },
+        { key: "dst_ip", label: "Dst IP" },
+        { key: "dst_port", label: "Dst Port" },
         { key: "response_size", label: "Size" },
         { key: "flow_key", label: "Flow" },
         { key: "response_plain", label: "Response" },
@@ -471,7 +474,6 @@ export default {
     buildPacketSizeSummary,
     buildPacketSummary,
     buildResponseSummary,
-    formatEndpoint,
     formatTimestamp,
     truncateMiddle,
     syncFilters() {

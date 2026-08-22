@@ -107,7 +107,7 @@
               {{ item.ip }}
             </router-link>
           </template>
-          <template #cell-open_ports="{ value }">
+          <template #cell-value="{ value }">
             <v-chip size="x-small" color="info" variant="tonal">
               {{ value }}
             </v-chip>

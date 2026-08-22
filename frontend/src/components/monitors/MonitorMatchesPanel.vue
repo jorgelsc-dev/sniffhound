@@ -61,6 +61,7 @@
       search-enabled
       search-label="Search matched traffic"
       search-placeholder="IP, port, summary, matched value..."
+      :search-fields="searchFields"
       :page-size="10"
       empty-text="No traffic has matched this monitor yet"
       @refresh="load"
@@ -81,23 +82,23 @@
           {{ value || "unknown" }}
         </v-chip>
       </template>
-      <template #cell-source="{ item }">
+      <template #cell-src_ip="{ item, value }">
         <router-link
           v-if="item.src_ip"
           class="mono ip-link"
           :to="{ path: '/investigate', query: { ip: item.src_ip } }"
         >
-          {{ formatEndpoint(item.src_ip, item.src_port) }}
+          {{ value }}
         </router-link>
         <span v-else class="mono">-</span>
       </template>
-      <template #cell-target="{ item }">
+      <template #cell-dst_ip="{ item, value }">
         <router-link
           v-if="item.dst_ip"
           class="mono ip-link"
           :to="{ path: '/investigate', query: { ip: item.dst_ip } }"
         >
-          {{ formatEndpoint(item.dst_ip, item.dst_port) }}
+          {{ value }}
         </router-link>
         <span v-else class="mono">-</span>
       </template>
@@ -114,7 +115,7 @@
 <script>
 import store from "../../state/appStore";
 import EntityTablePanel from "../ui/EntityTablePanel.vue";
-import { buildPacketSizeSummary, buildPacketSummary, formatEndpoint, formatTimestamp } from "../../utils/traffic";
+import { buildPacketSizeSummary, buildPacketSummary, formatTimestamp } from "../../utils/traffic";
 
 const REFRESH_EVENT_TYPES = new Set(["packet", "stats_update", "runtime_mode"]);
 
@@ -183,8 +184,10 @@ export default {
         { key: "updated_at", label: "Seen" },
         { key: "proto", label: "Proto" },
         { key: "state", label: "State" },
-        { key: "source", label: "Source" },
-        { key: "target", label: "Target" },
+        { key: "src_ip", label: "Src IP" },
+        { key: "src_port", label: "Src Port" },
+        { key: "dst_ip", label: "Dst IP" },
+        { key: "dst_port", label: "Dst Port" },
         { key: "size", label: "Size" },
         { key: "summary", label: "Summary" },
       ],
@@ -194,6 +197,23 @@ export default {
     };
   },
   computed: {
+    searchFields() {
+      return [
+        "matched_value",
+        "updated_at",
+        "proto",
+        "state",
+        "src_ip",
+        "src_port",
+        "dst_ip",
+        "dst_port",
+        "length",
+        "payload_len",
+        "summary",
+        "banner_text",
+        "payload_text",
+      ];
+    },
     stats() {
       const srcIps = new Set(this.rows.map((row) => String(row.src_ip || "").trim()).filter(Boolean));
       const dstIps = new Set(this.rows.map((row) => String(row.dst_ip || "").trim()).filter(Boolean));
@@ -247,7 +267,6 @@ export default {
     }
   },
   methods: {
-    formatEndpoint,
     formatTimestamp,
     buildPacketSummary,
     buildPacketSizeSummary,

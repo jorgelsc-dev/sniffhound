@@ -194,11 +194,11 @@
             {{ value || "unknown" }}
           </v-chip>
         </template>
-        <template #cell-source="{ item }">
-          <span class="mono">{{ formatEndpoint(item.src_ip, item.src_port) }}</span>
+        <template #cell-src_ip="{ value }">
+          <span class="mono">{{ value || "-" }}</span>
         </template>
-        <template #cell-target="{ item }">
-          <span class="mono">{{ formatEndpoint(item.dst_ip, item.dst_port) }}</span>
+        <template #cell-dst_ip="{ value }">
+          <span class="mono">{{ value || "-" }}</span>
         </template>
         <template #cell-size="{ item }">
           <span class="meta-cell">{{ buildPacketSizeSummary(item) }}</span>
@@ -230,7 +230,6 @@ import {
   buildPacketRouteSummary,
   buildPacketSizeSummary,
   buildPacketSummary,
-  formatEndpoint,
   formatTimestamp,
   hasOptionValue,
   matchesSearch,
@@ -269,8 +268,10 @@ export default {
         { key: "proto", label: "Proto" },
         { key: "direction", label: "Direction" },
         { key: "state", label: "State" },
-        { key: "source", label: "Source" },
-        { key: "target", label: "Target" },
+        { key: "src_ip", label: "Src IP" },
+        { key: "src_port", label: "Src Port" },
+        { key: "dst_ip", label: "Dst IP" },
+        { key: "dst_port", label: "Dst Port" },
         { key: "size", label: "Size" },
         { key: "route", label: "Network" },
         { key: "flow_key", label: "Flow" },
@@ -452,7 +453,6 @@ export default {
     buildPacketRouteSummary,
     buildPacketSizeSummary,
     buildPacketSummary,
-    formatEndpoint,
     formatTimestamp,
     truncateMiddle,
     syncFilters() {

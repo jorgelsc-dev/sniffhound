@@ -185,15 +185,11 @@
               {{ value || "unknown" }}
             </v-chip>
           </template>
-          <template #cell-source="{ item }">
-            <div class="flow-cell">
-              <span class="mono">{{ formatEndpoint(item.src_ip, item.src_port) }}</span>
-            </div>
+          <template #cell-src_ip="{ value }">
+            <span class="mono">{{ value || "-" }}</span>
           </template>
-          <template #cell-target="{ item }">
-            <div class="flow-cell">
-              <span class="mono">{{ formatEndpoint(item.dst_ip, item.dst_port) }}</span>
-            </div>
+          <template #cell-dst_ip="{ value }">
+            <span class="mono">{{ value || "-" }}</span>
           </template>
           <template #cell-size="{ item }">
             <span class="meta-cell">{{ buildPacketSizeSummary(item) }}</span>
@@ -216,7 +212,6 @@ import EntityTablePanel from "../components/ui/EntityTablePanel.vue";
 import {
   buildPacketSizeSummary,
   buildPacketSummary,
-  formatEndpoint,
   formatTimestamp,
   isHoneypotInterface,
 } from "../utils/traffic";
@@ -245,8 +240,10 @@ export default {
         { key: "interface", label: "Interface" },
         { key: "proto", label: "Proto" },
         { key: "state", label: "State" },
-        { key: "source", label: "Source" },
-        { key: "target", label: "Target" },
+        { key: "src_ip", label: "Src IP" },
+        { key: "src_port", label: "Src Port" },
+        { key: "dst_ip", label: "Dst IP" },
+        { key: "dst_port", label: "Dst Port" },
         { key: "size", label: "Size" },
         { key: "summary", label: "Summary" },
       ],
@@ -471,7 +468,6 @@ export default {
   methods: {
     buildPacketSizeSummary,
     buildPacketSummary,
-    formatEndpoint,
     formatTimestamp,
     normalizeStatus(value) {
       const raw = String(value || "active").trim().toLowerCase();
